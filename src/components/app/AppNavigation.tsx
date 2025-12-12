@@ -11,9 +11,9 @@ import { mockUser } from "@/data/mockData";
 
 const navLinks = [
   { name: "Dashboard", path: "/dashboard" },
-  { name: "Repositories", path: "/repositories" },
   { name: "Reviews", path: "/reviews" },
   { name: "Analytics", path: "/analytics" },
+  { name: "Rules", path: "/rules" },
   { name: "Settings", path: "/settings" },
 ];
 
