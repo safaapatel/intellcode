@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Code2 } from "lucide-react";
 
@@ -22,17 +23,17 @@ export const Navigation = () => {
           <a href="#how-it-works" className="text-muted-foreground hover:text-foreground transition-colors">
             How It Works
           </a>
-          <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">
-            Pricing
-          </a>
+          <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
+            Dashboard
+          </Link>
         </div>
         
         <div className="flex items-center gap-4">
-          <Button variant="ghost" className="hidden sm:inline-flex">
-            Sign In
+          <Button variant="ghost" className="hidden sm:inline-flex" asChild>
+            <Link to="/dashboard">Sign In</Link>
           </Button>
-          <Button className="bg-gradient-primary hover:shadow-glow-primary">
-            Get Started
+          <Button className="bg-gradient-primary hover:shadow-glow-primary" asChild>
+            <Link to="/dashboard">Get Started</Link>
           </Button>
         </div>
       </div>

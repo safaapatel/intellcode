@@ -14,7 +14,7 @@ export const Hero = () => {
       <div className="relative z-10 container mx-auto px-4 text-center">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-secondary border border-primary/20 mb-8 animate-float">
           <Sparkles className="w-4 h-4 text-primary" />
-          <span className="text-sm text-muted-foreground">Powered by AI & Game Theory</span>
+          <span className="text-sm text-muted-foreground">Powered by AI & Machine Learning</span>
         </div>
         
         <h1 className="text-6xl md:text-8xl font-bold mb-6 bg-gradient-primary bg-clip-text text-transparent">
@@ -22,7 +22,7 @@ export const Hero = () => {
         </h1>
         
         <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto mb-12 leading-relaxed">
-          AI-powered code review that combines static analysis, machine learning, and game theory 
+          AI-powered code review that combines static analysis and machine learning
           to optimize your development workflow
         </p>
         
