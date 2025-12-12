@@ -14,8 +14,8 @@ const steps = [
   },
   {
     number: "03",
-    title: "Game Theory Optimization",
-    description: "Nash equilibrium calculations determine optimal thresholds. Shapley values measure contributions.",
+    title: "Smart Issue Detection",
+    description: "Advanced ML models identify complex patterns and provide context-aware suggestions.",
   },
   {
     number: "04",
@@ -26,7 +26,7 @@ const steps = [
 
 export const HowItWorks = () => {
   return (
-    <section className="py-24 relative overflow-hidden">
+    <section id="how-it-works" className="py-24 relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-background via-secondary/30 to-background" />
       
       <div className="container mx-auto px-4 relative z-10">

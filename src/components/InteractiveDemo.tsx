@@ -47,9 +47,9 @@ const analysisResults = {
     },
   ],
   metrics: {
-    nash_threshold: 0.82,
-    shapley_contribution: 0.67,
-    false_positive_rate: 8,
+    issues_found: 3,
+    files_analyzed: 1,
+    analysis_time: "2.4s",
   },
 };
 
@@ -68,7 +68,7 @@ export const InteractiveDemo = () => {
     }, 1000);
     
     setTimeout(() => {
-      toast.loading("Calculating game theory metrics...", { id: "analysis" });
+      toast.loading("Generating suggestions...", { id: "analysis" });
     }, 2000);
     
     setTimeout(() => {
@@ -79,14 +79,14 @@ export const InteractiveDemo = () => {
   };
 
   return (
-    <section className="py-24 bg-secondary/50">
+    <section id="demo" className="py-24 bg-secondary/50">
       <div className="container mx-auto px-4">
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-accent bg-clip-text text-transparent">
             See It In Action
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Watch IntelliCode Review analyze real code with all three analysis engines
+            Watch IntelliCode Review analyze real code with static analysis and ML
           </p>
         </div>
 
@@ -134,17 +134,17 @@ export const InteractiveDemo = () => {
                   </Card>
                   
                   <Card className="p-4 bg-secondary border-border">
-                    <div className="text-3xl font-bold text-primary mb-1">
-                      {analysisResults.metrics.nash_threshold}
+                    <div className="text-3xl font-bold text-destructive mb-1">
+                      {analysisResults.metrics.issues_found}
                     </div>
-                    <div className="text-sm text-muted-foreground">Nash Threshold</div>
+                    <div className="text-sm text-muted-foreground">Issues Found</div>
                   </Card>
                   
                   <Card className="p-4 bg-secondary border-border">
                     <div className="text-3xl font-bold text-accent mb-1">
-                      {analysisResults.metrics.shapley_contribution}
+                      {analysisResults.metrics.analysis_time}
                     </div>
-                    <div className="text-sm text-muted-foreground">Shapley Value</div>
+                    <div className="text-sm text-muted-foreground">Analysis Time</div>
                   </Card>
                 </div>
 
@@ -178,10 +178,10 @@ export const InteractiveDemo = () => {
                   <div className="flex items-start gap-3">
                     <CheckCircle2 className="w-5 h-5 text-primary mt-0.5" />
                     <div>
-                      <div className="font-semibold mb-1">Game Theory Insights</div>
+                      <div className="font-semibold mb-1">ML Insights</div>
                       <p className="text-sm text-muted-foreground">
-                        Based on Nash equilibrium analysis, the optimal review threshold is 0.82. 
-                        This developer's Shapley value of 0.67 indicates strong contribution to code quality.
+                        The ML model detected patterns consistent with common security vulnerabilities. 
+                        Recommended fixes include parameterized queries and environment variables for secrets.
                       </p>
                     </div>
                   </div>
