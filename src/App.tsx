@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Submit from "./pages/Submit";
 import ReviewDetail from "./pages/ReviewDetail";
+import Reviews from "./pages/Reviews";
 import Analytics from "./pages/Analytics";
 import Rules from "./pages/Rules";
 import NotFound from "./pages/NotFound";
@@ -26,7 +27,7 @@ const App = () => (
           <Route path="/reviews/:id" element={<ReviewDetail />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/rules" element={<Rules />} />
-          <Route path="/reviews" element={<Dashboard />} />
+          <Route path="/reviews" element={<Reviews />} />
           <Route path="/settings" element={<Dashboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
