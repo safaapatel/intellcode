@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card";
-import { Brain, Target, TrendingUp, Shield, Zap, Code2 } from "lucide-react";
+import { Brain, GitBranch, TrendingUp, Shield, Zap, Code2 } from "lucide-react";
 
 const features = [
   {
@@ -15,9 +15,9 @@ const features = [
     color: "text-accent",
   },
   {
-    icon: Target,
-    title: "Game Theory Optimization",
-    description: "Nash equilibrium calculations optimize review thresholds and Shapley values measure developer contributions.",
+    icon: GitBranch,
+    title: "GitHub Integration",
+    description: "Seamless PR integration with automatic analysis, inline comments, and commit status updates.",
     color: "text-primary",
   },
   {
@@ -42,7 +42,7 @@ const features = [
 
 export const Features = () => {
   return (
-    <section className="py-24 relative">
+    <section id="features" className="py-24 relative">
       <div className="container mx-auto px-4">
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-primary bg-clip-text text-transparent">
