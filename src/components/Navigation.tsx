@@ -14,17 +14,20 @@ export const Navigation = () => {
         </div>
         
         <div className="hidden md:flex items-center gap-8">
-          <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">
-            Features
-          </a>
-          <a href="#demo" className="text-muted-foreground hover:text-foreground transition-colors">
-            Demo
-          </a>
-          <a href="#how-it-works" className="text-muted-foreground hover:text-foreground transition-colors">
-            How It Works
-          </a>
           <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
             Dashboard
+          </Link>
+          <Link to="/reviews" className="text-muted-foreground hover:text-foreground transition-colors">
+            Reviews
+          </Link>
+          <Link to="/analytics" className="text-muted-foreground hover:text-foreground transition-colors">
+            Analytics
+          </Link>
+          <Link to="/rules" className="text-muted-foreground hover:text-foreground transition-colors">
+            Rules
+          </Link>
+          <Link to="/settings" className="text-muted-foreground hover:text-foreground transition-colors">
+            Settings
           </Link>
         </div>
         
