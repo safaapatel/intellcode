@@ -280,10 +280,129 @@ My family kept me sane. That is not a small thing.
 \pagenumbering{arabic}
 \setcounter{page}{1}
 %% ============================================================
-
 \chapter{Introduction}
 \label{ch:intro}
+%% ============================================================
 
+\section{Problem Statement}
+\label{sec:problem}
+
+Software development teams have always understood that code quality matters: defects caught in review are cheaper than defects caught in production. The National Institute of Standards and Technology estimated software defect costs at \$60 billion per year in the US economy alone~\cite{nist2002}, and subsequent studies confirm that defect density correlates with code complexity~\cite{mccabe1976}. The knowledge exists; the difficulty lies in applying it at the pace modern development demands.
+
+Manual code review, where a human peer reads changes and comments before they merge,
+remains the industry-standard quality gate. It is valuable, but it has
+well-documented structural weaknesses. Review quality is inconsistent: the same patch
+may receive a thorough critique one day and a perfunctory approval the next, depending
+on reviewer load, expertise, and attention~\cite{bacchelli2013, mcintosh2016}.
+Reviewers tend to be better at catching style violations than at detecting logical bugs
+or security vulnerabilities, particularly in unfamiliar parts of the codebase~\cite{fagan1976}.
+As teams grow and deployment cadences accelerate, the reviewer-to-change-set ratio
+worsens, and the review process becomes a bottleneck rather than a safety net.
+
+Automated static analysis tools (Pylint, Flake8, Bandit, and their counterparts in other language ecosystems) address some of this gap by running fast, deterministic
+checks that do not depend on human attention. They catch obvious issues: undeclared
+variables, imports that shadow builtins, string-formatted SQL queries. But they are
+fundamentally limited by their architecture. They match code against a fixed rule set;
+they do not adapt to the patterns that have historically caused bugs in a particular
+project, cannot estimate the probability that a given commit will introduce a regression,
+and do not produce a single integrated quality score that a developer can act on
+immediately. The output of running three different static analysis tools is three
+separate lists of warnings in three different formats, with no guidance on which to
+prioritise.
+
+Machine learning offers a path beyond this limitation: models trained on commit histories can learn which code patterns precede bugs; models trained on CVE-annotated code generalise vulnerability patterns beyond fixed rules; regression models predict cognitive complexity from structural metrics. The challenge is assembling these capabilities into a tool a solo developer can run without infrastructure or specialist expertise.
+
+\section{Proposed Solution}
+\label{sec:solution}
+
+IntelliCode Review is the response to the challenge stated above: a web-based platform
+that consolidates twelve code quality analysis dimensions into a single interactive
+application, trained on real open-source code and evaluated against the same cross-project
+and temporal standards applied to published defect predictors.
+
+The primary contribution of this thesis is an evaluation protocol for ML-based code
+analysis that takes generalisation seriously: multi-seed variance, leave-one-project-out
+benchmarks, temporal splits, residual conformal intervals, and a SonarQube calibration
+designed to catch leakage rather than confirm it. That protocol is the transferable
+result. IntelliCode Review, a twelve-dimension analysis platform backed by those same models, is what makes the evaluation concrete. Without a working system, the
+protocol has nothing to evaluate; without the protocol, the system's claims are no
+more credible than the optimistic benchmarks in the papers it cites.
+
+The secondary contribution is the system itself: broader dimension coverage in a
+self-contained tool than any existing open-source alternative, with an interface
+designed around the constraint that findings ignored are findings wasted.
+
+The models are not individually state-of-the-art. The evaluation is the point.
+
+This thesis argues that rigorous evaluation, not model sophistication, is the unsolved problem in applied ML for software engineering. Building the system is the tractable part; knowing what it actually does in conditions that approximate deployment is harder and, for a practitioner deciding whether to trust a tool, more useful. Coverage and speed only matter if developers actually consult the results: a finding that takes thirty seconds arrives too late, and a security alert that requires switching tools gets dismissed. The system was built around that constraint.
+
+\section{Research Questions}
+\label{sec:rq}
+
+Three questions guide the work:
+
+\begin{description}
+  \item[RQ1] Does a unified ML-augmented platform cover a broader set of code
+    quality analysis dimensions than traditional single-purpose static analysis
+    tools, and do the individual modules produce technically correct outputs on
+    verified test cases? The empirical motivation is that developers using fragmented
+    tooling systematically under-examine dimensions not covered by their default
+    linter~\cite{johnson2013}: a security-only tool produces no complexity signal;
+    a complexity-only tool produces no dead-code or clone signal. A unified platform
+    removes the decision of which tool to run, which changes what gets examined.
+    Coverage is measured by dimension count relative to tools operating under comparable infrastructure constraints (no dedicated server, no external service account); correctness is measured by end-to-end functional testing against hand-labelled inputs.
+    Whether broader coverage translates to better developer outcomes is not
+    investigated here and remains an open empirical question.
+  \item[RQ2] How do the chosen machine learning architectures (XGBoost, RF+CNN
+    ensemble, LR+XGBoost ensemble, calibrated Random Forest) perform on each of the
+    four trained quality tasks (security, complexity, bug prediction, pattern
+    recognition) when trained on real open-source data and evaluated under
+    cross-project and temporal protocols?
+  \item[RQ3] Can the system be implemented as a practical, self-contained web
+    application with response times fast enough for interactive developer workflows,
+    without requiring server infrastructure or external service accounts?
+\end{description}
+
+\section{Scope and Limitations}
+\label{sec:scope}
+
+IntelliCode Review accepts Python, JavaScript, TypeScript, and Java for direct analysis.
+Python receives the full twelve-model treatment including ML-based security, complexity,
+bug prediction, and pattern recognition. JavaScript, TypeScript, and Java receive
+deterministic security scanning (eight vulnerability categories via language-specific
+regex rules) and cyclomatic complexity via tree-sitter AST parsers; the trained ML
+models do not run for these languages. The repository scanner additionally recognises
+twelve further languages (C, C++, Go, Rust, Ruby, PHP, Swift, Kotlin, Scala, R, Dart,
+and Shell) for file-level metrics only. The platform integrates with GitHub for repository
+scanning: users can connect a personal access token to trigger batch scans of entire
+repositories from the Repositories page. The API also accepts optional git metadata
+(code churn, author count, file age, past bug count, commit frequency) to augment bug
+prediction for Python files.
+
+All four ML models are trained on real open-source code drawn from 33 repositories
+across five domains: 4,286 security samples from CVE-annotated commits, 3,015
+complexity samples, 8,668 bug-labelled commits, and 6,200+ pattern examples covering
+web frameworks, data science libraries, CLI tools, testing infrastructure, and
+async networking libraries. Generalisation to unseen production codebases is limited by
+that training distribution; model probabilities are risk indicators, not verdicts.
+
+Readers primarily interested in the engineering details will find them in Chapters~\ref{ch:design} and~\ref{ch:demo}; readers primarily interested in the evaluation methodology will find the core argument in Chapter~\ref{ch:eval}.
+
+\section{Thesis organization}
+\label{sec:organization}
+
+Chapter~\ref{ch:background} covers the technical background: code review, static
+analysis, complexity metrics, and the machine learning methods the platform uses.
+Chapter~\ref{ch:related} positions IntelliCode Review relative to existing tools and
+research, from traditional linters to deep learning vulnerability detectors.
+Chapter~\ref{ch:motivation} argues the case for the design and states the five concrete
+goals. Chapter~\ref{ch:design} describes the architecture and implementation in detail.
+Chapter~\ref{ch:demo} walks through the interface with three worked demonstration
+scenarios. Chapter~\ref{ch:eval} presents the evaluation methodology and results,
+including the audit correction, LOPO benchmarks, feature ablation study, and adversarial robustness analysis. Chapter~\ref{ch:conclusion}
+summarises the contributions, answers the research questions, and discusses future work.
+
+%% ============================================================
 
 \chapter{Background}
 \label{ch:background}
