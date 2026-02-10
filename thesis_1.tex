@@ -403,10 +403,140 @@ including the audit correction, LOPO benchmarks, feature ablation study, and adv
 summarises the contributions, answers the research questions, and discusses future work.
 
 %% ============================================================
-
 \chapter{Background}
 \label{ch:background}
+%% ============================================================
 
+\section{Code Review in Software Engineering}
+\label{sec:bg-codereview}
+
+Code review is the examination of source code by someone other than the original author,
+with the goal of finding defects, improving quality, and spreading knowledge within a
+team~\cite{fagan1976}. Fagan's formal inspection process at IBM in the 1970s was the
+precursor to modern lightweight peer review. The current dominant form is asynchronous
+pull-request review on platforms such as GitHub, GitLab, and Gerrit~\cite{bacchelli2013}.
+
+Empirical studies of review in practice find that reviewers focus on understandability,
+coding conventions, and functional correctness~\cite{bacchelli2013}. Security defects
+and performance issues get caught far less often~\cite{mcintosh2016}, partly because they demand domain expertise that not every reviewer has and partly because they are harder to spot by reading code than by running it. This is the structural weakness.
+That gap, between what manual review
+reliably catches and what actually matters for code health, is the problem automated
+analysis is meant to close.
+
+\subsection{Pull-request-based review}
+
+Modern teams submit code changes as pull requests, reviewed by peers before merging.
+This creates a natural insertion point for automated tooling: the analysis can run on
+the PR before any human reviewer opens the diff, filtering out mechanical issues so
+that reviewer attention is spent on logic, design, and correctness. IntelliCode Review
+is intended for this workflow: a developer submits a file, receives an automated quality report, addresses the findings, and only then asks a peer to review.
+
+\subsection{Cost of Poor Code Quality}
+
+Technical debt, the implied cost of choosing a quick solution over a better one, accumulates with poor code quality. The SQALE (Software Quality
+Assessment based on Lifecycle Expectations) methodology~\cite{letouzey2012} quantifies
+technical debt in person-hours required to fix each quality issue category. IntelliCode
+Review implements a SQALE-inspired debt estimator that aggregates findings from security,
+complexity, clone detection, dead code, and refactoring models into a single debt report.
+
+\section{Static Analysis}
+\label{sec:bg-static}
+
+Static analysis examines source code without executing it. It encompasses a broad range
+of techniques from simple lexical pattern matching to full dataflow and taint analysis.
+
+\subsection{Lexical and Syntactic Analysis}
+
+The simplest form of static analysis scans source code as text, searching for known
+dangerous patterns using regular expressions. Tools such as Bandit for Python use this
+approach to flag uses of \texttt{eval()}, hardcoded passwords, and insecure deserialization.
+IntelliCode Review's security pattern scanner (\texttt{security\_patterns.py}) implements
+a curated set of regular expressions covering SQL injection, command injection, path
+traversal, hardcoded secrets, weak cryptography, insecure deserialization, code injection,
+and XXE vulnerabilities.
+
+\subsection{Abstract Syntax Tree Analysis}
+
+An abstract syntax tree (AST) captures grammatical structure without syntactic noise.
+Python's standard library provides the
+\texttt{ast} module, which parses source code into an AST and enables tree-walking
+visitors. The system leans heavily on AST analysis: the \texttt{ASTExtractor}
+class extracts features including function definitions, call sites, import statements,
+string literals, class hierarchies, and control flow constructs. Seven of the twelve
+models (clone detection, refactoring, dead code, documentation quality, performance,
+dependency, and readability) are implemented as AST visitors or pattern matchers.
+
+\subsection{Complexity Metrics}
+
+The field has settled on four main metrics for measuring complexity:
+
+\begin{description}
+  \item[Cyclomatic Complexity (McCabe)~\cite{mccabe1976}] Counts the number of linearly
+    independent paths through a program's control flow graph. Formally, $V(G) = E - N + 2P$
+    where $E$ is edges, $N$ is nodes, and $P$ is connected components.
+  \item[Cognitive Complexity~\cite{campbell2018}] A successor metric that penalizes
+    nested control structures more heavily, arguing that nesting is a stronger predictor
+    of comprehension difficulty than raw path count.
+  \item[Halstead Metrics~\cite{halstead1977}] Derive a family of metrics (volume, difficulty,
+    effort, predicted bugs) from counts of operators and operands in the source code.
+  \item[Maintainability Index~\cite{oman1992}] A composite metric (0--100 scale) combining
+    Halstead volume, cyclomatic complexity, and source lines of code, widely used by
+    tools such as Visual Studio.
+\end{description}
+
+IntelliCode Review computes all four families of metrics in \texttt{code\_metrics.py}.
+After correcting a label-leakage defect in the original implementation (see
+Section~\ref{sec:eval-methodology}), the XGBoost complexity model uses a 15-dimensional
+feature vector with cognitive complexity as the prediction target rather than as a feature.
+
+\section{Machine Learning for Code Analysis}
+\label{sec:bg-ml}
+
+\subsection{Defect Prediction}
+
+Defect prediction work has been running since roughly 2000~\cite{nagappan2005, zimmermann2007}.
+Early models used product metrics (lines of code, complexity) and process metrics like code churn and developer experience as features for logistic regression or na\"ive Bayes.
+Later work showed that random forests~\cite{lessmann2008}, support vector machines, and
+neural networks could push accuracy further, though the gains varied widely by dataset.
+
+IntelliCode Review's bug predictor follows this tradition, combining static code metrics
+with optional git metadata (code churn, author count, file age, past bug count, commit
+frequency) in a Logistic Regression + XGBoost ensemble, where the gradient-boosted tree
+component benefits from early stopping regularisation (best iteration at epoch 97).
+
+\subsection{Vulnerability Detection}
+
+ML-based vulnerability detection accelerated after the release of labelled datasets:
+Devign~\cite{zhou2019}, D2A, and CodeXGLUE. Approaches range from simple TF-IDF
+bag-of-tokens classifiers to graph neural networks over code property
+graphs~\cite{yamaguchi2014}, with graph-based methods generally performing better on
+tasks that require interprocedural reasoning.
+
+The security component uses a practical two-component ensemble: (1) a Random Forest classifier
+operating on a 25-dimensional feature vector (17 code metrics plus 8 security-specific counters
+covering dangerous imports, dangerous calls, long string literals, scanner findings at each
+severity level, try-block count, string literal count, and call site count), and (2) a 1D
+Convolutional Neural Network operating on token ID sequences of length 512.
+The ensemble combines both predictions via a weighted average ($w_{RF}=0.55$, $w_{CNN}=0.45$);
+these weights were fixed a priori based on validation-set precision-recall balance rather than
+optimised by grid search, so they do not introduce an additional tuning degree of freedom.
+
+\subsection{Code Embeddings and Pre-Trained Models}
+
+Pre-trained transformer models for code --- CodeBERT~\cite{feng2020}, GraphCodeBERT~\cite{guo2021}, and CodeT5~\cite{wang2021} --- established strong baselines across vulnerability detection, clone detection, code summarization, and defect prediction.
+
+A CodeBERT-based approach was evaluated for pattern recognition and rejected in favour of a calibrated XGBoost classifier on a 22-dimensional debiased AST feature vector, primarily to avoid the $\sim$500\,MB model download and GPU requirement. After removing 14 leaky features that encoded the label rules directly, the debiased CV F1 is $0.653 \pm 0.017$ (test F1 $= 0.688$, AUC $= 0.848$). Section~\ref{ssec:pattern} details this design.
+
+\subsection{Ensemble Methods}
+
+Ensemble methods combine multiple base learners to reduce variance and improve
+generalization. Random forests are a bagging ensemble of decision trees; gradient
+boosted trees (XGBoost~\cite{chen2016}) train trees sequentially, each correcting
+the errors of the previous. XGBoost handles complexity prediction here, chosen for its strong performance on tabular regression and resistance to
+overfitting. The security and bug prediction models both use two-component ensembles
+(RF/CNN and LR/XGBoost respectively) to combine complementary representations.
+
+%% ============================================================
 
 \chapter{Related Work}
 \label{ch:related}
