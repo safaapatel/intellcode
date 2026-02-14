@@ -537,10 +537,121 @@ overfitting. The security and bug prediction models both use two-component ensem
 (RF/CNN and LR/XGBoost respectively) to combine complementary representations.
 
 %% ============================================================
-
 \chapter{Related Work}
 \label{ch:related}
+%% ============================================================
 
+\section{Automated Code Review Systems}
+\label{sec:rel-review}
+
+Automated code review is not a single thing. It covers rule-based linters, statistical
+defect predictors, graph neural networks over code property graphs, and commercial
+platforms that mix several of these. This chapter covers the work most directly relevant
+to IntelliCode Review and explains where this thesis sits relative to each tradition.
+
+\subsection{Traditional Static Analysis Tools}
+
+Pylint~\cite{pylint}, Flake8, and mypy represent the mainstream of Python static analysis.
+Pylint checks for coding conventions, error detection, and refactoring suggestions through
+a rule-based system. Flake8 wraps pycodestyle, pyflakes, and McCabe complexity into a
+lightweight linter. Bandit~\cite{bandit} focuses exclusively on security, scanning for
+dangerous function calls, insecure defaults, and known vulnerability patterns using
+a plugin architecture.
+
+The limitation is the rule set itself: these tools can only detect what their authors
+anticipated. They do not learn from the codebase being analysed, do not predict future
+bugs, and produce no integrated score across multiple dimensions. IntelliCode Review
+augments rule-based analysis with ML models that capture patterns too context-dependent
+to express as fixed rules.
+
+SonarQube~\cite{sonarqube} is a commercial platform offering multi-language static analysis
+with quality gates, technical debt tracking, and CI/CD integration. It is the closest
+commercial analogue to IntelliCode Review. However, SonarQube uses rule-based analysis
+rather than trained ML models for most of its checks, requires significant infrastructure
+(a Java server, database), and is primarily oriented toward team-level dashboards rather
+than individual developer feedback.
+
+\subsection{CodeClimate and Similar Platforms}
+
+CodeClimate provides automated code review for GitHub repositories, computing a
+maintainability score based on duplication, complexity, and code smells. Like SonarQube,
+it is rule-based and lacks ML-based defect prediction. IntelliCode Review differs by
+incorporating trained models for security, bugs, and complexity, and by running as a
+self-contained prototype that requires no external service account or API key.
+
+Amazon CodeGuru Reviewer~\cite{codeguru} uses ML to detect resource leaks, concurrency issues, and security vulnerabilities in Java and Python code through pull request integration. GitHub Advanced Security~\cite{ghadvancedsecurity} (formerly LGTM) applies CodeQL dataflow analysis across multiple languages. DeepScan and Codacy offer ML-assisted analysis as cloud services. All three have access to proprietary training data and production-scale infrastructure that a research prototype cannot match.
+
+IntelliCode Review sits in a different position. It is self-contained, runs without cloud dependencies, and reports cross-project evaluation results — including the failures — rather than presenting only in-distribution benchmarks. The dimension-coverage comparison in Table~\ref{tab:coverage} is most meaningful when read against the open-source tools Bandit, Pylint, Radon, and SonarQube Community Edition, all of which run under comparable infrastructure constraints.
+
+\section{Defect Prediction}
+\label{sec:rel-defect}
+
+\subsection{Metric-Based Approaches}
+
+Nagappan and Ball~\cite{nagappan2005} demonstrated that relative code churn metrics predict
+defect density with high accuracy across Windows Server 2003 components. Their work
+established code churn (lines added, deleted, and changed between revisions) as a key
+predictor, which IntelliCode Review incorporates as an optional feature in its bug
+predictor. Zimmermann et al.~\cite{zimmermann2007} extended defect prediction to use
+network analysis of code dependencies, finding that highly connected components tend to
+have more defects.
+
+\subsection{Machine Learning Approaches}
+
+Lessmann et al.~\cite{lessmann2008} compared 22 classifiers for defect prediction and found no single classifier consistently dominates, motivating ensemble approaches. IntelliCode Review's LR + XGBoost ensembling pairs calibrated probability estimates with XGBoost's nonlinear interactions. Kamei et al.~\cite{kamei2013} introduced just-in-time defect prediction operating on individual commits; the IntelliCode Review bug predictor borrows git-level metadata (churn, author count, commit frequency) from this tradition, though a strict temporal split reveals that git metadata does not overcome distribution shift.
+
+\subsection{Deep Learning for Defect Prediction}
+
+Li et al.~\cite{li2017} showed that CNN models over source token sequences capture structural information without manual feature engineering — the motivation for IntelliCode Review's 1D CNN security component. Zhou et al.~\cite{zhou2019} introduced Devign, a GNN approach over joint code property graphs for C/C++ vulnerability detection; the principle of combining structural and lexical views is reflected in the RF+CNN ensemble.
+
+\section{Code Clone Detection}
+\label{sec:rel-clone}
+
+Roy and Cordy~\cite{roy2007} defined four clone types; the IntelliCode Review clone detector covers Types 1--3 using normalised AST representation and TF-IDF cosine similarity. SourcererCC~\cite{sajnani2016} scaled TF-IDF bag-of-tokens to billion-line codebases; IntelliCode Review uses a lighter in-memory version appropriate for single-file snippet analysis.
+
+\section{Code Readability and Maintainability}
+\label{sec:rel-readability}
+
+Buse and Weimer~\cite{buse2010} developed a machine learning model for predicting code
+readability based on local features (identifier length, keyword density, line length,
+indentation consistency). Their model achieved strong correlation with human readability
+judgments. IntelliCode Review's readability scorer implements a multi-dimensional scoring
+approach inspired by this work, evaluating naming conventions, comment density, structural
+consistency, and cognitive load.
+
+\section{Pre-Trained Models for Code}
+\label{sec:rel-pretrained}
+
+Feng et al.~\cite{feng2020} introduced CodeBERT, achieving strong results on code search, documentation generation, and clone detection. Its infrastructure requirements (~500\,MB weights, GPU inference) are impractical for a locally-deployed tool targeting solo developers. A calibrated XGBoost classifier on 22 debiased structural AST features satisfies the latency budget ($<$200\,ms on CPU); the debiased model achieves AUC $= 0.848$ and CV F1 $= 0.653$. The original 26-feature numbers (AUC $= 0.969$, F1 $= 0.804$) were inflated by label leakage and are not reported as primary results.
+
+\section{Developer tool adoption and alert fatigue}
+\label{sec:rel-adoption}
+
+The developer tool adoption literature provides empirical grounding for several design
+decisions in IntelliCode Review. Johnson et al.~\cite{johnson2013} surveyed professional
+developers about their reasons for not using static analysis tools and found three
+dominant barriers: too many false positive warnings, difficulty customising the tool to
+their workflow, and a perceived mismatch between warning categories and actual bugs they
+cared about.
+
+Christakis and Bird~\cite{christakis2016} found that 91\% of developers who stopped using a static analysis tool cited false positives as the primary reason; even a 1-in-5 false positive rate led most to dismiss all output. This \textit{alert fatigue} effect directly informed IntelliCode Review's design: the security model uses an operating threshold of 0.050 to favour precision over recall, findings are grouped by root cause rather than line number, and the bug predictor surfaces its three evaluation-protocol AUC values to discourage over-reliance on the raw probability. Kononenko et al.~\cite{kononenko2016} found that unclear or unprioritised findings are the primary cause of review feedback being ignored, motivating the Fix Guide's before/after format and effort estimates.
+
+\section{Integrated developer productivity tools}
+\label{sec:rel-idt}
+
+GitHub Copilot and Amazon CodeWhisperer address code \textit{generation}: suggesting
+completions, functions, and boilerplate. They do not analyse existing code for defects.
+IntelliCode Review is in a different position: it does not write code, but scrutinises what is already there.
+
+DeepCode (now Snyk Code) uses an ML pipeline similar in spirit to IntelliCode Review's RF+CNN ensemble but is almost entirely security-focused and publishes no cross-project or temporal evaluation results in peer-reviewed venues. IntelliCode Review distributes attention across twelve dimensions and reports LOPO AUC = 0.494 — transparency that commercial tools do not provide even when their proprietary in-distribution benchmarks show higher absolute performance.
+
+\subsection*{Evaluation practice and the field consensus}
+
+The majority of defect prediction and vulnerability detection papers report AUC or F1 on a single random split. Shepperd et al.~\cite{shepperd2014} and Tantithamthavorn et al.~\cite{tantithamthavorn2016} showed that random splits inflate performance by allowing training on future commits; Menzies et al.~\cite{menzies2011} documented severe cross-project degradation. Cross-project defect prediction reliably falls below random-split performance --- Zimmermann et al.~\cite{zimmermann2007} found 0\% accuracy on cross-project transfer for some tasks --- and random splits overestimate temporal AUC by 10--30\% for static-metric JIT models~\cite{kamei2013}. Label quality, not model capacity, is typically the binding constraint.
+
+This thesis treats temporal leakage and distribution shift as primary results, not footnotes. IntelliCode Review's LOPO results (security AUC $= 0.494$, bug predictor temporal AUC $= 0.460$) are the expected consequence of applying ML to code quality under realistic constraints. PIFF, SAEF, LAMV, and TDCP address distinct categories of this reporting gap; no prior work in this survey applies all four.
+
+%% ============================================================
 
 \chapter{Motivation and Proposed Solution}
 \label{ch:motivation}
