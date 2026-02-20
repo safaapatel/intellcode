@@ -652,10 +652,167 @@ The majority of defect prediction and vulnerability detection papers report AUC 
 This thesis treats temporal leakage and distribution shift as primary results, not footnotes. IntelliCode Review's LOPO results (security AUC $= 0.494$, bug predictor temporal AUC $= 0.460$) are the expected consequence of applying ML to code quality under realistic constraints. PIFF, SAEF, LAMV, and TDCP address distinct categories of this reporting gap; no prior work in this survey applies all four.
 
 %% ============================================================
-
 \chapter{Motivation and Proposed Solution}
 \label{ch:motivation}
+%% ============================================================
 
+\section{Motivation}
+\label{sec:motivation}
+
+Three problems in current code quality tooling shaped the design of IntelliCode Review.
+Each one is a real friction point, not an abstract concern.
+
+\textbf{Fragmentation.} Getting comprehensive Python feedback today means running Pylint
+for style, Bandit for security, radon for complexity, vulture for dead code, and possibly
+a paid service for technical debt. Each tool has a different configuration format, a
+different severity scale, and a different output schema. Putting those results together
+takes work that most developers skip, so parts of the picture go unexamined by default.
+
+\textbf{The ceiling on rule-based detection.} Rules catch what their authors anticipated.
+Code quality issues are often context-dependent: combinations of features that are
+individually harmless can together indicate elevated risk in ways that are hard to
+express as fixed patterns. ML models trained on labelled examples of vulnerable or
+complex code can capture those distributional patterns, at the cost of requiring
+training data and accepting probabilistic outputs.
+
+\textbf{Adoption.} As established in Section~\ref{sec:rel-adoption}, developers abandon tools that produce excessive false positives or demand non-trivial configuration~\cite{johnson2013, christakis2016}. Speed and low friction are not polish; they determine whether analysis results are ever seen.
+
+\section{Design Goals}
+\label{sec:goals}
+
+Those three problems translate into five concrete goals.
+\textbf{Comprehensiveness:} cover twelve quality dimensions in one request — no tool-switching, no reconciliation.
+\textbf{ML augmentation:} at least three components use trained models to capture distributional patterns that fixed rules cannot anticipate.
+\textbf{Speed:} full 1000-line analysis within two seconds; a fast path below 500\,ms for CI pre-commit hooks.
+\textbf{Persistence:} analysis history, custom rules, and repository configurations survive browser sessions without a backend database.
+\textbf{Actionability:} every finding carries a severity classification, a CWE identifier, and a before/after remediation snippet; a finding without a concrete fix is only marginally better than no finding at all.
+
+\section{System Overview}
+\label{sec:overview}
+
+Figure~\ref{fig:architecture} shows the high-level architecture of IntelliCode Review,
+which is structured across three tiers. The browser-based frontend is a React 18 SPA
+where developers submit code, browse results across fourteen analysis tabs, track quality
+trends on the Analytics page, and compare two snippets side by side. The browser stores all analysis history in \texttt{localStorage}, with no backend database required.
+
+The Python FastAPI backend receives requests and dispatches them to the appropriate
+model classes in parallel. It exposes over twenty endpoints: the full combined analysis
+at \texttt{/analyze}, twelve specialised model endpoints, a Server-Sent Events streaming
+endpoint at \texttt{/analyze/stream} for progressive results, a fast sub-500\,ms path
+at \texttt{/analyze/quick}, and utility endpoints for statistics, feedback collection,
+and cache management.
+
+The ML layer consists of twelve model classes. Four of them (security, complexity, bug prediction, and pattern recognition) use trained checkpoints loaded from disk at startup. The remaining eight are deterministic AST-based analysers that produce
+reproducible results without probabilistic uncertainty.
+
+\begin{figure}[H]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[font=\sffamily\footnotesize]
+
+%% --- Frontend box -------------------------------------------
+\filldraw[fill=blue!10, draw=blue!55, line width=1.5pt, rounded corners=7pt]
+  (-3.0,-5.0) rectangle (3.0,5.0);
+\node[font=\sffamily\bfseries\normalsize] at (0,4.6) {Frontend};
+\node at (0,4.1) {React 18 + Vite 5};
+\node[font=\scriptsize, text=gray!70] at (0,3.7) {shadcn/ui \textbar\ Tailwind CSS \textbar\ TypeScript 5};
+\draw[gray!40, thin] (-2.7,3.3) -- (2.7,3.3);
+\node[font=\scriptsize, anchor=west] at (-2.7, 3.0) {$\bullet$~Dashboard.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 2.6) {$\bullet$~Submit.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 2.2) {$\bullet$~Reviews.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 1.8) {$\bullet$~ReviewDetail.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 1.4) {$\bullet$~Analytics.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 1.0) {$\bullet$~Compare.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 0.6) {$\bullet$~Admin.tsx};
+\node[font=\scriptsize, anchor=west] at (-2.7, 0.2) {$\bullet$~Rules / Repositories};
+\draw[gray!40, thin] (-2.7,-0.2) -- (2.7,-0.2);
+\filldraw[fill=yellow!25, draw=yellow!60, rounded corners=3pt]
+  (-2.6,-0.4) rectangle (2.6,-4.5);
+\node[font=\sffamily\bfseries\scriptsize] at (0,-0.8) {Browser localStorage};
+\node[font=\scriptsize\ttfamily] at (0,-1.4) {intellcode\_history};
+\node[font=\scriptsize\ttfamily] at (0,-2.0) {intellcode\_rules};
+\node[font=\scriptsize\ttfamily] at (0,-2.6) {intellcode\_repositories};
+\node[font=\tiny, text=gray] at (0,-3.3) {api.ts auto-saves every result};
+\node[font=\tiny, text=gray] at (0,-3.7) {reviewHistory.ts manages CRUD};
+
+%% --- Backend box --------------------------------------------
+\filldraw[fill=green!10, draw=green!55, line width=1.5pt, rounded corners=7pt]
+  (4.5,-5.0) rectangle (10.5,5.0);
+\node[font=\sffamily\bfseries\normalsize] at (7.5,4.6) {Backend};
+\node at (7.5,4.1) {FastAPI + Uvicorn};
+\node[font=\scriptsize, text=gray!70] at (7.5,3.7) {Port 8000 \textbar\ Pydantic v2 \textbar\ Python 3.11};
+\draw[gray!40, thin] (4.8,3.3) -- (10.2,3.3);
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,3.0) {POST /analyze};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,2.6) {POST /analyze/quick};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,2.2) {POST /analyze/stream (SSE)};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,1.8) {POST /analyze/security};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,1.4) {POST /analyze/complexity};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,1.0) {POST /analyze/bugs};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,0.6) {POST /analyze/clones};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,0.2) {POST /analyze/refactoring};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-0.2) {POST /analyze/dead-code};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-0.6) {POST /analyze/debt};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-1.0) {POST /analyze/docs};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-1.4) {POST /analyze/performance};
+\draw[gray!40, thin] (4.8,-1.8) -- (10.2,-1.8);
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-2.2) {GET  /health \textbar\ /models \textbar\ /stats};
+\node[font=\ttfamily\scriptsize, anchor=west] at (4.8,-2.6) {POST /feedback \textbar\ /cache/clear};
+\draw[gray!40, thin] (4.8,-3.0) -- (10.2,-3.0);
+\node[font=\scriptsize, text=gray] at (7.5,-3.4) {ModelRegistry singleton};
+\node[font=\scriptsize, text=gray] at (7.5,-3.8) {loads all models at startup};
+\node[font=\scriptsize, text=gray] at (7.5,-4.2) {CORS: allow\_origins=["*"]};
+
+%% --- ML Models box ------------------------------------------
+\filldraw[fill=orange!10, draw=orange!55, line width=1.5pt, rounded corners=7pt]
+  (12.0,-5.0) rectangle (18.5,5.0);
+\node[font=\sffamily\bfseries\normalsize] at (15.25,4.6) {ML Models (12)};
+\node at (15.25,4.1) {XGBoost \textbar\ scikit-learn \textbar\ PyTorch};
+\node[font=\scriptsize, text=gray!70] at (15.25,3.7) {HuggingFace Transformers};
+\draw[gray!40, thin] (12.3,3.3) -- (18.2,3.3);
+\node[font=\sffamily\itshape\scriptsize] at (15.25,3.0) {--- Trained Checkpoints ---};
+\node[font=\scriptsize, anchor=west] at (12.3,2.6) {$\bullet$~Security (RF + 1D CNN)};
+\node[font=\scriptsize, anchor=west] at (12.3,2.2) {$\bullet$~Complexity (XGBoost)};
+\node[font=\scriptsize, anchor=west] at (12.3,1.8) {$\bullet$~Bug Prediction (LR + XGBoost)};
+\node[font=\scriptsize, anchor=west] at (12.3,1.4) {$\bullet$~Pattern Recognition (RF)};
+\draw[gray!40, thin] (12.3,1.0) -- (18.2,1.0);
+\node[font=\sffamily\itshape\scriptsize] at (15.25,0.7) {--- AST-Based (deterministic) ---};
+\node[font=\scriptsize, anchor=west] at (12.3, 0.3) {$\bullet$~Clone Detection (TF-IDF)};
+\node[font=\scriptsize, anchor=west] at (12.3,-0.1) {$\bullet$~Refactoring Suggester};
+\node[font=\scriptsize, anchor=west] at (12.3,-0.5) {$\bullet$~Dead Code Detector};
+\node[font=\scriptsize, anchor=west] at (12.3,-0.9) {$\bullet$~Technical Debt (SQALE)};
+\node[font=\scriptsize, anchor=west] at (12.3,-1.3) {$\bullet$~Doc Quality Analyzer};
+\node[font=\scriptsize, anchor=west] at (12.3,-1.7) {$\bullet$~Performance Hotspots};
+\node[font=\scriptsize, anchor=west] at (12.3,-2.1) {$\bullet$~Dependency Analyzer};
+\node[font=\scriptsize, anchor=west] at (12.3,-2.5) {$\bullet$~Readability Scorer};
+
+%% --- Arrows -------------------------------------------------
+\draw[->, line width=2pt, draw=blue!60]
+  (3.0, 0.7) -- (4.5, 0.7)
+  node[midway, above, font=\scriptsize\sffamily] {HTTP/JSON};
+\draw[<-, line width=2pt, draw=blue!60]
+  (3.0,-0.7) -- (4.5,-0.7)
+  node[midway, below, font=\scriptsize\sffamily] {response};
+\draw[->, line width=2pt, draw=green!70]
+  (10.5, 0.7) -- (12.0, 0.7)
+  node[midway, above, font=\scriptsize\sffamily] {fn calls};
+\draw[<-, line width=2pt, draw=green!70]
+  (10.5,-0.7) -- (12.0,-0.7)
+  node[midway, below, font=\scriptsize\sffamily] {results};
+
+\end{tikzpicture}%
+}
+\caption{High-level architecture of IntelliCode Review.}
+\label{fig:architecture}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{01_landing.png}
+\caption{Landing page of the running IntelliCode Review prototype. The hero section displays three aspirational headline figures used in the interface copy, and provides direct access to the embedded demo and feature overview. These figures reflect the platform's intended positioning and are not derived from controlled user experiments.}
+\label{fig:landing}
+\end{figure}
+
+%% ============================================================
 
 \chapter{Software Design and Implementation}
 \label{ch:design}
