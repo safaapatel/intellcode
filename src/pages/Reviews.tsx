@@ -10,7 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Download, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Search, Download, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, XCircle, Github } from "lucide-react";
+import { toast } from "sonner";
 
 const mockIssues = [
   {
@@ -109,6 +116,7 @@ const Reviews = () => {
   const [severityFilter, setSeverityFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [resolvedIds, setResolvedIds] = useState<number[]>([]);
 
   const stats = {
     total: 12,
@@ -143,6 +151,44 @@ const Reviews = () => {
     if (searchQuery && !issue.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   });
+
+  const handleMarkResolved = (id: number, title: string) => {
+    setResolvedIds((prev) => [...prev, id]);
+    toast.success(`Marked "${title}" as resolved`);
+  };
+
+  const handleExportJSON = () => {
+    const report = {
+      exportedAt: new Date().toISOString(),
+      summary: { ...stats },
+      issues: filteredIssues.map(({ id, severity, category, confidence, title, file, lines, description }) => ({
+        id, severity, category, confidence, title, file, lines, description,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "intellicode-review-report.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Report exported as JSON");
+  };
+
+  const handleExportCSV = () => {
+    const header = "ID,Severity,Category,Confidence,Title,File,Lines\n";
+    const rows = filteredIssues
+      .map((i) => `${i.id},${i.severity},${i.category},${i.confidence}%,"${i.title}",${i.file},${i.lines}`)
+      .join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "intellicode-review-report.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Report exported as CSV");
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -258,10 +304,18 @@ const Reviews = () => {
             />
           </div>
 
-          <Button variant="outline" className="gap-2">
-            <Download className="w-4 h-4" />
-            Export Report
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <Download className="w-4 h-4" />
+                Export Report
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleExportJSON}>Export as JSON</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportCSV}>Export as CSV</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Issues List */}
@@ -356,17 +410,32 @@ const Reviews = () => {
                     <p className="text-sm text-muted-foreground">{issue.whyMatters}</p>
                   </div>
 
-                  <div className="flex gap-2">
-                    <Button size="sm" className="bg-gradient-primary">
-                      Mark Resolved
-                    </Button>
-                    <Button size="sm" variant="outline">
+                  <div className="flex gap-2 flex-wrap">
+                    {resolvedIds.includes(issue.id) ? (
+                      <Button size="sm" variant="outline" className="gap-1.5 text-green-400 border-green-500/30" disabled>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Resolved
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="bg-gradient-primary gap-1.5"
+                        onClick={() => handleMarkResolved(issue.id, issue.title)}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Mark Resolved
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Discussion thread opened")}>
+                      <MessageSquare className="w-3.5 h-3.5" />
                       Discuss
                     </Button>
-                    <Button size="sm" variant="outline">
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Marked as false positive")}>
+                      <XCircle className="w-3.5 h-3.5" />
                       False Positive
                     </Button>
-                    <Button size="sm" variant="outline">
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Opening in GitHub...")}>
+                      <Github className="w-3.5 h-3.5" />
                       View in GitHub
                     </Button>
                   </div>
