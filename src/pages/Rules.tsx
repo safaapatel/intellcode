@@ -10,6 +10,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Plus, Check, FileCode, Play } from "lucide-react";
 import {
   mockRuleSets,
@@ -34,6 +41,36 @@ const Rules = () => {
   const [codeSmellRules, setCodeSmellRules] = useState(mockCodeSmellRules);
   const [previewFile, setPreviewFile] = useState("sample_analytics.py");
   const [previewResults, setPreviewResults] = useState<string[] | null>(null);
+  const [ruleSets, setRuleSets] = useState(mockRuleSets);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newLanguage, setNewLanguage] = useState("Python");
+  const [newTemplate, setNewTemplate] = useState("blank");
+
+  const handleCreate = () => {
+    if (!newName.trim()) {
+      toast.error("Please enter a name for the rule set");
+      return;
+    }
+    const newSet = {
+      id: String(ruleSets.length + 1),
+      name: newName.trim(),
+      description: newDescription.trim() || "Custom rule set",
+      language: newLanguage,
+      isDefault: false,
+      repositories: 0,
+      issues: 0,
+    };
+    setRuleSets((prev) => [...prev, newSet]);
+    setSelectedRuleSet(newSet);
+    setCreateOpen(false);
+    setNewName("");
+    setNewDescription("");
+    setNewLanguage("Python");
+    setNewTemplate("blank");
+    toast.success(`Rule set "${newSet.name}" created`);
+  };
 
   const handleSaveChanges = () => {
     toast.success("Rule set saved successfully");
@@ -90,7 +127,7 @@ const Rules = () => {
         <aside className="w-64 min-h-[calc(100vh-60px)] bg-card border-r border-border p-4">
           <h2 className="text-sm font-semibold text-muted-foreground mb-4">Your Rule Sets</h2>
           <div className="space-y-2">
-            {mockRuleSets.map((ruleSet) => (
+            {ruleSets.map((ruleSet) => (
               <button
                 key={ruleSet.id}
                 onClick={() => {
@@ -117,7 +154,7 @@ const Rules = () => {
               </button>
             ))}
           </div>
-          <Button className="w-full mt-4 bg-gradient-primary" size="sm">
+          <Button className="w-full mt-4 bg-gradient-primary" size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Create New Rule Set
           </Button>
@@ -372,6 +409,76 @@ const Rules = () => {
           </div>
         </main>
       </div>
+
+      {/* Create New Rule Set Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Rule Set</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Name *</label>
+              <Input
+                placeholder="e.g. Python Strict, JS Standard..."
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="bg-input"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Description</label>
+              <Input
+                placeholder="Brief description of this rule set"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                className="bg-input"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Language</label>
+                <Select value={newLanguage} onValueChange={setNewLanguage}>
+                  <SelectTrigger className="bg-input">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["Python", "JavaScript", "TypeScript", "Go", "Java", "Multiple"].map((l) => (
+                      <SelectItem key={l} value={l}>{l}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Start From</label>
+                <Select value={newTemplate} onValueChange={setNewTemplate}>
+                  <SelectTrigger className="bg-input">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="blank">Blank</SelectItem>
+                    <SelectItem value="python-strict">Python Strict</SelectItem>
+                    <SelectItem value="js-standard">JS Standard</SelectItem>
+                    <SelectItem value="security">Security Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button className="bg-gradient-primary" onClick={handleCreate}>
+              <Plus className="w-4 h-4 mr-2" />
+              Create Rule Set
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

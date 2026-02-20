@@ -11,8 +11,10 @@ import { mockUser } from "@/data/mockData";
 
 const navLinks = [
   { name: "Dashboard", path: "/dashboard" },
+  { name: "Repositories", path: "/repositories" },
   { name: "Reviews", path: "/reviews" },
   { name: "Analytics", path: "/analytics" },
+  { name: "ML Models", path: "/models" },
   { name: "Rules", path: "/rules" },
   { name: "Settings", path: "/settings" },
 ];
@@ -59,10 +61,14 @@ export const AppNavigation = () => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Settings</DropdownMenuItem>
-            <DropdownMenuItem>
-              <Link to="/">Sign Out</Link>
+            <DropdownMenuItem asChild>
+              <Link to="/settings">Profile</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/settings">Settings</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/login">Sign Out</Link>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

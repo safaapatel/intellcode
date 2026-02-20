@@ -33,10 +33,10 @@ export const Navigation = () => {
         
         <div className="flex items-center gap-4">
           <Button variant="ghost" className="hidden sm:inline-flex" asChild>
-            <Link to="/dashboard">Sign In</Link>
+            <Link to="/login">Sign In</Link>
           </Button>
           <Button className="bg-gradient-primary hover:shadow-glow-primary" asChild>
-            <Link to="/dashboard">Get Started</Link>
+            <Link to="/login">Get Started</Link>
           </Button>
         </div>
       </div>
