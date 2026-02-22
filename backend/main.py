@@ -14,6 +14,14 @@ Endpoints:
     POST /analyze/complexity
     POST /analyze/patterns
     POST /analyze/bugs
+    POST /analyze/clones
+    POST /analyze/refactoring
+    POST /analyze/dead-code
+    POST /analyze/debt
+    POST /analyze/docs
+    POST /analyze/performance
+    POST /analyze/dependencies
+    POST /analyze/readability
 """
 
 from __future__ import annotations
@@ -32,6 +40,14 @@ from features.security_patterns import scan_security_patterns
 from models.security_detection import EnsembleSecurityModel
 from models.complexity_prediction import ComplexityPredictionModel
 from models.bug_predictor import BugPredictionModel, GitMetadata
+from models.code_clone_detection import CodeCloneDetector
+from models.refactoring_suggester import RefactoringSuggester
+from models.dead_code_detector import DeadCodeDetector
+from models.technical_debt import TechnicalDebtEstimator
+from models.doc_quality_analyzer import DocQualityAnalyzer
+from models.performance_analyzer import PerformanceAnalyzer
+from models.dependency_analyzer import DependencyAnalyzer
+from models.readability_scorer import ReadabilityScorer
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +59,14 @@ class ModelRegistry:
     complexity: ComplexityPredictionModel | None = None
     bug_predictor: BugPredictionModel | None = None
     pattern_model = None   # loaded lazily (large download)
+    clone_detector: CodeCloneDetector | None = None
+    refactoring_suggester: RefactoringSuggester | None = None
+    dead_code_detector: DeadCodeDetector | None = None
+    debt_estimator: TechnicalDebtEstimator | None = None
+    doc_analyzer: DocQualityAnalyzer | None = None
+    performance_analyzer: PerformanceAnalyzer | None = None
+    dependency_analyzer: DependencyAnalyzer | None = None
+    readability_scorer: ReadabilityScorer | None = None
     load_errors: dict[str, str] = {}
 
 
@@ -81,6 +105,31 @@ async def lifespan(app: FastAPI):
         registry.load_errors["bug_predictor"] = str(e)
         print(f"  [WARN] Bug predictor: {e}")
 
+    # Lightweight models — always load
+    registry.clone_detector = CodeCloneDetector()
+    print("  [OK] Code clone detector")
+
+    registry.refactoring_suggester = RefactoringSuggester()
+    print("  [OK] Refactoring suggester")
+
+    registry.dead_code_detector = DeadCodeDetector()
+    print("  [OK] Dead code detector")
+
+    registry.debt_estimator = TechnicalDebtEstimator()
+    print("  [OK] Technical debt estimator")
+
+    registry.doc_analyzer = DocQualityAnalyzer()
+    print("  [OK] Documentation quality analyzer")
+
+    registry.performance_analyzer = PerformanceAnalyzer()
+    print("  [OK] Performance hotspot analyzer")
+
+    registry.dependency_analyzer = DependencyAnalyzer()
+    print("  [OK] Dependency & coupling analyzer")
+
+    registry.readability_scorer = ReadabilityScorer()
+    print("  [OK] Code readability scorer")
+
     print("Models ready.")
     yield
     print("Shutting down.")
@@ -93,7 +142,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="IntelliCode Review API",
     description="AI-powered code analysis REST API",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -173,6 +222,10 @@ class FullAnalysisResponse(BaseModel):
     complexity: ComplexityOut
     bug_prediction: BugPredictionOut
     patterns: Optional[PatternOut]
+    clones: dict
+    refactoring: dict
+    dead_code: dict
+    technical_debt: dict
     overall_score: int
     status: str            # "clean" | "action_required" | "critical"
     summary: str
@@ -192,6 +245,14 @@ def health():
             "complexity": "ready" if registry.complexity else "unavailable",
             "bug_predictor": "ready" if registry.bug_predictor else "unavailable",
             "pattern_recognition": "not_loaded",  # lazy
+            "clone_detector": "ready" if registry.clone_detector else "unavailable",
+            "refactoring_suggester": "ready" if registry.refactoring_suggester else "unavailable",
+            "dead_code_detector": "ready" if registry.dead_code_detector else "unavailable",
+            "debt_estimator": "ready" if registry.debt_estimator else "unavailable",
+            "doc_analyzer": "ready" if registry.doc_analyzer else "unavailable",
+            "performance_analyzer": "ready" if registry.performance_analyzer else "unavailable",
+            "dependency_analyzer": "ready" if registry.dependency_analyzer else "unavailable",
+            "readability_scorer": "ready" if registry.readability_scorer else "unavailable",
         },
         "errors": registry.load_errors,
     }
@@ -242,6 +303,78 @@ def list_models():
                 "use_case": "Predicts bug likelihood from static + git features",
                 "loaded": registry.bug_predictor is not None,
             },
+            {
+                "id": "code_clone_detection",
+                "name": "Code Clone Detection",
+                "architecture": "TF-IDF Embedder + Cosine Similarity (Type-1/2/3)",
+                "status": "production",
+                "tech_stack": ["Python AST", "NumPy"],
+                "use_case": "Detects exact, renamed, and near-miss code duplicates",
+                "loaded": registry.clone_detector is not None,
+            },
+            {
+                "id": "refactoring_suggester",
+                "name": "Refactoring Suggester",
+                "architecture": "AST-based rule engine with effort scoring",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Suggests Extract Method, Reduce Nesting, Simplify Conditions, etc.",
+                "loaded": registry.refactoring_suggester is not None,
+            },
+            {
+                "id": "dead_code_detector",
+                "name": "Dead Code Detector",
+                "architecture": "AST visitor with definition/usage graph",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Detects unreachable code, unused imports, empty except blocks, etc.",
+                "loaded": registry.dead_code_detector is not None,
+            },
+            {
+                "id": "technical_debt",
+                "name": "Technical Debt Estimator",
+                "architecture": "SQALE-inspired aggregation model",
+                "status": "production",
+                "tech_stack": ["Python"],
+                "use_case": "Estimates remediation time and A–E debt rating per category",
+                "loaded": registry.debt_estimator is not None,
+            },
+            {
+                "id": "doc_quality",
+                "name": "Documentation Quality Analyzer",
+                "architecture": "AST docstring parser with quality scoring",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Scores docstring coverage, completeness, and quality (A–F grade)",
+                "loaded": registry.doc_analyzer is not None,
+            },
+            {
+                "id": "performance_analyzer",
+                "name": "Performance Hotspot Predictor",
+                "architecture": "AST pattern matcher for anti-patterns",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Detects O(n²) loops, I/O in loops, string concat, mutable defaults, etc.",
+                "loaded": registry.performance_analyzer is not None,
+            },
+            {
+                "id": "dependency_analyzer",
+                "name": "Dependency & Coupling Analyzer",
+                "architecture": "Import graph analysis with coupling metrics",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Measures fan-out, instability, wildcard imports, coupling score",
+                "loaded": registry.dependency_analyzer is not None,
+            },
+            {
+                "id": "readability_scorer",
+                "name": "Code Readability Scorer",
+                "architecture": "Multi-dimension AST scoring model",
+                "status": "production",
+                "tech_stack": ["Python AST"],
+                "use_case": "Scores naming, comments, structure, cognitive load → A–F grade",
+                "loaded": registry.readability_scorer is not None,
+            },
         ]
     }
 
@@ -249,8 +382,7 @@ def list_models():
 @app.post("/analyze", response_model=FullAnalysisResponse, tags=["analysis"])
 def analyze_full(req: AnalyzeRequest):
     """
-    Full analysis: runs security detection, complexity prediction,
-    pattern recognition, and bug prediction.
+    Full analysis: runs all 8 ML models and returns a combined report.
     """
     t_start = time.perf_counter()
     source = req.code
@@ -280,7 +412,6 @@ def analyze_full(req: AnalyzeRequest):
     else:
         from models.complexity_prediction import ComplexityPredictionModel as CPM
         complexity_result = CPM().predict(source)
-
     complexity_out = ComplexityOut(**complexity_result.to_dict())
 
     # --- Bug Prediction ---
@@ -291,13 +422,11 @@ def analyze_full(req: AnalyzeRequest):
             for k in ("code_churn", "author_count", "file_age_days",
                       "n_past_bugs", "commit_freq")
         })
-
     if registry.bug_predictor:
         bug_result = registry.bug_predictor.predict(source, git_meta)
     else:
         from models.bug_predictor import BugPredictionModel as BPM
         bug_result = BPM().predict(source, git_meta)
-
     bug_out = BugPredictionOut(**bug_result.to_dict())
 
     # --- Pattern Recognition (lazy load) ---
@@ -313,27 +442,54 @@ def analyze_full(req: AnalyzeRequest):
         except Exception:
             pass
 
+    # --- Code Clone Detection ---
+    clone_result = registry.clone_detector.detect(source)
+    clone_out = clone_result.to_dict()
+
+    # --- Refactoring Suggestions ---
+    refactor_result = registry.refactoring_suggester.analyze(source)
+    refactor_out = refactor_result.to_dict()
+
+    # --- Dead Code Detection ---
+    dead_result = registry.dead_code_detector.detect(source)
+    dead_out = dead_result.to_dict()
+
+    # --- Technical Debt ---
+    debt_result = registry.debt_estimator.estimate(
+        source=source,
+        security_result=security_out,
+        complexity_result=complexity_result.to_dict(),
+        bug_result=bug_result.to_dict(),
+        clone_result=clone_result,
+        dead_code_result=dead_result,
+        refactoring_result=refactor_result,
+    )
+    debt_out = debt_result.to_dict()
+
     # --- Overall score ---
     sec_penalty = security_out.get("summary", {}).get("critical", 0) * 15 + \
                   security_out.get("summary", {}).get("high", 0) * 8
-    overall_score = max(0, int(complexity_out.score - sec_penalty))
+    clone_penalty = min(20, len(clone_out.get("clones", [])) * 3)
+    dead_penalty = min(10, dead_out.get("dead_line_count", 0) // 10)
+    overall_score = max(0, int(complexity_out.score - sec_penalty - clone_penalty - dead_penalty))
 
     # Status
     crit = security_out.get("summary", {}).get("critical", 0)
     high = security_out.get("summary", {}).get("high", 0)
-    if crit > 0:
+    if crit > 0 or debt_result.overall_rating == "E":
         status = "critical"
-    elif high > 0 or complexity_out.score < 60:
+    elif high > 0 or complexity_out.score < 60 or debt_result.overall_rating in ("D",):
         status = "action_required"
     else:
         status = "clean"
 
-    # Summary
     total_issues = security_out.get("summary", {}).get("total", 0)
     summary = (
         f"Found {total_issues} security issue(s). "
-        f"Code quality score: {complexity_out.score}/100 ({complexity_out.grade}). "
-        f"Bug risk: {bug_out.risk_level}."
+        f"Code quality: {complexity_out.score}/100 ({complexity_out.grade}). "
+        f"Bug risk: {bug_out.risk_level}. "
+        f"Clones: {len(clone_out.get('clones', []))}. "
+        f"Debt: {debt_result.total_debt_minutes} min (Rating {debt_result.overall_rating})."
     )
 
     duration = round(time.perf_counter() - t_start, 3)
@@ -346,6 +502,10 @@ def analyze_full(req: AnalyzeRequest):
         complexity=complexity_out,
         bug_prediction=bug_out,
         patterns=pattern_out,
+        clones=clone_out,
+        refactoring=refactor_out,
+        dead_code=dead_out,
+        technical_debt=debt_out,
         overall_score=overall_score,
         status=status,
         summary=summary,
@@ -394,7 +554,6 @@ def analyze_patterns(req: AnalyzeRequest):
     t_start = time.perf_counter()
 
     if registry.pattern_model is None:
-        # Lazy-load CodeBERT on first request
         try:
             from models.pattern_recognition import PatternRecognitionModel
             registry.pattern_model = PatternRecognitionModel(
@@ -434,6 +593,124 @@ def analyze_bugs(req: AnalyzeRequest):
         from models.bug_predictor import BugPredictionModel as BPM
         result = BPM().predict(req.code, git_meta)
 
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/clones", tags=["analysis"])
+def analyze_clones(req: AnalyzeRequest):
+    """Code clone detection — finds Type-1, Type-2, and Type-3 duplicates."""
+    t_start = time.perf_counter()
+    result = registry.clone_detector.detect(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/refactoring", tags=["analysis"])
+def analyze_refactoring(req: AnalyzeRequest):
+    """Refactoring suggestions — actionable recommendations with effort estimates."""
+    t_start = time.perf_counter()
+    result = registry.refactoring_suggester.analyze(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/dead-code", tags=["analysis"])
+def analyze_dead_code(req: AnalyzeRequest):
+    """Dead code detection — unused imports, unreachable code, empty except blocks, etc."""
+    t_start = time.perf_counter()
+    result = registry.dead_code_detector.detect(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/debt", tags=["analysis"])
+def analyze_debt(req: AnalyzeRequest):
+    """
+    Technical debt estimation.
+    Runs all lightweight analyses internally and returns a SQALE-style debt report.
+    """
+    t_start = time.perf_counter()
+
+    # Run supporting analyses
+    security_out = None
+    if registry.security:
+        findings = registry.security.predict(req.code)
+        security_out = {
+            "summary": {
+                "critical": sum(1 for f in findings if f.severity == "critical"),
+                "high": sum(1 for f in findings if f.severity == "high"),
+                "medium": sum(1 for f in findings if f.severity == "medium"),
+                "low": sum(1 for f in findings if f.severity == "low"),
+            }
+        }
+
+    complexity_out = None
+    if registry.complexity:
+        complexity_out = registry.complexity.predict(req.code).to_dict()
+
+    bug_out = None
+    if registry.bug_predictor:
+        bug_out = registry.bug_predictor.predict(req.code).to_dict()
+
+    clone_result = registry.clone_detector.detect(req.code)
+    dead_result = registry.dead_code_detector.detect(req.code)
+    refactor_result = registry.refactoring_suggester.analyze(req.code)
+
+    result = registry.debt_estimator.estimate(
+        source=req.code,
+        security_result=security_out,
+        complexity_result=complexity_out,
+        bug_result=bug_out,
+        clone_result=clone_result,
+        dead_code_result=dead_result,
+        refactoring_result=refactor_result,
+    )
+
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/docs", tags=["analysis"])
+def analyze_docs(req: AnalyzeRequest):
+    """Documentation quality — scores docstring coverage and completeness."""
+    t_start = time.perf_counter()
+    result = registry.doc_analyzer.analyze(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/performance", tags=["analysis"])
+def analyze_performance(req: AnalyzeRequest):
+    """Performance hotspot detection — finds O(n²) loops, I/O in loops, etc."""
+    t_start = time.perf_counter()
+    result = registry.performance_analyzer.analyze(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/dependencies", tags=["analysis"])
+def analyze_dependencies(req: AnalyzeRequest):
+    """Dependency & coupling analysis — fan-out, wildcard imports, coupling score."""
+    t_start = time.perf_counter()
+    result = registry.dependency_analyzer.analyze(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/readability", tags=["analysis"])
+def analyze_readability(req: AnalyzeRequest):
+    """Code readability scoring — naming, comments, structure, cognitive load."""
+    t_start = time.perf_counter()
+    result = registry.readability_scorer.score(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return out

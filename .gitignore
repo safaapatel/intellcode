@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv
+venv/
+
+# ML artifacts (large binaries — regenerate with train_all.py)
+backend/checkpoints/
+backend/data/
+
+# Claude Code session files
+.claude/

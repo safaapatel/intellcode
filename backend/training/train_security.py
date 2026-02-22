@@ -43,7 +43,7 @@ def build_rf_features_from_records(records: list[dict]) -> tuple[np.ndarray, np.
     Re-extract RF features from raw source in records (if 'source' is available),
     or use pre-computed 'features' field.
     """
-    from features.security_detection import _build_rf_feature_vector
+    from models.security_detection import _build_rf_feature_vector
 
     X, y = [], []
     for rec in records:
@@ -145,54 +145,56 @@ def train(
         json.dump(vocab, f)
     print(f"Vocab saved to {vocab_path}")
 
-    print("\n=== Training 1D CNN ===")
-    X_cnn_train, y_cnn_train = build_token_ids(train_records, vocab)
-    X_cnn_test, y_cnn_test = build_token_ids(test_records, vocab)
+    cnn_auc = None
+    ensemble_auc = None
+    try:
+        import torch  # noqa: F401 — check availability before building model
+        print("\n=== Training 1D CNN ===")
+        X_cnn_train, y_cnn_train = build_token_ids(train_records, vocab)
+        X_cnn_test, y_cnn_test = build_token_ids(test_records, vocab)
 
-    cnn_model = CNNSecurityModel()
-    cnn_model.build(vocab)
-    cnn_model.train_loop(
-        X_cnn_train, y_cnn_train,
-        epochs=cnn_epochs,
-        batch_size=64,
-        lr=1e-3,
-    )
+        cnn_model = CNNSecurityModel()
+        cnn_model.build(vocab)
+        cnn_model.train_loop(
+            X_cnn_train, y_cnn_train,
+            epochs=cnn_epochs,
+            batch_size=64,
+            lr=1e-3,
+        )
 
-    cnn_model_path = str(out_dir / "cnn_model.pt")
-    cnn_model.save(cnn_model_path, vocab_path)
-    print(f"CNN saved to {cnn_model_path}")
+        cnn_model_path = str(out_dir / "cnn_model.pt")
+        cnn_model.save(cnn_model_path, vocab_path)
+        print(f"CNN saved to {cnn_model_path}")
 
-    # Evaluate CNN
-    cnn_probs = np.array([cnn_model.predict_proba(
-        " ".join(rec.get("tokens", []))
-    ) for rec in test_records])
-    cnn_labels = (cnn_probs > 0.5).astype(int)
-    cnn_auc = roc_auc_score(y_cnn_test, cnn_probs)
-    print(f"\nCNN Test Results:")
-    print(classification_report(y_cnn_test, cnn_labels,
-                                target_names=["clean", "vulnerable"]))
-    print(f"CNN AUC: {cnn_auc:.4f}")
-
-    # ----------------------------------------------------------------
-    # Ensemble evaluation
-    # ----------------------------------------------------------------
-    print("\n=== Ensemble Evaluation ===")
-    if len(X_rf_test) > 0:
-        rf_w, cnn_w = 0.55, 0.45
-        ensemble_probs = rf_w * rf_preds + cnn_w * cnn_probs
-        ensemble_labels = (ensemble_probs > 0.5).astype(int)
-        ensemble_auc = roc_auc_score(y_cnn_test, ensemble_probs)
-        print(classification_report(y_cnn_test, ensemble_labels,
+        cnn_probs = np.array([cnn_model.predict_proba(
+            " ".join(rec.get("tokens", []))
+        ) for rec in test_records])
+        cnn_labels = (cnn_probs > 0.5).astype(int)
+        cnn_auc = roc_auc_score(y_cnn_test, cnn_probs)
+        print(f"\nCNN Test Results:")
+        print(classification_report(y_cnn_test, cnn_labels,
                                     target_names=["clean", "vulnerable"]))
-        print(f"Ensemble AUC: {ensemble_auc:.4f}")
-    else:
-        ensemble_auc = cnn_auc
+        print(f"CNN AUC: {cnn_auc:.4f}")
+
+        print("\n=== Ensemble Evaluation ===")
+        if len(X_rf_test) > 0:
+            rf_w, cnn_w = 0.55, 0.45
+            ensemble_probs = rf_w * rf_preds + cnn_w * cnn_probs
+            ensemble_labels = (ensemble_probs > 0.5).astype(int)
+            ensemble_auc = roc_auc_score(y_cnn_test, ensemble_probs)
+            print(classification_report(y_cnn_test, ensemble_labels,
+                                        target_names=["clean", "vulnerable"]))
+            print(f"Ensemble AUC: {ensemble_auc:.4f}")
+        else:
+            ensemble_auc = cnn_auc
+    except ModuleNotFoundError:
+        print("\n[!!] torch not installed — skipping CNN training (RF-only mode)")
 
     # Save metrics
     metrics = {
         "rf_auc": float(rf_auc),
-        "cnn_auc": float(cnn_auc),
-        "ensemble_auc": float(ensemble_auc),
+        "cnn_auc": float(cnn_auc) if cnn_auc is not None else None,
+        "ensemble_auc": float(ensemble_auc) if ensemble_auc is not None else float(rf_auc),
         "n_train": len(train_records),
         "n_test": len(test_records),
         "vocab_size": len(vocab),
