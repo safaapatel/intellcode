@@ -813,10 +813,620 @@ reproducible results without probabilistic uncertainty.
 \end{figure}
 
 %% ============================================================
-
 \chapter{Software Design and Implementation}
 \label{ch:design}
+%% ============================================================
 
+This chapter describes what was built and how. It covers requirements, architecture,
+feature extraction, the twelve model implementations, the training pipeline, the API,
+and the frontend. Readers primarily interested in evaluation results can skip ahead to
+Chapter~\ref{ch:eval}; the design decisions that shaped those results are cross-referenced
+where relevant.
+
+\section{Requirements Specification}
+\label{sec:requirements}
+
+The functional requirements for IntelliCode Review were derived from the three
+research questions and the design goals stated in Chapter~\ref{ch:motivation}. Twelve
+primary use cases were identified, covering the main interactions a developer would
+have with the platform (Table~\ref{tab:usecases}).
+
+\begin{table}[H]
+\centering
+\caption{Use cases for IntelliCode Review}
+\label{tab:usecases}
+\begin{tabular}{@{}clp{8.5cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Actor} & \textbf{Description} \\
+\midrule
+UC01 & Developer & Submit Python, JavaScript, TypeScript, or Java source code and receive a quality report \\
+UC02 & Developer & Inspect the detailed analysis report across all twelve dimensions \\
+UC03 & Developer & View a guided fix recommendation for each detected vulnerability \\
+UC04 & Developer & Compare two code snippets side by side to evaluate refactoring impact \\
+UC05 & Developer & Track quality trends across multiple submissions over time \\
+UC06 & Developer & Configure and preview custom quality rules \\
+UC07 & Developer & Connect a GitHub repository and initiate a batch scan \\
+UC08 & Developer & Export an analysis report as a Markdown document \\
+UC09 & Developer & Receive a browser notification when a critical security issue is found \\
+UC10 & Developer & Use keyboard shortcuts for common actions without leaving the editor \\
+UC11 & Admin & Monitor ML model status, backend statistics, and flush the result cache \\
+UC12 & Admin & Collect and review developer feedback submitted on individual analyses \\
+UC13 & Developer & Connect a GitHub account and submit a pull request URL for analysis and optional inline comment posting \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Non-functional requirements were formulated alongside the functional requirements.
+Full analysis of a 1000-line Python file must complete within two seconds; the fast
+endpoint must respond within 500\,ms. The interface must be fully responsive for
+desktop resolutions of 1280 pixels and wider. All analysis history, rules, and
+repository configurations must persist across browser sessions without a server-side
+database. Every finding must be accompanied by a severity classification and a
+concrete, human-readable recommendation.
+
+\section{System Architecture}
+\label{sec:arch}
+
+IntelliCode Review follows a classical three-tier web architecture with a strict separation
+of concerns. The React single-page application running in the browser communicates
+with the Python FastAPI backend exclusively over HTTP/JSON; no shared in-memory state
+exists between the two tiers. The FastAPI layer in turn invokes a collection of ML model
+objects that are loaded once at server startup and held in a singleton
+\texttt{ModelRegistry}, so model load time is not incurred on every request. This design decouples the analysis logic entirely from HTTP handling,
+so individual models can be tested or replaced without touching the API layer.
+
+The frontend, backend, and ML model layer correspond to the three boxes in
+Figure~\ref{fig:architecture}. Within the frontend, all persistence is managed via the
+browser's \texttt{localStorage} API; a typed TypeScript service layer (\texttt{api.ts},
+\texttt{reviewHistory.ts}, \texttt{auth.ts}) abstracts HTTP calls and storage reads so
+that page components contain no direct network or storage logic. Within the backend,
+an in-memory hash-keyed cache (maximum 200 entries) is consulted before running
+models, avoiding redundant computation on repeated identical submissions.
+
+\section{Feature Extraction Layer}
+\label{sec:features}
+
+Feature extraction is the shared foundation on which both the ML models and the
+deterministic analysers operate. Several shared modules provide reusable computation
+whose outputs are passed downstream to the model classes; the primary ones are described
+below.
+
+\subsection{Multi-language adapter}
+\label{ssec:multi-language-adapter}
+
+The multi-language adapter (\texttt{features/multi\_lang/adapter.py}) detects the source
+language from the filename extension and routes the file to the appropriate parser.
+For Python, it delegates to the \texttt{ASTExtractor} and the \texttt{ast} module.
+For JavaScript, TypeScript, and Java, it uses tree-sitter grammars
+(\texttt{tree-sitter-javascript}, \texttt{tree-sitter-typescript},
+\texttt{tree-sitter-java}) to parse a language-specific AST and extract cyclomatic
+complexity via control-flow node counting. Language-specific regex rule sets run the
+eight security vulnerability categories against the source text of each supported language.
+The ML models (trained on Python data) are not invoked for non-Python files;
+the adapter returns deterministic security and complexity results instead. This
+boundary is explicit rather than silent: the response includes a \texttt{language}
+field and a note that ML dimensions are unavailable, which avoids presenting
+interpolated predictions for code distributions the models have never seen.
+The regex rules for JavaScript, TypeScript, and Java were adapted from the Python
+rule set with syntax-appropriate modifications. To provide a preliminary accuracy
+estimate for the JavaScript rules, a NIST SARD-inspired evaluation was conducted
+using a manually labelled set of 52 JavaScript code snippets (26 vulnerable, 26
+clean) covering eight CWE categories: XSS (CWE-79), code injection via
+\texttt{eval} (CWE-95), SQL injection (CWE-89), weak cryptography (CWE-338),
+prototype pollution (CWE-1321), path traversal (CWE-22), open redirect (CWE-601),
+and NoSQL injection (CWE-943). The evaluation script is available at
+\texttt{backend/evaluation/js\_security\_eval.py} and results are saved to
+\texttt{evaluation/results/js\_security\_eval.json}.
+
+\begin{table}[H]
+\centering
+\small
+\caption{JS/TS security rule evaluation on a NIST SARD-style labelled snippet set (52 cases, 8 CWE categories).}
+\label{tab:js-security-eval}
+\begin{tabular}{lccccc}
+\hline
+\textbf{Scope} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{FP rate} \\
+\hline
+Micro (token-level) & 1.000 & 0.885 & 0.939 & 0.000 \\
+Macro (per CWE)     & 1.000 & 0.925 & 0.946 & --- \\
+\hline
+\end{tabular}
+\end{table}
+
+Six rules (XSS, eval/code injection, SQL injection, prototype pollution, path
+traversal, open redirect, and NoSQL injection) achieve perfect recall on their
+respective test cases. The three false negatives are all in CWE-338 (weak
+cryptography): the deprecated \texttt{createCipher()} call and the \texttt{md5()}/\texttt{sha1()} patterns
+use shorter identifiers that the current regex does not match. No false positives
+were produced on the 26 clean snippets. These results should be interpreted as
+a lower bound on coverage for real-world code where vulnerability patterns are
+more varied; the snippet set was constructed to cover representative canonical forms
+of each CWE, not adversarial variants.
+
+\subsection{AST Extractor}
+
+The \texttt{ASTExtractor} class parses Python source code using the standard
+\texttt{ast} module and walks the resulting tree in a single pass, collecting function
+and class definitions (names, line ranges, parameter counts, decorator lists), import
+statements, call sites, string literals, and control-flow construct counts. The nesting
+depth of control-flow blocks is tracked as a running maximum during the traversal.
+A secondary tokenisation pathway produces integer token-ID sequences of length 512
+(padded or truncated), which serve as input to the 1D CNN security component; the
+vocabulary used for this mapping is constructed once during training and persisted
+alongside the model checkpoints.
+
+\subsection{Code Metrics}
+
+The \texttt{compute\_all\_metrics()} function computes a 15-dimensional feature vector
+shared across the complexity, security, and bug prediction models. The two most
+theoretically grounded metrics are cyclomatic complexity and the Maintainability Index:
+
+\begin{align}
+  V(G) &= E - N + 2P \quad \text{(cyclomatic complexity)} \label{eq:cc}\\
+  MI &= 171 - 5.2 \ln(HV) - 0.23 V(G) - 16.2 \ln(SLOC) \label{eq:mi}
+\end{align}
+
+where $HV$ is Halstead volume, $V(G)$ is cyclomatic complexity, and $SLOC$ is source
+lines of code.
+
+Cognitive complexity is computed separately and used as the XGBoost complexity model's
+prediction target, not as a feature. It increments a counter for each control flow
+branching point with additional penalty for each level of nesting:
+
+\begin{equation}
+  CC = \sum_{i} (1 + \text{nesting\_depth}(i)) \label{eq:cogcomplexity}
+\end{equation}
+
+Excluding cognitive complexity from the 15-dimensional input vector is necessary to
+avoid target leakage: a model that can observe its own target in the feature set
+learns a trivial identity mapping.
+
+\subsection{Security Pattern Scanner}
+
+The \texttt{scan\_security\_patterns()} function implements a regular-expression-based
+vulnerability scanner covering eight vulnerability categories (Table~\ref{tab:vulntypes}).
+Each category has associated CWE identifiers and severity classifications (critical, high,
+medium, low). The scanner runs on every analysis request and its findings serve both as
+direct output and as features for the ML ensemble. Framework-specific taint source
+detection is handled by a companion module, \texttt{context\_analyzer.py}, which
+identifies user-controlled entry points: Flask route parameters (\texttt{<param>} in
+URL rules), FastAPI dependency-injected arguments annotated with \texttt{Query},
+\texttt{Path}, \texttt{Body}, or \texttt{Form}, and Django URL captures from
+\texttt{re\_path} and \texttt{path} definitions. Recognising these as user-controlled
+inputs allows the scanner to prioritise findings that lie on a data-flow path from
+an external boundary to a dangerous sink, reducing false positives on internal
+utility functions that never receive untrusted data.
+
+\begin{table}[H]
+\centering
+\caption{Security vulnerability categories detected by IntelliCode Review}
+\label{tab:vulntypes}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Category} & \textbf{CWE} & \textbf{Severity} \\
+\midrule
+SQL Injection           & CWE-89  & Critical \\
+Command Injection       & CWE-78  & Critical \\
+Hardcoded Secret        & CWE-798 & Critical \\
+Insecure Deserialization & CWE-502 & Critical \\
+Path Traversal          & CWE-22  & High \\
+Weak Cryptography       & CWE-327 & High \\
+Code Injection (eval)   & CWE-94  & High \\
+XML External Entity     & CWE-611 & Medium \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Machine Learning Models}
+\label{sec:models}
+
+Table~\ref{tab:feature-dims} summarises the input dimensionality for each ML component.
+The five models use different feature representations chosen to match their respective
+learning tasks; the exact composition of each vector is described in the subsections below.
+
+\begin{table}[h]
+\centering
+\caption{Input feature dimensionality by model component.}
+\label{tab:feature-dims}
+\begin{tabular}{llr}
+\toprule
+\textbf{Model} & \textbf{Feature composition} & \textbf{Dims} \\
+\midrule
+Complexity XGBoost   & 15 code metrics (cog. complexity excluded as target)        & 15 \\
+Security RF          & 17 code metrics + 8 security counters                      & 25 \\
+Security 1D CNN      & Token ID sequence (Python tokenizer, padded/truncated)      & 512 \\
+Bug predictor (full) & 15 static code metrics + 5 git-history (JIT) features      & 20 \\
+Pattern XGB (debiased) & Structural AST features (n\_functions, nesting, params, comprehensions, etc.) & 22 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Security Vulnerability Detection: RF + 1D CNN Ensemble}
+\label{ssec:security}
+
+The security detection model (\texttt{security\_detection.py}) uses an ensemble of two
+complementary classifiers. The feature vector for the Random Forest has 25 dimensions:
+the 17 code metrics from \texttt{code\_metrics.py} plus 8 security-specific counters
+(dangerous import count, dangerous call count, long string count, scanner findings at
+each severity level, try block count, string literal count, call site count).
+
+The 1D CNN operates on a padded/truncated sequence of 512 integer token IDs. Its
+architecture is:
+
+\begin{equation}
+  \text{TextCNN}: \text{Embed}_{10000 \to 128} \to
+  \underbrace{\text{Conv1d}_{k \in \{3,5,7\}} \to \text{ReLU} \to \text{MaxPool}}_{\times 3}
+  \to \text{Concat} \to \text{Dropout}_{0.5} \to \text{Linear}_{768 \to 2}
+\end{equation}
+
+The ensemble combines both components:
+\begin{equation}
+  p_{\text{vuln}} = \frac{w_{RF} \cdot p_{RF} + w_{CNN} \cdot p_{CNN}}{w_{RF} + w_{CNN}},
+  \quad w_{RF} = 0.55,\; w_{CNN} = 0.45
+\end{equation}
+
+The Random Forest uses 200 trees with Platt scaling for probability calibration
+(\texttt{CalibratedClassifierCV}, \texttt{cv=5}, \texttt{method='sigmoid'}).
+
+\subsection{Complexity Prediction: XGBoost}
+\label{ssec:complexity}
+
+The complexity model (\texttt{complexity\_prediction.py}) is an XGBoost regressor
+predicting cognitive complexity from the 15-dimensional feature vector (which excludes
+cognitive complexity itself to prevent target leakage). The predicted score is mapped
+to a 0--100 scale and then to letter grades:
+
+\begin{table}[H]
+\centering
+\caption{Complexity grade thresholds}
+\label{tab:grades}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Score Range} & \textbf{Grade} \\
+\midrule
+$\geq 80$ & A (Excellent) \\
+$\geq 65$ & B (Good) \\
+$\geq 50$ & C (Fair) \\
+$\geq 35$ & D (Poor) \\
+$< 35$ & F (Critical) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Beyond the scalar score, the model identifies specific problem functions: functions
+with cyclomatic complexity $> 10$, body length $> 50$ lines, or parameter count $> 5$
+are flagged with specific recommendations (``Reduce complexity'', ``Extract sub-functions'',
+``Reduce parameters'').
+
+\subsection{Bug Prediction: Logistic Regression + XGBoost Ensemble}
+\label{ssec:bugs}
+
+The bug predictor (\texttt{bug\_predictor.py}) combines static code features with optional
+git metadata. The static feature vector is the same 15-dimensional code metrics vector.
+Git metadata (when provided) adds 5 features: code churn, author count, file age in days,
+past bug count, and commit frequency.
+
+The Logistic Regression component uses the full 20-dimensional combined vector. The XGBoost
+component is a gradient-boosted classifier trained with early stopping (best iteration at
+epoch 97, preventing overfitting beyond that point). The ensemble averages LR and XGBoost
+probabilities:
+
+\begin{equation}
+  p_{\text{bug}} = \frac{p_{LR} + p_{XGB}}{2}
+\end{equation}
+
+Training was performed on 3000 real OSS samples labelled via SZZ-style commit heuristics
+and Bandit annotations. Held-out AUC scores: LR = 0.677, XGB = 0.710, ensemble = 0.704.
+A heuristic fallback is used when checkpoints are unavailable, based on thresholds applied
+directly to cyclomatic complexity and Halstead bugs metrics.
+
+Risk levels are classified as:
+\begin{itemize}
+  \item \textbf{Critical}: $p > 0.75$
+  \item \textbf{High}: $0.50 < p \leq 0.75$
+  \item \textbf{Medium}: $0.25 < p \leq 0.50$
+  \item \textbf{Low}: $p \leq 0.25$
+\end{itemize}
+
+\subsection{Pattern Recognition: Calibrated Random Forest}
+\label{ssec:pattern}
+
+The pattern recognition model (\texttt{pattern\_recognition.py}) is an XGBoost classifier trained on a 22-dimensional AST feature vector. Output classes are \texttt{clean}, \texttt{code\_smell}, \texttt{anti\_pattern}, and \texttt{style\_violation}; per-class probabilities are calibrated with Platt scaling (\texttt{CalibratedClassifierCV}, \texttt{method='sigmoid'}, \texttt{cv=5}).
+
+Training used 1,153 samples from OSS repositories, labelled by a tool-consensus oracle combining PyNose with metric thresholds. The leakage audit (Section~\ref{ssec:audit}) showed the original 26-feature model was partly memorising its own label rules: CC, SLOC, Halstead, and MI values fed directly into the same thresholds used to assign labels. Dropping those 14 features left 12 structural AST counts (\texttt{n\_functions}, \texttt{n\_classes}, \texttt{n\_try\_blocks}, \texttt{n\_raises}, \texttt{n\_with\_blocks}, \texttt{max\_nesting\_depth}, \texttt{max\_params}, \texttt{avg\_params}, \texttt{n\_decorated\_functions}, \texttt{n\_imports}, \texttt{max\_function\_body\_lines}, \texttt{avg\_function\_body\_lines}). Ten further node-count features were added to improve class separation (\texttt{n\_lambdas}, \texttt{n\_comprehensions}, \texttt{n\_yields}, \texttt{n\_assertions}, \texttt{n\_global\_stmts}, \texttt{n\_type\_annotations}, \texttt{n\_ternary\_exprs}, \texttt{n\_bool\_ops}, \texttt{n\_calls}, \texttt{avg\_class\_methods}). The retrained checkpoint (\texttt{checkpoints/pattern/xgb\_model.pkl}) achieves CV F1 $= 0.653 \pm 0.017$, test F1 $= 0.688$, accuracy $= 67.1\%$, AUC $= 0.848$. CodeBERT was not used: its $\sim$500\,MB weights and GPU requirement make it impractical for a self-contained local tool.
+Techniques such as LoRA fine-tuning~\cite{hu2022} and ONNX quantisation can reduce
+transformer footprints substantially; at the 1,153-sample corpus size used here, the
+expected gain over a well-regularised Random Forest is unlikely to justify that
+engineering investment, but the trade-off should be revisited when more labelled data
+are available.
+
+\subsection{Code Clone Detection: TF-IDF Cosine Similarity}
+\label{ssec:clones}
+
+The clone detector (\texttt{code\_clone\_detection.py}) extracts function bodies from the
+submitted code, normalizes them (stripping comments, whitespace, and optionally renaming
+identifiers for Type-2 detection), and computes pairwise TF-IDF cosine similarity.
+Function pairs with similarity above $0.85$ (Type-1), $0.70$ (Type-2), or $0.55$ (Type-3)
+thresholds are reported as clones. The result includes clone pairs, their type
+classification, and similarity scores. The thresholds are conservative at the Type-3
+level to limit false positives at the cost of missing some semantic clones; this is the
+correct trade-off for a tool where developer attention is the scarce resource.
+
+\subsection{Refactoring Suggester: AST Rule Engine}
+\label{ssec:refactoring}
+
+The refactoring suggester applies a set of threshold-based AST rules derived from
+established refactoring catalogues~\cite{fowler1999}. Functions exceeding 40 lines
+are flagged for method extraction; nesting depth greater than three levels triggers
+a reduce-nesting suggestion; boolean expressions with more than four operators are
+candidates for simplification. Three further rules target identifier clarity (overly
+abbreviated names), type annotation coverage (unannotated public APIs), and
+parameter count (more than five arguments). Each suggestion carries an estimated
+remediation effort in minutes and a priority score used to rank the output list. Ranking
+by priority rather than by severity class ensures that a developer working through
+findings starts with the change that delivers the most measurable improvement per minute
+of effort, which distinguishes a usable tool from a warning list.
+
+\subsection{Dead Code Detector: AST Definition/Usage Graph}
+\label{ssec:deadcode}
+
+The dead code detector (\texttt{dead\_code\_detector.py}) builds definition and usage
+sets by walking the AST. It identifies: (1) imported names that are never referenced,
+(2) defined functions or classes that are never called or instantiated, (3) code after
+\texttt{return} or \texttt{raise} statements (unreachable code), (4) empty \texttt{except}
+blocks that swallow exceptions silently, and (5) variables assigned but never read.
+Each finding includes line number, symbol name, and dead code category.
+
+\subsection{Technical Debt Estimator: SQALE-Inspired Aggregator}
+\label{ssec:debt}
+
+The technical debt estimator (\texttt{technical\_debt.py}) aggregates findings from all
+other models into a debt report following the SQALE methodology~\cite{letouzey2012}.
+Debt is estimated in minutes of remediation effort per finding (Table~\ref{tab:debtrates})
+and summed into category totals. The overall debt rating (A--E) is determined by the
+ratio of total debt to estimated development time.
+
+\begin{table}[H]
+\centering
+\caption{Technical debt remediation rates used by the estimator}
+\label{tab:debtrates}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Category} & \textbf{Minutes/Finding} & \textbf{Max Minutes} \\
+\midrule
+Critical security finding & 120 & --- \\
+High security finding     &  60 & --- \\
+Complexity (score $< 60$) &  30 & --- \\
+Bug risk (High/Critical)  &  45 & --- \\
+Code clone                &  20 & 240 \\
+Dead code finding         &  10 & 120 \\
+Refactoring suggestion    &  15 & 180 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Documentation Quality Analyzer}
+\label{ssec:docs}
+
+The documentation analyzer (\texttt{doc\_quality\_analyzer.py}) walks the AST collecting
+all function and class definitions and examining their docstrings. It computes:
+(1) docstring coverage (fraction of public functions/classes with docstrings),
+(2) docstring completeness (presence of parameter, return, and raises sections),
+(3) docstring length adequacy (minimum one sentence), and (4) overall quality grade (A--F).
+Functions and classes lacking docstrings or having inadequate ones are reported individually.
+
+\subsection{Performance Hotspot Predictor}
+\label{ssec:performance}
+
+The performance analyser detects AST patterns that correspond to well-known Python
+performance anti-patterns: nested loops (O($n^2$) complexity risk), string
+concatenation inside loops (quadratic memory allocation from repeated object
+creation), I/O calls inside loops, mutable default arguments (shared state across
+invocations), list comprehensions where generator expressions would suffice, and
+global variable access in hot paths. Because these patterns are detectable
+syntactically without execution, false negative rates are low, though interprocedural
+patterns (e.g., a loop in one function calling an I/O-heavy function in another)
+remain outside the scope of single-file static analysis.
+
+\subsection{Dependency and Coupling Analyzer}
+\label{ssec:dependency}
+
+The dependency analyser constructs a module-level import graph from the AST and
+derives three coupling indicators. Fan-out counts the number of distinct imported
+modules, providing a rough measure of efferent coupling. Instability is computed as
+$I = C_e / (C_e + C_a)$, where $C_e$ is efferent coupling and $C_a$ is afferent
+coupling approximated from repeated imports of the same module across the code
+under analysis. Wildcard imports (\texttt{from~module~import~*}) are flagged
+separately because they pollute the local namespace in a way that makes dead-code
+analysis unreliable and is classified as CWE-1104 (use of unmaintained third-party
+components). These three indicators are combined into a composite coupling score
+(0--100, higher is worse) that surfaces in the dependency tab of the review detail
+page.
+
+\subsection{Code Readability Scorer}
+\label{ssec:readability}
+
+The readability scorer is inspired by the Buse and Weimer~\cite{buse2010} feature
+set but extends it to four distinct sub-dimensions, each contributing up to 25 points
+to an overall score of 100. Naming quality rewards adequate identifier length and
+consistent \texttt{snake\_case} convention while penalising single-character names
+beyond conventional loop counters. Comment quality measures comment density,
+the ratio of inline to block comments, and the presence of section-level headers.
+Structural quality evaluates function length distribution, control-flow nesting depth,
+and blank-line separation. Finally, cognitive load penalises deeply nested boolean
+expressions, magic number literals, and excessively long lines. The four sub-scores
+are summed and mapped to an A--F grade using the same thresholds as the complexity
+model, so the grading language is consistent across all scoring dimensions.
+
+\section{Training Pipeline}
+\label{sec:training}
+
+Figure~\ref{fig:mlpipeline} summarises the end-to-end training pipeline: raw source code enters the feature extraction module, which produces a 15-dimensional vector; this vector fans out to four model-specific training tasks; trained checkpoints are then persisted alongside the evaluation suite results.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{ml_pipeline.png}
+\caption{ML training pipeline for IntelliCode Review. Source code is parsed into a 15-dimensional feature vector by the extraction module, which feeds four task-specific learners. Cross-project generalisation is assessed via LOPO, temporal split, and SonarQube calibration.}
+\label{fig:mlpipeline}
+\end{figure}
+
+\subsection{Real Dataset Construction}
+
+All training data is sourced from real open-source Python projects rather than synthetic
+generation. The decision against synthetic data was deliberate: synthetically generated
+vulnerable code often lacks the structural context that makes real-world vulnerabilities
+hard to detect, and complexity distributions in synthetic corpora tend to be artificially
+uniform.
+
+The \texttt{fetch\_real\_datasets.py} script mines four datasets from 33 repositories
+across five domains (web frameworks, data science, CLI tools, testing infrastructure,
+async networking). Complexity samples (3,015 functions) include Django, Flask, requests,
+pip, NumPy, pandas, scikit-learn, pytest, and urllib3, among others; cognitive complexity
+scores are computed by the same AST traversal used in production, giving ground-truth
+targets grounded in real distribution. Security samples (4,286 functions) balance clean
+code from the same OSS repositories against vulnerable samples from CVE-annotated commits.
+Bug samples (8,668 commits) use SZZ-style heuristics to label commits whose message
+contains ``fix'', ``bug'', or ``error'' as high-risk. Pattern samples (6,200+ functions)
+are assigned one of four class labels using structural thresholds: god class, long method,
+feature envy, or clean. The construct-validity caveat (that these thresholds overlap with input features) is documented in Sections~\ref{sec:model-results}
+and~\ref{ssec:why-ml-fails}.
+
+\subsection{Model Training}
+
+The master training script \texttt{train\_all.py} runs the four task-specific trainers
+in sequence: complexity, security, bug prediction, and pattern recognition. Each trainer
+writes a checkpoint and a \texttt{metrics.json} file recording the final evaluation
+results. Checkpoints are pickle files for scikit-learn and XGBoost models and PyTorch
+state dicts for the 1D CNN.
+
+Two training decisions worth explaining are the security threshold and the Windows
+parallelism constraint. The operating threshold of 0.050 for the security classifier
+was selected from the precision-recall curve on the expanded 4,286-sample training set
+rather than on a separate calibration split. This means the threshold is optimistically
+fitted to the training distribution; it may not generalise to codebases with different
+vulnerability profiles, and the LOPO AUC of 0.494 is evidence that it does not. For
+the pattern classifier, cross-validation is forced to \texttt{n\_jobs=1} on Windows
+because Python's \texttt{multiprocessing} module uses \texttt{spawn} semantics instead
+of \texttt{fork}, and the calibrated Random Forest contains closures that are not safely
+picklable under that scheme. The single-threaded constraint is a known Windows-specific
+limitation and has no effect on the quality of the trained model.
+
+
+\section{Backend API}
+\label{sec:api}
+
+The FastAPI application (\texttt{main.py}) defines the model registry as a singleton
+class (\texttt{ModelRegistry}) that is populated during the application startup lifespan:
+
+\begin{lstlisting}[caption={FastAPI lifespan: loading ML models at startup},
+                   label={lst:lifespan}, style=pythonstyle]
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load models on startup."""
+    print("Loading ML models...")
+    try:
+        registry.security = EnsembleSecurityModel(
+            checkpoint_dir="checkpoints/security")
+        print("  [OK] Security detection model")
+    except Exception as e:
+        registry.load_errors["security"] = str(e)
+    # ... (other models loaded similarly)
+    registry.clone_detector = CodeCloneDetector()
+    registry.refactoring_suggester = RefactoringSuggester()
+    # ... (all lightweight models always load)
+    yield
+    print("Shutting down.")
+\end{lstlisting}
+
+The combined analysis endpoint (\texttt{POST /analyze}) accepts a JSON payload with fields
+\texttt{code}, \texttt{filename}, \texttt{language}, and optional \texttt{git\_metadata},
+and returns a \texttt{FullAnalysisResponse} JSON object containing results from all twelve
+models plus an \texttt{overall\_score} (0--100) and a \texttt{status} field (``clean'',
+``action\_required'', or ``critical''). Results are cached in a hash-keyed in-memory
+dictionary (maximum 200 entries) to avoid re-running expensive models on repeated
+identical submissions.
+
+Two additional analysis endpoints extend the core: \texttt{POST /analyze/quick} returns only security, complexity, and readability results in under 500\,ms, suitable for CI pre-commit hooks; \texttt{POST /analyze/stream} streams partial results via Server-Sent Events as each model completes, populating the Security tab within 200\,ms. Three utility endpoints (\texttt{GET /stats}, \texttt{POST /feedback}, \texttt{POST /cache/clear}) support the Admin page and feedback loop.
+
+\texttt{POST /github/analyze-pr} accepts a PR URL validated by a Pydantic regex and runs in two modes: without \texttt{post\_comments} it returns findings to the browser only; with \texttt{post\_comments=true} it posts inline review comments on changed lines. The two-step design prevents posting machine-generated comments the developer has not reviewed.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{14_github_pr.png}
+\caption{Automatically created GitHub pull request (\#6) generated by the IntelliCode GitHub Actions workflow for \texttt{backend/evaluation/ablation\_study.py}. The PR body includes an analysis summary (overall score 45/100, bug risk critical, 2 security findings) and lists each finding with severity, line number, and a one-sentence remediation instruction. The PR targets \texttt{main} from the \texttt{intellcode/review-\{hash\}} branch created by the workflow.}
+\label{fig:github-pr}
+\end{figure}
+
+\section{Frontend Implementation}
+\label{sec:frontend}
+
+The frontend is a React~18 SPA built with Vite and TypeScript, using React Router~v6 for client-side routing. Ten pages are accessible from the persistent sidebar, with additional routes (Review Detail, Models, CI integration, Diff viewer) reachable directly. Three design choices shaped the architecture: the SSE endpoint populates the Security tab within 200\,ms while remaining models run in the background; the Fix Guide tab (Tab~14) provides copy-ready remediation code for the five most common vulnerability types; and the Security tab groups findings by root cause category rather than line number, so a developer can address all instances of a single class at once.
+
+The twelfth page is a pull request review interface. Developers paste a GitHub PR URL,
+trigger analysis of the changed files without posting to GitHub, review the findings
+in the same Security and complexity tabs used for single-file analysis, and then
+optionally post the results as inline review comments with a second confirmed action.
+The PR Review page integrates the GitHub OAuth token stored in \texttt{localStorage}
+via \texttt{github.ts}, so no manual token entry is required after the initial
+connection in Settings.
+
+The Review Detail page organises results into fourteen tabs:
+
+\begin{table}[H]
+\centering
+\caption{Review Detail page tabs}
+\label{tab:tabs}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{\#} & \textbf{Tab} & \textbf{Content} \\
+\midrule
+1  & Overview       & Score gauge, status, summary metrics \\
+2  & Security       & Findings grouped by root cause category, CWE, line, snippet \\
+3  & Complexity     & Score gauge, grade, metric breakdown, flagged functions \\
+4  & Bug Risk       & Probability gauge, risk level, contributing factors \\
+5  & Pattern        & Structural AST feature scores with threshold highlighting \\
+6  & Clones         & Detected clone pairs, type, similarity score \\
+7  & Refactoring    & Prioritised suggestions with effort estimates \\
+8  & Dead Code      & Unused imports, unreachable blocks, empty excepts \\
+9  & Tech Debt      & Total debt hours, SQALE rating A--E, per-category \\
+10 & Docs           & Coverage \%, grade, undocumented functions \\
+11 & Performance    & Anti-patterns with severity and recommended fix \\
+12 & Dependencies   & Fan-out, instability, wildcard import warnings \\
+13 & Readability    & Score, grade, four sub-dimension scores \\
+14 & Fix Guide      & Before/after code blocks with copy buttons for common \\
+   &                & vulnerability types (SQL injection, command injection, \\
+   &                & hardcoded secrets, XSS, path traversal) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Review Detail page also provides a Markdown export button that generates a
+\texttt{.md} report (score, metrics table, security findings, refactoring suggestions)
+as a downloadable file via the Browser Blob API.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{07_models.png}
+  \caption{ML Models page listing all twelve analysis engines with performance metrics, architecture labels, and operational status.}
+  \label{fig:models-page}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{09_admin.png}
+  \caption{Admin Panel showing ML Model Status table and backend health statistics cards.}
+  \label{fig:admin}
+\end{minipage}
+\end{figure}
+
+\section{Implementation Challenges}
+\label{sec:challenges}
+
+Four non-trivial problems arose during development. \textbf{Pydantic v2 compatibility:} the backend was prototyped against Pydantic v1 dictionary-style access (\texttt{model.get("field")}); pinning to v2 silently returned \texttt{None} for every field because v2 output objects are not dicts. The fix required replacing every dict access with attribute access across \texttt{main.py} — validate response schemas at endpoint boundaries. \textbf{SSE streaming:} FastAPI's \texttt{JSONResponse} does not stream; the endpoint uses \texttt{StreamingResponse} with \texttt{text/event-stream} and a generator that yields events per model. Because the submission is a POST body, the browser \texttt{EventSource} API cannot be used directly (GET only); the frontend opens a \texttt{fetch} request and parses SSE frames via the Streams API. \textbf{Cache eviction:} the original \texttt{OrderedDict} implementation evicted in insertion order, which broke after admin-initiated cache flushes. The corrected version calls \texttt{min(store, key=lambda k: store[k]["ts"])} to evict the genuinely oldest entry. \textbf{Placeholder ambiguity:} a URL-shaped placeholder (\texttt{https://github.com/owner/repo/pull/123}) was mistaken for real content by test users; replacing it with a plain natural-language prompt eliminated the confusion.
+
+%% ============================================================
 
 \chapter{Prototype Demonstration}
 \label{ch:demo}
