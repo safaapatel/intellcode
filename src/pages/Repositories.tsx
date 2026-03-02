@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,21 @@ import {
   Star,
 } from "lucide-react";
 import { toast } from "sonner";
+
+const REPOS_KEY = "intellcode_repositories";
+
+function loadRepos(): Repository[] {
+  try {
+    const raw = localStorage.getItem(REPOS_KEY);
+    return raw ? JSON.parse(raw) : mockRepos;
+  } catch {
+    return mockRepos;
+  }
+}
+
+function saveRepos(repos: Repository[]) {
+  localStorage.setItem(REPOS_KEY, JSON.stringify(repos));
+}
 
 type RepoStatus = "active" | "pending" | "error";
 
@@ -131,7 +146,11 @@ const statusConfig: Record<RepoStatus, { label: string; color: string; icon: typ
 };
 
 const Repositories = () => {
-  const [repos, setRepos] = useState(mockRepos);
+  const [repos, setRepos] = useState<Repository[]>(mockRepos);
+
+  useEffect(() => {
+    setRepos(loadRepos());
+  }, []);
   const [search, setSearch] = useState("");
   const [langFilter, setLangFilter] = useState("All Languages");
   const [statusFilter, setStatusFilter] = useState("All Status");
@@ -157,15 +176,44 @@ const Repositories = () => {
     }
     setConnecting(true);
     setTimeout(() => {
+      const url = newRepoUrl.trim();
+      const parts = url.replace("https://github.com/", "").split("/");
+      const name = parts[parts.length - 1] || "repo";
+      const fullName = parts.slice(0, 2).join("/") || url;
+      const newRepo: Repository = {
+        id: String(Date.now()),
+        name,
+        fullName,
+        description: "Connected repository",
+        language: "Python",
+        languageColor: "#3572A5",
+        stars: 0,
+        defaultBranch: "main",
+        lastReviewed: "Not yet reviewed",
+        status: "pending",
+        totalReviews: 0,
+        openIssues: 0,
+        avgScore: 0,
+        private: false,
+      };
+      setRepos((prev) => {
+        const updated = [...prev, newRepo];
+        saveRepos(updated);
+        return updated;
+      });
       setConnecting(false);
       setConnectOpen(false);
       setNewRepoUrl("");
       toast.success("Repository connected successfully");
-    }, 1800);
+    }, 1200);
   };
 
   const handleDelete = (id: string) => {
-    setRepos((prev) => prev.filter((r) => r.id !== id));
+    setRepos((prev) => {
+      const updated = prev.filter((r) => r.id !== id);
+      saveRepos(updated);
+      return updated;
+    });
     setDeleteId(null);
     toast.success("Repository disconnected");
   };

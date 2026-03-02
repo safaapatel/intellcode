@@ -356,10 +356,19 @@ class BugPredictionModel:
             static_score = prob  # approximation
             git_score = prob if git_metadata else None
         elif self._lr_ready:
-            prob = self._lr.predict_proba(full_feats)
-            source_name = "logistic_regression"
-            static_score = prob
-            git_score = prob if git_metadata else None
+            try:
+                prob = self._lr.predict_proba(full_feats)
+                source_name = "logistic_regression"
+                static_score = prob
+                git_score = prob if git_metadata else None
+            except Exception:
+                # Checkpoint version mismatch — fall back to heuristic
+                self._lr_ready = False
+                prob, static_score = self._heuristic_proba(static_feats)
+                git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
+                if git_score is not None:
+                    prob = min(1.0, (prob + git_score) / 2 * 1.2)
+                source_name = "heuristic"
         else:
             # Heuristic fallback
             prob, static_score = self._heuristic_proba(static_feats)
