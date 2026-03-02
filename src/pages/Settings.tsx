@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,30 +29,41 @@ import {
 import { mockUser } from "@/data/mockData";
 import { toast } from "sonner";
 
+const SETTINGS_KEY = "intellcode_settings";
+
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}"); } catch { return {}; }
+}
+function saveSettings(patch: Record<string, unknown>) {
+  const current = loadSettings();
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...current, ...patch }));
+}
+
 type SettingsTab = "profile" | "notifications" | "integrations" | "security" | "appearance";
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
   const [copied, setCopied] = useState(false);
+  const saved = loadSettings();
 
   // Profile state
-  const [name, setName] = useState(mockUser.name);
-  const [email, setEmail] = useState(mockUser.email);
-  const [role, setRole] = useState(mockUser.role);
-  const [bio, setBio] = useState("Software engineer focused on code quality and ML systems.");
-  const [timezone, setTimezone] = useState("America/Los_Angeles");
+  const [name, setName] = useState<string>(saved.name ?? mockUser.name);
+  const [email, setEmail] = useState<string>(saved.email ?? mockUser.email);
+  const [role, setRole] = useState<string>(saved.role ?? mockUser.role);
+  const [bio, setBio] = useState<string>(saved.bio ?? "Software engineer focused on code quality and ML systems.");
+  const [timezone, setTimezone] = useState<string>(saved.timezone ?? "America/Los_Angeles");
 
   // Notification state
-  const [notifReviewComplete, setNotifReviewComplete] = useState(true);
-  const [notifCriticalIssues, setNotifCriticalIssues] = useState(true);
-  const [notifWeeklyDigest, setNotifWeeklyDigest] = useState(false);
-  const [notifNewComment, setNotifNewComment] = useState(true);
-  const [notifPRMerged, setNotifPRMerged] = useState(false);
-  const [emailFrequency, setEmailFrequency] = useState("instant");
+  const [notifReviewComplete, setNotifReviewComplete] = useState<boolean>(saved.notifReviewComplete ?? true);
+  const [notifCriticalIssues, setNotifCriticalIssues] = useState<boolean>(saved.notifCriticalIssues ?? true);
+  const [notifWeeklyDigest, setNotifWeeklyDigest] = useState<boolean>(saved.notifWeeklyDigest ?? false);
+  const [notifNewComment, setNotifNewComment] = useState<boolean>(saved.notifNewComment ?? true);
+  const [notifPRMerged, setNotifPRMerged] = useState<boolean>(saved.notifPRMerged ?? false);
+  const [emailFrequency, setEmailFrequency] = useState<string>(saved.emailFrequency ?? "instant");
 
   // Security state
-  const [twoFAEnabled, setTwoFAEnabled] = useState(false);
-  const [apiToken] = useState("ick_live_f4a8b2d1e9c3a7f6b0e5d2c8a4b1f7e3");
+  const [twoFAEnabled, setTwoFAEnabled] = useState<boolean>(saved.twoFAEnabled ?? false);
+  const [apiToken] = useState<string>("ick_live_f4a8b2d1e9c3a7f6b0e5d2c8a4b1f7e3");
 
   const tabs: { id: SettingsTab; label: string; icon: typeof User }[] = [
     { id: "profile", label: "Profile", icon: User },
@@ -63,7 +74,18 @@ const Settings = () => {
   ];
 
   const handleSaveProfile = () => {
+    saveSettings({ name, email, role, bio, timezone });
     toast.success("Profile updated successfully");
+  };
+
+  const handleSaveNotifications = () => {
+    saveSettings({ notifReviewComplete, notifCriticalIssues, notifWeeklyDigest, notifNewComment, notifPRMerged, emailFrequency });
+    toast.success("Notification preferences saved");
+  };
+
+  const handleSaveSecurity = () => {
+    saveSettings({ twoFAEnabled });
+    toast.success("Security settings saved");
   };
 
   const handleCopyToken = () => {
@@ -255,7 +277,7 @@ const Settings = () => {
                 <div className="mt-6 pt-6 border-t border-border">
                   <Button
                     className="bg-gradient-primary gap-2"
-                    onClick={() => toast.success("Notification preferences saved")}
+                    onClick={handleSaveNotifications}
                   >
                     <Save className="w-4 h-4" />
                     Save Preferences
@@ -378,6 +400,7 @@ const Settings = () => {
                       checked={twoFAEnabled}
                       onCheckedChange={(v) => {
                         setTwoFAEnabled(v);
+                        saveSettings({ twoFAEnabled: v });
                         toast.success(v ? "2FA enabled" : "2FA disabled");
                       }}
                     />

@@ -37,3 +37,10 @@ backend/data/
 
 # Claude Code session files
 .claude/
+
+# Vite cache (on D: drive)
+.vite-cache/
+
+# Thesis/temp files
+*.pdf
+thesis_extracted.txt

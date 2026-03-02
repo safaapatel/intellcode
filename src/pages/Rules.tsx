@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,21 @@ import {
 } from "@/data/mockData";
 import { toast } from "sonner";
 
+const RULES_KEY = "intellcode_rules";
+
+function loadRulesState() {
+  try {
+    const raw = localStorage.getItem(RULES_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRulesState(state: object) {
+  localStorage.setItem(RULES_KEY, JSON.stringify(state));
+}
+
 const severityOptions = [
   { value: "low", label: "Low", color: "bg-primary" },
   { value: "medium", label: "Medium", color: "bg-warning" },
@@ -34,19 +49,34 @@ const severityOptions = [
 ];
 
 const Rules = () => {
-  const [selectedRuleSet, setSelectedRuleSet] = useState(mockRuleSets[0]);
+  const saved = loadRulesState();
+  const [ruleSets, setRuleSets] = useState(saved?.ruleSets ?? mockRuleSets);
+  const [selectedRuleSet, setSelectedRuleSet] = useState(saved?.ruleSets?.[0] ?? mockRuleSets[0]);
   const [isDefault, setIsDefault] = useState(selectedRuleSet.isDefault);
-  const [codeQualityRules, setCodeQualityRules] = useState(mockCodeQualityRules);
-  const [securityRules, setSecurityRules] = useState(mockSecurityRules);
-  const [codeSmellRules, setCodeSmellRules] = useState(mockCodeSmellRules);
+  const [codeQualityRules, setCodeQualityRules] = useState(saved?.codeQualityRules ?? mockCodeQualityRules);
+  const [securityRules, setSecurityRules] = useState(saved?.securityRules ?? mockSecurityRules);
+  const [codeSmellRules, setCodeSmellRules] = useState(saved?.codeSmellRules ?? mockCodeSmellRules);
   const [previewFile, setPreviewFile] = useState("sample_analytics.py");
   const [previewResults, setPreviewResults] = useState<string[] | null>(null);
-  const [ruleSets, setRuleSets] = useState(mockRuleSets);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newLanguage, setNewLanguage] = useState("Python");
   const [newTemplate, setNewTemplate] = useState("blank");
+
+  const persist = (updates: {
+    ruleSets?: typeof ruleSets;
+    codeQualityRules?: typeof codeQualityRules;
+    securityRules?: typeof securityRules;
+    codeSmellRules?: typeof codeSmellRules;
+  }) => {
+    saveRulesState({
+      ruleSets: updates.ruleSets ?? ruleSets,
+      codeQualityRules: updates.codeQualityRules ?? codeQualityRules,
+      securityRules: updates.securityRules ?? securityRules,
+      codeSmellRules: updates.codeSmellRules ?? codeSmellRules,
+    });
+  };
 
   const handleCreate = () => {
     if (!newName.trim()) {
@@ -54,7 +84,7 @@ const Rules = () => {
       return;
     }
     const newSet = {
-      id: String(ruleSets.length + 1),
+      id: String(Date.now()),
       name: newName.trim(),
       description: newDescription.trim() || "Custom rule set",
       language: newLanguage,
@@ -62,8 +92,10 @@ const Rules = () => {
       repositories: 0,
       issues: 0,
     };
-    setRuleSets((prev) => [...prev, newSet]);
+    const updated = [...ruleSets, newSet];
+    setRuleSets(updated);
     setSelectedRuleSet(newSet);
+    persist({ ruleSets: updated });
     setCreateOpen(false);
     setNewName("");
     setNewDescription("");
@@ -73,15 +105,30 @@ const Rules = () => {
   };
 
   const handleSaveChanges = () => {
+    const updatedSets = ruleSets.map((rs) =>
+      rs.id === selectedRuleSet.id ? { ...rs, isDefault } : rs
+    );
+    setRuleSets(updatedSets);
+    persist({ ruleSets: updatedSets });
     toast.success("Rule set saved successfully");
   };
 
   const handleDuplicate = () => {
+    const copy = { ...selectedRuleSet, id: String(Date.now()), name: `${selectedRuleSet.name} (copy)`, isDefault: false };
+    const updated = [...ruleSets, copy];
+    setRuleSets(updated);
+    setSelectedRuleSet(copy);
+    persist({ ruleSets: updated });
     toast.success("Rule set duplicated");
   };
 
   const handleDelete = () => {
-    toast.error("Rule set deleted");
+    if (ruleSets.length <= 1) { toast.error("Cannot delete the only rule set"); return; }
+    const updated = ruleSets.filter((rs) => rs.id !== selectedRuleSet.id);
+    setRuleSets(updated);
+    setSelectedRuleSet(updated[0]);
+    persist({ ruleSets: updated });
+    toast.info("Rule set deleted");
   };
 
   const handlePreview = () => {
@@ -94,28 +141,37 @@ const Rules = () => {
 
   const toggleRule = (
     rules: typeof codeQualityRules,
-    setRules: typeof setCodeQualityRules,
-    id: string
+    setRules: React.Dispatch<React.SetStateAction<typeof codeQualityRules>>,
+    id: string,
+    key: "codeQualityRules" | "securityRules" | "codeSmellRules"
   ) => {
-    setRules(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+    const updated = rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
+    setRules(updated);
+    persist({ [key]: updated });
   };
 
   const updateSeverity = (
     rules: typeof codeQualityRules,
-    setRules: typeof setCodeQualityRules,
+    setRules: React.Dispatch<React.SetStateAction<typeof codeQualityRules>>,
     id: string,
-    severity: string
+    severity: string,
+    key: "codeQualityRules" | "securityRules" | "codeSmellRules"
   ) => {
-    setRules(rules.map((r) => (r.id === id ? { ...r, severity } : r)));
+    const updated = rules.map((r) => (r.id === id ? { ...r, severity } : r));
+    setRules(updated);
+    persist({ [key]: updated });
   };
 
   const updateThreshold = (
     rules: typeof codeQualityRules,
-    setRules: typeof setCodeQualityRules,
+    setRules: React.Dispatch<React.SetStateAction<typeof codeQualityRules>>,
     id: string,
-    threshold: number
+    threshold: number,
+    key: "codeQualityRules" | "securityRules" | "codeSmellRules"
   ) => {
-    setRules(rules.map((r) => (r.id === id ? { ...r, threshold } : r)));
+    const updated = rules.map((r) => (r.id === id ? { ...r, threshold } : r));
+    setRules(updated);
+    persist({ [key]: updated });
   };
 
   return (
@@ -204,13 +260,13 @@ const Rules = () => {
                       <td className="px-6 py-4">
                         <Switch
                           checked={rule.enabled}
-                          onCheckedChange={() => toggleRule(codeQualityRules, setCodeQualityRules, rule.id)}
+                          onCheckedChange={() => toggleRule(codeQualityRules, setCodeQualityRules, rule.id, "codeQualityRules")}
                         />
                       </td>
                       <td className="px-6 py-4">
                         <Select
                           value={rule.severity}
-                          onValueChange={(v) => updateSeverity(codeQualityRules, setCodeQualityRules, rule.id, v)}
+                          onValueChange={(v) => updateSeverity(codeQualityRules, setCodeQualityRules, rule.id, v, "codeQualityRules")}
                         >
                           <SelectTrigger className="w-[120px] bg-input">
                             <SelectValue />
@@ -230,7 +286,7 @@ const Rules = () => {
                             type="number"
                             value={rule.threshold}
                             onChange={(e) =>
-                              updateThreshold(codeQualityRules, setCodeQualityRules, rule.id, Number(e.target.value))
+                              updateThreshold(codeQualityRules, setCodeQualityRules, rule.id, Number(e.target.value), "codeQualityRules")
                             }
                             className="w-20 bg-input"
                           />
@@ -266,13 +322,13 @@ const Rules = () => {
                       <td className="px-6 py-4">
                         <Switch
                           checked={rule.enabled}
-                          onCheckedChange={() => toggleRule(securityRules as any, setSecurityRules as any, rule.id)}
+                          onCheckedChange={() => toggleRule(securityRules as any, setSecurityRules as any, rule.id, "securityRules")}
                         />
                       </td>
                       <td className="px-6 py-4">
                         <Select
                           value={rule.severity}
-                          onValueChange={(v) => updateSeverity(securityRules as any, setSecurityRules as any, rule.id, v)}
+                          onValueChange={(v) => updateSeverity(securityRules as any, setSecurityRules as any, rule.id, v, "securityRules")}
                         >
                           <SelectTrigger className="w-[120px] bg-input">
                             <SelectValue />
@@ -316,13 +372,13 @@ const Rules = () => {
                       <td className="px-6 py-4">
                         <Switch
                           checked={rule.enabled}
-                          onCheckedChange={() => toggleRule(codeSmellRules as any, setCodeSmellRules as any, rule.id)}
+                          onCheckedChange={() => toggleRule(codeSmellRules as any, setCodeSmellRules as any, rule.id, "codeSmellRules")}
                         />
                       </td>
                       <td className="px-6 py-4">
                         <Select
                           value={rule.severity}
-                          onValueChange={(v) => updateSeverity(codeSmellRules as any, setCodeSmellRules as any, rule.id, v)}
+                          onValueChange={(v) => updateSeverity(codeSmellRules as any, setCodeSmellRules as any, rule.id, v, "codeSmellRules")}
                         >
                           <SelectTrigger className="w-[120px] bg-input">
                             <SelectValue />
@@ -343,7 +399,7 @@ const Rules = () => {
                               type="number"
                               value={rule.threshold}
                               onChange={(e) =>
-                                updateThreshold(codeSmellRules as any, setCodeSmellRules as any, rule.id, Number(e.target.value))
+                                updateThreshold(codeSmellRules as any, setCodeSmellRules as any, rule.id, Number(e.target.value), "codeSmellRules")
                               }
                               className="w-20 bg-input"
                             />

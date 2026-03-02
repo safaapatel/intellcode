@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, Github, Loader2, AlertCircle } from "lucide-react";
+import { Upload, Github, Loader2, AlertCircle, FolderOpen } from "lucide-react";
+import { useRef } from "react";
 import { mockRepositories, mockBranches, mockPullRequests, mockRuleSets } from "@/data/mockData";
 import { toast } from "sonner";
 import { analyzeCode } from "@/services/api";
@@ -50,6 +51,7 @@ api_token = "sk-prod-abc123xyz"
 
 const Submit = () => {
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [submissionMethod, setSubmissionMethod] = useState<"upload" | "github">("upload");
   const [selectedRepo, setSelectedRepo] = useState("");
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -66,6 +68,19 @@ const Submit = () => {
     mlSuggestions: true,
     refactoring: true,
   });
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      setCode(text);
+      setFilename(file.name);
+      toast.success(`Loaded ${file.name} (${text.split("\n").length} lines)`);
+    };
+    reader.readAsText(file);
+  };
 
   const handleSubmit = async () => {
     if (!code.trim()) {
@@ -165,7 +180,19 @@ const Submit = () => {
         {/* Code Editor */}
         {submissionMethod === "upload" && (
           <div className="bg-card border border-border rounded-xl p-6 mb-6">
-            <h2 className="text-lg font-semibold text-primary mb-4">Code Editor</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-primary">Code Editor</h2>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
+                <FolderOpen className="w-4 h-4" /> Open File
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".py,.js,.ts,.java,.txt"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
+            </div>
             <div className="mb-4">
               <Label className="text-foreground mb-2 block">Filename</Label>
               <Input

@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -20,6 +20,7 @@ import {
   Download,
 } from "lucide-react";
 import { mockReviewResult, mockIssues } from "@/data/mockData";
+import { getEntry } from "@/services/reviewHistory";
 import { toast } from "sonner";
 import type { FullAnalysisResult } from "@/types/analysis";
 
@@ -601,7 +602,11 @@ const TABS = [
 const ReviewDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const result: FullAnalysisResult | null = location.state?.result ?? null;
+  const { id } = useParams<{ id: string }>();
+
+  // Try: router state → history by ID → null (show mock)
+  const result: FullAnalysisResult | null =
+    location.state?.result ?? (id ? getEntry(id)?.result ?? null : null);
 
   const handleExport = () => {
     if (!result) return;

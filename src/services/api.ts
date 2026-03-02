@@ -5,6 +5,7 @@ import type {
   DependencyResult,
   ReadabilityResult,
 } from "@/types/analysis";
+import { addEntry } from "@/services/reviewHistory";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -51,13 +52,18 @@ export async function analyzeCode(
     post<ReadabilityResult>("/analyze/readability", req).catch(() => undefined),
   ]);
 
-  return {
+  const result: FullAnalysisResult = {
     ...core,
     docs,
     performance,
     dependencies,
     readability,
   };
+
+  // Persist to localStorage so Reviews + Dashboard show real data
+  addEntry(result, filename, language);
+
+  return result;
 }
 
 export async function getHealth() {

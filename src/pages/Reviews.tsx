@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -11,439 +11,325 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Search, Download, AlertTriangle, ChevronDown, ChevronUp, CheckCircle2, MessageSquare, XCircle, Github } from "lucide-react";
+  Search,
+  Download,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  XCircle,
+  ExternalLink,
+  AlertTriangle,
+  ShieldAlert,
+  Bug,
+  Trash2,
+  Clock,
+  FileCode2,
+} from "lucide-react";
 import { toast } from "sonner";
+import {
+  getEntries,
+  markResolved,
+  markFalsePositive,
+  clearHistory,
+  type HistoryEntry,
+} from "@/services/reviewHistory";
 
-const mockIssues = [
-  {
-    id: 1,
-    severity: "critical",
-    category: "Security Vulnerability",
-    confidence: 95,
-    title: "SQL Injection Risk in User Query",
-    file: "src/api/user_service.py",
-    lines: "45-47",
-    description: "Direct string concatenation in SQL query allows potential injection attacks. User input is not sanitized before database execution.",
-    problematicCode: `def get_user(user_id):
-    query = "SELECT * FROM users WHERE id = '" + user_id + "'"
-    return db.execute(query)`,
-    suggestedFix: `def get_user(user_id):
-    query = "SELECT * FROM users WHERE id = ?"
-    return db.execute(query, (user_id,))`,
-    whyMatters: "SQL injection vulnerabilities allow attackers to manipulate database queries, potentially exposing sensitive data or destroying records.",
-    startLine: 45,
-  },
-  {
-    id: 2,
-    severity: "high",
-    category: "Performance Issue",
-    confidence: 88,
-    title: "N+1 Query Problem in Loop",
-    file: "src/services/order_service.py",
-    lines: "112-120",
-    description: "Database query executed inside a loop causes N+1 query problem, significantly impacting performance with large datasets.",
-    problematicCode: `for order in orders:
-    customer = db.query(Customer).filter_by(id=order.customer_id).first()
-    order.customer_name = customer.name`,
-    suggestedFix: `customer_ids = [order.customer_id for order in orders]
-customers = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
-customer_map = {c.id: c for c in customers}
-for order in orders:
-    order.customer_name = customer_map[order.customer_id].name`,
-    whyMatters: "N+1 queries can cause exponential database load, leading to slow response times and potential service outages under load.",
-    startLine: 112,
-  },
-  {
-    id: 3,
-    severity: "medium",
-    category: "Code Quality",
-    confidence: 82,
-    title: "Missing Error Handling",
-    file: "src/utils/file_handler.py",
-    lines: "23-25",
-    description: "File operations lack try-catch blocks, which could lead to unhandled exceptions crashing the application.",
-    problematicCode: `def read_config(path):
-    file = open(path, 'r')
-    return json.load(file)`,
-    suggestedFix: `def read_config(path):
-    try:
-        with open(path, 'r') as file:
-            return json.load(file)
-    except (IOError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to read config: {e}")
-        return None`,
-    whyMatters: "Unhandled exceptions can crash the application and provide poor user experience. Proper error handling ensures graceful degradation.",
-    startLine: 23,
-  },
-  {
-    id: 4,
-    severity: "low",
-    category: "Best Practices",
-    confidence: 75,
-    title: "Unused Import Statement",
-    file: "src/controllers/auth_controller.py",
-    lines: "3",
-    description: "The 'datetime' module is imported but never used in this file, adding unnecessary overhead.",
-    problematicCode: `import datetime  # Unused import`,
-    suggestedFix: `# Remove unused import`,
-    whyMatters: "Unused imports clutter the codebase and can slightly impact load times. Keeping imports clean improves maintainability.",
-    startLine: 3,
-  },
-  {
-    id: 5,
-    severity: "critical",
-    category: "Security Vulnerability",
-    confidence: 92,
-    title: "Hardcoded API Key Exposed",
-    file: "src/config/settings.py",
-    lines: "15",
-    description: "API key is hardcoded in source code, which could be exposed if the repository is made public.",
-    problematicCode: `API_KEY = "sk_live_abc123xyz789secret"`,
-    suggestedFix: `import os
-API_KEY = os.environ.get("API_KEY")`,
-    whyMatters: "Hardcoded secrets can be easily extracted from source code, leading to unauthorized access and potential data breaches.",
-    startLine: 15,
-  },
-];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const SEV_CLS: Record<string, string> = {
+  critical: "bg-red-600 text-white",
+  high:     "bg-orange-500 text-white",
+  medium:   "bg-yellow-500 text-black",
+  low:      "bg-blue-500 text-white",
+  none:     "bg-muted text-muted-foreground",
+};
+
+const STATUS_CLS: Record<string, string> = {
+  completed:   "bg-green-500/20 text-green-400 border-green-500/30",
+  in_progress: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  pending:     "bg-blue-500/20 text-blue-400 border-blue-500/30",
+};
+
+function fmt(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Flatten all issues from a FullAnalysisResult into a stable list */
+function flatIssues(entry: HistoryEntry) {
+  const r = entry.result;
+  const items: { key: string; severity: string; category: string; title: string; description: string }[] = [];
+
+  (r.security?.findings ?? []).forEach((f, i) =>
+    items.push({ key: `security_${i}`, severity: f.severity ?? "medium", category: "Security", title: f.title ?? f.vuln_type ?? "Security Issue", description: f.description ?? "" })
+  );
+  if (r.bugs?.risk_level && r.bugs.risk_level !== "low") {
+    items.push({ key: "bug_risk", severity: r.bugs.risk_level === "critical" ? "critical" : r.bugs.risk_level === "high" ? "high" : "medium", category: "Bug Risk", title: `Bug probability: ${Math.round((r.bugs.bug_probability ?? 0) * 100)}% (${r.bugs.risk_level})`, description: (r.bugs.risk_factors ?? []).join("; ") });
+  }
+  (r.dead_code?.issues ?? []).forEach((iss, i) =>
+    items.push({ key: `dead_${i}`, severity: "low", category: "Dead Code", title: iss.title ?? iss.issue_type ?? "Dead Code", description: iss.description ?? "" })
+  );
+  (r.refactoring?.suggestions ?? []).forEach((s, i) =>
+    items.push({ key: `refactor_${i}`, severity: s.priority ?? "medium", category: "Refactoring", title: s.title ?? s.refactoring_type ?? "Refactoring", description: s.description ?? "" })
+  );
+  (r.performance?.issues ?? []).forEach((h, i) =>
+    items.push({ key: `perf_${i}`, severity: h.severity ?? "medium", category: "Performance", title: h.title ?? h.pattern_type ?? "Performance", description: h.description ?? "" })
+  );
+  (r.dependencies?.issues ?? []).forEach((d, i) =>
+    items.push({ key: `dep_${i}`, severity: d.severity ?? "low", category: "Dependency", title: d.title ?? d.issue_type ?? "Dependency Issue", description: d.description ?? "" })
+  );
+
+  return items;
+}
+
+// ─── Issue Row ────────────────────────────────────────────────────────────────
+
+function IssueRow({
+  entryId, issue, resolved, fp, onAction,
+}: {
+  entryId: string;
+  issue: ReturnType<typeof flatIssues>[number];
+  resolved: boolean;
+  fp: boolean;
+  onAction: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className={`border rounded-lg mb-2 transition-all ${resolved ? "border-green-500/30 bg-green-500/5 opacity-60" : fp ? "border-muted bg-muted/20 opacity-50" : "border-border bg-card"}`}>
+      <div className="flex items-center gap-3 p-3 cursor-pointer" onClick={() => setOpen((o) => !o)}>
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${SEV_CLS[issue.severity] ?? SEV_CLS.medium}`}>
+          {issue.severity}
+        </span>
+        <span className="text-xs text-muted-foreground font-medium">{issue.category}</span>
+        <span className="flex-1 text-sm text-foreground truncate">{issue.title}</span>
+        {resolved && <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />}
+        {fp && <XCircle className="w-4 h-4 text-muted-foreground shrink-0" />}
+        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+      </div>
+
+      {open && (
+        <div className="px-4 pb-4 border-t border-border pt-3 space-y-3">
+          {issue.description && <p className="text-sm text-muted-foreground">{issue.description}</p>}
+          {!resolved && !fp && (
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5 text-green-400 border-green-500/30 hover:bg-green-500/10"
+                onClick={() => { markResolved(entryId, issue.key); toast.success("Issue marked as resolved"); onAction(); }}>
+                <CheckCircle2 className="w-3.5 h-3.5" /> Mark Resolved
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5 text-muted-foreground"
+                onClick={() => { markFalsePositive(entryId, issue.key); toast.info("Marked as false positive"); onAction(); }}>
+                <XCircle className="w-3.5 h-3.5" /> False Positive
+              </Button>
+            </div>
+          )}
+          {resolved && <p className="text-xs text-green-400">Resolved</p>}
+          {fp && <p className="text-xs text-muted-foreground">Marked as false positive</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Review Card ──────────────────────────────────────────────────────────────
+
+function ReviewCard({ entry, onUpdate }: { entry: HistoryEntry; onUpdate: () => void }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [tick, setTick] = useState(0);
+  const issues = flatIssues(entry);
+  const fresh = getEntries().find((e) => e.id === entry.id) ?? entry;
+
+  const refresh = () => { setTick((n) => n + 1); onUpdate(); };
+
+  return (
+    <div className="bg-card border border-border rounded-xl mb-4 overflow-hidden">
+      <div className="flex items-center gap-4 p-5 cursor-pointer hover:bg-secondary/20 transition-colors" onClick={() => setOpen((o) => !o)}>
+        <FileCode2 className="w-8 h-8 text-primary shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-foreground truncate">{entry.filename}</span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${SEV_CLS[entry.severity] ?? SEV_CLS.none}`}>
+              {entry.severity === "none" ? "Clean" : entry.severity}
+            </span>
+            <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${STATUS_CLS[entry.status]}`}>
+              {entry.status.replace("_", " ")}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+            <Clock className="w-3.5 h-3.5" />
+            <span>{fmt(entry.submittedAt)}</span>
+            <span>·</span>
+            <span>{entry.issueCount} issues</span>
+            <span>·</span>
+            <span>Score {entry.overallScore}/100</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button size="sm" variant="outline" className="gap-1.5 text-xs"
+            onClick={(e) => { e.stopPropagation(); navigate("/reviews/result", { state: { result: entry.result } }); }}>
+            <ExternalLink className="w-3.5 h-3.5" /> Full Report
+          </Button>
+          {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-5 pb-5 border-t border-border pt-4">
+          {issues.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-green-400 py-4">
+              <CheckCircle2 className="w-5 h-5" /> No issues detected — clean code!
+            </div>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-foreground mb-3">
+                {issues.length} Issues
+                {fresh.resolvedIssues.length > 0 && (
+                  <span className="text-green-400 ml-2 font-normal text-xs">({fresh.resolvedIssues.length} resolved)</span>
+                )}
+              </p>
+              {issues.map((iss) => (
+                <IssueRow key={iss.key} entryId={entry.id} issue={iss}
+                  resolved={fresh.resolvedIssues.includes(iss.key)}
+                  fp={fresh.falsePositives.includes(iss.key)}
+                  onAction={refresh} />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 const Reviews = () => {
-  const [expandedIssue, setExpandedIssue] = useState<number | null>(1);
+  const navigate = useNavigate();
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [resolvedIds, setResolvedIds] = useState<number[]>([]);
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  const stats = {
-    total: 12,
-    critical: 2,
-    high: 3,
-    medium: 5,
-    low: 2,
-    score: 83,
-    filesAnalyzed: 4,
-    linesAnalyzed: 823,
-    timeSeconds: 9.4,
-  };
+  const reload = () => setEntries(getEntries());
+  useEffect(() => { reload(); }, []);
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return "bg-red-500/20 text-red-400 border-red-500/30";
-      case "high":
-        return "bg-orange-500/20 text-orange-400 border-orange-500/30";
-      case "medium":
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
-      case "low":
-        return "bg-blue-500/20 text-blue-400 border-blue-500/30";
-      default:
-        return "bg-muted text-muted-foreground";
-    }
-  };
-
-  const filteredIssues = mockIssues.filter((issue) => {
-    if (severityFilter !== "all" && issue.severity !== severityFilter) return false;
-    if (categoryFilter !== "all" && !issue.category.toLowerCase().includes(categoryFilter)) return false;
-    if (searchQuery && !issue.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
+  const filtered = entries.filter((e) => {
+    const matchSearch = !search || e.filename.toLowerCase().includes(search.toLowerCase()) || e.summary.toLowerCase().includes(search.toLowerCase());
+    const matchSev = severityFilter === "all" || e.severity === severityFilter;
+    const matchStatus = statusFilter === "all" || e.status === statusFilter;
+    return matchSearch && matchSev && matchStatus;
   });
 
-  const handleMarkResolved = (id: number, title: string) => {
-    setResolvedIds((prev) => [...prev, id]);
-    toast.success(`Marked "${title}" as resolved`);
-  };
-
-  const handleExportJSON = () => {
-    const report = {
-      exportedAt: new Date().toISOString(),
-      summary: { ...stats },
-      issues: filteredIssues.map(({ id, severity, category, confidence, title, file, lines, description }) => ({
-        id, severity, category, confidence, title, file, lines, description,
-      })),
-    };
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+  const handleExport = () => {
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "intellicode-review-report.json";
+    a.download = `intellcode_reviews_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success("Report exported as JSON");
+    toast.success("Reviews exported as JSON");
   };
 
-  const handleExportCSV = () => {
-    const header = "ID,Severity,Category,Confidence,Title,File,Lines\n";
-    const rows = filteredIssues
-      .map((i) => `${i.id},${i.severity},${i.category},${i.confidence}%,"${i.title}",${i.file},${i.lines}`)
-      .join("\n");
-    const blob = new Blob([header + rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "intellicode-review-report.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Report exported as CSV");
+  const handleClear = () => {
+    if (window.confirm("Delete all review history? This cannot be undone.")) {
+      clearHistory();
+      reload();
+      toast.info("Review history cleared");
+    }
   };
 
   return (
     <div className="min-h-screen bg-background">
       <AppNavigation />
-
       <main className="container mx-auto px-4 py-8">
-        {/* Score Circle */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="relative w-28 h-28 mb-4">
-            <svg className="w-full h-full transform -rotate-90">
-              <circle
-                cx="56"
-                cy="56"
-                r="48"
-                stroke="currentColor"
-                strokeWidth="8"
-                fill="none"
-                className="text-muted/30"
-              />
-              <circle
-                cx="56"
-                cy="56"
-                r="48"
-                stroke="url(#scoreGradient)"
-                strokeWidth="8"
-                fill="none"
-                strokeDasharray={`${(stats.score / 100) * 301.59} 301.59`}
-                strokeLinecap="round"
-              />
-              <defs>
-                <linearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="hsl(var(--primary))" />
-                  <stop offset="100%" stopColor="hsl(var(--accent))" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-3xl font-bold text-foreground">{stats.score}/100</span>
-              <span className="text-xs text-muted-foreground">Code Quality</span>
-            </div>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Code Reviews</h1>
+            <p className="text-muted-foreground mt-1">{entries.length} analysis{entries.length !== 1 ? "es" : ""} in history</p>
           </div>
-
-          {/* Stats Row */}
-          <div className="flex gap-8 mb-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-foreground">{stats.total}</div>
-              <div className="text-sm text-muted-foreground">Total Issues</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-red-400">{stats.critical}</div>
-              <div className="text-sm text-muted-foreground">Critical</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-400">{stats.high}</div>
-              <div className="text-sm text-muted-foreground">High</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-400">{stats.medium}</div>
-              <div className="text-sm text-muted-foreground">Medium</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-400">{stats.low}</div>
-              <div className="text-sm text-muted-foreground">Low</div>
-            </div>
-          </div>
-
-          <p className="text-sm text-muted-foreground mb-4">
-            Analyzed {stats.filesAnalyzed} files, {stats.linesAnalyzed} lines | Completed in {stats.timeSeconds} seconds
-          </p>
-
-          {/* Status Banner */}
-          <div className="w-full max-w-2xl bg-yellow-500/20 border border-yellow-500/30 rounded-lg py-3 px-6 flex items-center justify-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-yellow-400" />
-            <span className="font-medium text-yellow-400">Review Complete - Action Required</span>
+          <div className="flex gap-2">
+            {entries.length > 0 && (
+              <>
+                <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
+                  <Download className="w-4 h-4" /> Export
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleClear} className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
+                  <Trash2 className="w-4 h-4" /> Clear
+                </Button>
+              </>
+            )}
+            <Button className="bg-gradient-primary gap-1.5" size="sm" onClick={() => navigate("/submit")}>
+              + New Analysis
+            </Button>
           </div>
         </div>
 
+        {/* Severity summary */}
+        {entries.length > 0 && (
+          <div className="flex flex-wrap gap-3 mb-6">
+            {(["critical", "high", "medium", "low"] as const).map((sev) => {
+              const count = entries.filter((e) => e.severity === sev).length;
+              if (!count) return null;
+              return (
+                <div key={sev} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${SEV_CLS[sev]}`}>
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {count} {sev}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Filters */}
-        <div className="flex flex-wrap gap-4 mb-6 items-center">
+        <div className="flex flex-wrap gap-3 mb-6">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search filename or summary..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 bg-input border-border" />
+          </div>
           <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger className="w-40 bg-card border-border">
-              <SelectValue placeholder="All Severities" />
-            </SelectTrigger>
+            <SelectTrigger className="w-36 bg-input border-border"><SelectValue placeholder="Severity" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Severities</SelectItem>
+              <SelectItem value="all">All Severity</SelectItem>
               <SelectItem value="critical">Critical</SelectItem>
               <SelectItem value="high">High</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
               <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="none">Clean</SelectItem>
             </SelectContent>
           </Select>
-
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-40 bg-card border-border">
-              <SelectValue placeholder="All Categories" />
-            </SelectTrigger>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-36 bg-input border-border"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              <SelectItem value="security">Security</SelectItem>
-              <SelectItem value="performance">Performance</SelectItem>
-              <SelectItem value="quality">Code Quality</SelectItem>
-              <SelectItem value="practices">Best Practices</SelectItem>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
             </SelectContent>
           </Select>
+        </div>
 
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search issues..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 bg-card border-border"
-            />
+        {/* List */}
+        {entries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <ShieldAlert className="w-16 h-16 text-muted-foreground/30 mb-4" />
+            <h2 className="text-xl font-semibold text-foreground mb-2">No reviews yet</h2>
+            <p className="text-muted-foreground mb-6 max-w-sm">Submit your first code snippet and all 12 ML models will analyze it instantly.</p>
+            <Button className="bg-gradient-primary" onClick={() => navigate("/submit")}>Submit Code Now</Button>
           </div>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="gap-2">
-                <Download className="w-4 h-4" />
-                Export Report
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleExportJSON}>Export as JSON</DropdownMenuItem>
-              <DropdownMenuItem onClick={handleExportCSV}>Export as CSV</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Issues List */}
-        <div className="space-y-4">
-          {filteredIssues.map((issue) => (
-            <div
-              key={issue.id}
-              className="bg-card border border-border rounded-lg overflow-hidden"
-            >
-              {/* Issue Header */}
-              <div
-                className="p-4 cursor-pointer hover:bg-secondary/50 transition-colors"
-                onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-3 h-3 rounded-full mt-1.5 ${
-                        issue.severity === "critical"
-                          ? "bg-red-500"
-                          : issue.severity === "high"
-                          ? "bg-orange-500"
-                          : issue.severity === "medium"
-                          ? "bg-yellow-500"
-                          : "bg-blue-500"
-                      }`}
-                    />
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge className={`${getSeverityColor(issue.severity)} uppercase text-xs`}>
-                          {issue.severity}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">{issue.category}</span>
-                        <span className="text-sm text-muted-foreground">• Confidence: {issue.confidence}%</span>
-                      </div>
-                      <h3 className="font-semibold text-foreground">{issue.title}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        File: {issue.file} | Lines {issue.lines}
-                      </p>
-                    </div>
-                  </div>
-                  {expandedIssue === issue.id ? (
-                    <ChevronUp className="w-5 h-5 text-muted-foreground" />
-                  ) : (
-                    <ChevronDown className="w-5 h-5 text-muted-foreground" />
-                  )}
-                </div>
-              </div>
-
-              {/* Expanded Content */}
-              {expandedIssue === issue.id && (
-                <div className="px-4 pb-4 border-t border-border pt-4">
-                  <div className="mb-4">
-                    <h4 className="text-sm font-medium text-foreground mb-2">Description:</h4>
-                    <p className="text-sm text-muted-foreground">{issue.description}</p>
-                  </div>
-
-                  <div className="mb-4">
-                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                      Problematic Code
-                    </h4>
-                    <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 font-mono text-sm overflow-x-auto">
-                      {issue.problematicCode.split("\n").map((line, idx) => (
-                        <div key={idx} className="flex">
-                          <span className="text-muted-foreground w-8 flex-shrink-0">
-                            {issue.startLine + idx}
-                          </span>
-                          <span className="text-red-300">{line}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mb-4">
-                    <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                      Suggested Fix
-                    </h4>
-                    <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 font-mono text-sm overflow-x-auto">
-                      {issue.suggestedFix.split("\n").map((line, idx) => (
-                        <div key={idx} className="flex">
-                          <span className="text-muted-foreground w-8 flex-shrink-0">
-                            {issue.startLine + idx}
-                          </span>
-                          <span className="text-green-300">{line}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mb-4 bg-primary/10 border border-primary/20 rounded-lg p-4">
-                    <h4 className="font-semibold text-primary mb-1">Why This Matters:</h4>
-                    <p className="text-sm text-muted-foreground">{issue.whyMatters}</p>
-                  </div>
-
-                  <div className="flex gap-2 flex-wrap">
-                    {resolvedIds.includes(issue.id) ? (
-                      <Button size="sm" variant="outline" className="gap-1.5 text-green-400 border-green-500/30" disabled>
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Resolved
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        className="bg-gradient-primary gap-1.5"
-                        onClick={() => handleMarkResolved(issue.id, issue.title)}
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Mark Resolved
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Discussion thread opened")}>
-                      <MessageSquare className="w-3.5 h-3.5" />
-                      Discuss
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Marked as false positive")}>
-                      <XCircle className="w-3.5 h-3.5" />
-                      False Positive
-                    </Button>
-                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Opening in GitHub...")}>
-                      <Github className="w-3.5 h-3.5" />
-                      View in GitHub
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Bug className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p>No reviews match your filters.</p>
+          </div>
+        ) : (
+          filtered.map((entry) => <ReviewCard key={entry.id} entry={entry} onUpdate={reload} />)
+        )}
       </main>
     </div>
   );
