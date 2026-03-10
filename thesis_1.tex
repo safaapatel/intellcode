@@ -1427,10 +1427,148 @@ as a downloadable file via the Browser Blob API.
 Four non-trivial problems arose during development. \textbf{Pydantic v2 compatibility:} the backend was prototyped against Pydantic v1 dictionary-style access (\texttt{model.get("field")}); pinning to v2 silently returned \texttt{None} for every field because v2 output objects are not dicts. The fix required replacing every dict access with attribute access across \texttt{main.py} — validate response schemas at endpoint boundaries. \textbf{SSE streaming:} FastAPI's \texttt{JSONResponse} does not stream; the endpoint uses \texttt{StreamingResponse} with \texttt{text/event-stream} and a generator that yields events per model. Because the submission is a POST body, the browser \texttt{EventSource} API cannot be used directly (GET only); the frontend opens a \texttt{fetch} request and parses SSE frames via the Streams API. \textbf{Cache eviction:} the original \texttt{OrderedDict} implementation evicted in insertion order, which broke after admin-initiated cache flushes. The corrected version calls \texttt{min(store, key=lambda k: store[k]["ts"])} to evict the genuinely oldest entry. \textbf{Placeholder ambiguity:} a URL-shaped placeholder (\texttt{https://github.com/owner/repo/pull/123}) was mistaken for real content by test users; replacing it with a plain natural-language prompt eliminated the confusion.
 
 %% ============================================================
-
 \chapter{Prototype Demonstration}
 \label{ch:demo}
+%% ============================================================
 
+Three worked scenarios show how the system behaves on real inputs. Each covers a different pathway: security detection, structural debt, and post-refactoring validation. They connect the design goals from Chapter~\ref{ch:motivation} to observable outputs.
+
+\section{Interface overview}
+\label{sec:ui-overview}
+
+The IntelliCode Review interface is organised around a persistent sidebar linking to twelve
+pages. The landing page has a hero section, a feature grid for the twelve analysis dimensions,
+and an embedded live demo that lets a visitor run a canned analysis before authenticating.
+Once logged in, the developer lands on the Dashboard, which shows a quality trend sparkline,
+summary statistics, and a file quality leaderboard.
+
+The Submit page is the main entry point. A developer pastes source code, optionally supplies
+a filename and a language hint, and presses \textit{Ctrl+Enter} to submit without leaving
+the keyboard. The backend status indicator in the navigation bar shows at a glance whether
+the analysis engine is reachable, which prevents confusion when the server is not running.
+
+\section{Demonstration scenarios}
+\label{sec:demo-scenarios}
+
+\subsection{Dashboard and analysis history}
+
+After logging in, the Dashboard surfaces an area chart of quality scores over time.
+When at least two distinct files have been analysed, the leaderboard renders two ranked
+panels: the five highest-scoring files and the five lowest. This design came from a
+practical observation: developers working on multiple modules tend to want to target the
+weakest file, not the most recently modified one.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{03_dashboard.png}
+\caption{The Dashboard page showing aggregate quality metrics, a quality score trend sparkline, and the Top Quality Files / Needs Attention leaderboard panels for a project with five prior analyses.}
+\label{fig:dashboard}
+\end{figure}
+
+\subsection{Code submission and streaming}
+
+The Submit page (Figure~\ref{fig:submit}) accepts source code in Python, JavaScript,
+TypeScript, or Java. A \texttt{Ctrl+Enter} shortcut triggers submission from the editor.
+During analysis, partial results stream back via the SSE endpoint
+(\texttt{/analyze/stream}), so the Security tab populates within the first 200\,ms while
+the remaining models finish running. This substantially reduces perceived latency for
+longer files.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{02_submit.png}
+\caption{The Submit page of the running IntelliCode Review prototype. The code editor shows a Python snippet; the analysis engine is reachable (status indicator visible in the navigation bar). Submission is triggered by the \textit{Analyze Code} button or \textit{Ctrl+Enter}.}
+\label{fig:submit}
+\end{figure}
+
+\subsection{Review detail and Fix Guide}
+
+The Review Detail page organises results into fourteen tabs. The header shows an overall
+score as a numeric gauge with a colour-coded status badge. Two tabs have the most direct
+impact on developer workflow. The Pattern tab displays the twelve raw structural AST feature
+scores (function count, maximum nesting depth, parameter counts, maximum function body
+length, import count, and so on) as a grid of metric cards, with cells colour-highlighted
+when a feature exceeds the empirically derived threshold for that dimension. This design
+replaces an earlier version that displayed four-class label probabilities from the Random
+Forest classifier; given the inter-rater agreement of $\kappa = 0.168$ for the underlying
+labels, presenting predicted class probabilities as actionable output would overstate the
+classifier's diagnostic precision. Raw AST scores are directly interpretable (``this
+function has 72 lines and 6 parameters'') without requiring agreement on whether that
+constitutes a code smell versus an anti-pattern.
+
+The Fix Guide tab provides before/after code blocks for each detected vulnerability type,
+with a copy button. A developer who gets a SQL injection finding can copy the
+parameterised query template directly and adapt it without leaving the interface.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{10_review_detail.png}
+\caption{Analysis Report page for \texttt{auth\_module.py}. The header shows an overall score of 28/100 with a ``Critical'' badge. The tab strip gives access to all fourteen analysis dimensions. The summary row reports 2 security findings, a critical bug risk at 78\% probability, and 12 lines of dead code.}
+\label{fig:review-detail}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{12_analysis_scores.png}
+\caption{Score summary panel rendered after analysis. The radar chart plots five quality dimensions (Security, Complexity, Bug Risk, Readability, Docs) and the horizontal bar chart shows per-dimension scores. Four gauge dials report the overall score (45/100), complexity (0/100), readability (78/100), and documentation (50/100). The summary row identifies 2 security issues, a critical bug risk at 95\% probability, 0 clones, and 100 lines of potential dead code.}
+\label{fig:analysis-scores}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{13_security_detail.png}
+\caption{Security Review detail for \texttt{ablation\_study.py}. Findings are grouped by root cause: an unsanitised file path at lines 572--578 is flagged as a confirmed path traversal vector with taint-flow evidence (\texttt{Path()} $\to$ \texttt{output\_path} $\to$ vulnerable call). The Fix Guide provides a before/after code block with a copy button, showing the addition of \texttt{os.path.realpath} boundary checking. The action plan lists each finding by severity, location, and a single-sentence remediation step.}
+\label{fig:security-detail}
+\end{figure}
+
+\subsection{Analytics and quality tracking}
+
+The Analytics page tracks score improvement over time. Per-file trajectory charts
+show score history for each submitted file, colour-coded by direction: green for
+improvement, red/orange for regression. The main use case is post-refactoring
+confirmation: a developer who has just restructured a module wants to see that the
+complexity score actually moved before opening a pull request.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{05_analytics.png}
+\caption{Analytics \& Insights page. The Code Quality Trend chart plots average score over seven days. The Issue Distribution pie and Issues by Category bar chart show the relative contribution of each analysis dimension to the total finding count.}
+\label{fig:analytics}
+\end{figure}
+
+\subsection{Compare page and administration}
+
+The Compare page submits two code snippets to \texttt{/analyze} in parallel and renders a
+colour-coded delta table. Dimensions where one version is better are highlighted. The Admin
+page shows live model status, aggregate cache statistics from \texttt{GET /stats}, and a
+cache flush button.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{06_compare.png}
+  \caption{Compare page with two Python snippets loaded. The delta table shows which version scores better on each of the twelve analysis dimensions.}
+  \label{fig:compare}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{04_reviews.png}
+  \caption{Code Reviews list. Each row shows filename, language badge, severity indicator, overall score, and export controls. Filter and sort controls appear at the top.}
+  \label{fig:reviews}
+\end{minipage}
+\end{figure}
+
+\subsection{Demonstration scenarios}
+
+Three scenarios illustrate the platform's multi-dimensional output. In the first, a short authentication helper with a hardcoded API key and an f-string SQL query scores 37/100 (Critical). The security model flags two findings (CWE-798, CWE-89) at 0.95 probability, while complexity grades A --- easy to read but deeply insecure, a separation of signals impossible with a single-metric tool. The Fix Guide renders copy-ready parameterised query and environment variable templates directly below the findings.
+
+In the second scenario, a record-filtering utility scores 65/100 (Action Required). It passes all security checks but reaches cyclomatic complexity 9 and cognitive complexity 14, triggering three refactoring suggestions (Extract Method, Reduce Nesting, Reduce Parameters) at 45 minutes estimated debt. The pattern classifier assigns a moderate-confidence \textit{feature envy} label, capturing a design concern that raw metrics alone cannot express.
+
+The third scenario uses the Compare page to confirm the refactoring. Submitting both versions in parallel produces a delta table: complexity grade C$\to$B, cognitive complexity 14$\to$6, overall score 65$\to$78. This gives developers a quantitative, reproducible benchmark --- rather than a subjective impression that the code ``looks cleaner'' --- that can be referenced directly in a pull request description.
+
+%% ============================================================
 
 \chapter{Validation and Evaluation}
 \label{ch:eval}
