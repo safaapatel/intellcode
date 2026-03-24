@@ -19,12 +19,15 @@ export interface Session {
   loggedInAt: string;
 }
 
+// Demo password is intentionally generic — no real credentials stored here
+export const DEMO_PASSWORD = "demo";
+
 export const DEFAULT_USERS: StoredUser[] = [
   {
     id: "1",
     name: "Safaa Patel",
     email: "admin@intellicode.io",
-    password: "admin123",
+    password: DEMO_PASSWORD,
     role: "admin",
     active: true,
     createdAt: "2025-11-01T00:00:00Z",
@@ -33,7 +36,7 @@ export const DEFAULT_USERS: StoredUser[] = [
     id: "2",
     name: "Alex Reviewer",
     email: "reviewer@intellicode.io",
-    password: "review123",
+    password: DEMO_PASSWORD,
     role: "reviewer",
     active: true,
     createdAt: "2025-11-15T00:00:00Z",
@@ -42,7 +45,7 @@ export const DEFAULT_USERS: StoredUser[] = [
     id: "3",
     name: "Dev User",
     email: "dev@intellicode.io",
-    password: "dev123",
+    password: DEMO_PASSWORD,
     role: "developer",
     active: true,
     createdAt: "2025-12-01T00:00:00Z",

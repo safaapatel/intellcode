@@ -162,12 +162,8 @@ const Login = () => {
 
           {/* Demo credentials hint */}
           <div className="mt-8 p-4 bg-secondary/40 rounded-xl border border-border text-left">
-            <p className="text-xs font-semibold text-muted-foreground mb-2">Demo credentials</p>
-            <div className="space-y-1 text-xs font-mono">
-              <p><span className="text-primary">Admin:</span> admin@intellicode.io / admin123</p>
-              <p><span className="text-accent">Reviewer:</span> reviewer@intellicode.io / review123</p>
-              <p><span className="text-muted-foreground">Dev:</span> dev@intellicode.io / dev123</p>
-            </div>
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Demo access</p>
+            <p className="text-xs text-muted-foreground font-mono">Any email · password: <span className="text-foreground">demo</span></p>
           </div>
         </div>
       </div>
