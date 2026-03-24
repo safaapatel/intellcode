@@ -38,7 +38,7 @@ const Login = () => {
         toast.success(`Welcome back, ${admin.name.split(" ")[0]}!`, {
           description: "Signed in via GitHub",
         });
-        navigate(from ?? "/dashboard");
+        navigate("/dashboard");
       } else {
         setLoading(false);
         toast.error("No admin account found.");
@@ -69,7 +69,7 @@ const Login = () => {
     toast.success(`Welcome back, ${user.name.split(" ")[0]}!`, {
       description: `Signed in as ${user.role}`,
     });
-    navigate(from ?? (user.role === "admin" ? "/admin" : "/dashboard"));
+    navigate(user.role === "admin" ? "/admin" : "/dashboard");
   };
 
   return (
