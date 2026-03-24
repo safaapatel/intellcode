@@ -41,36 +41,43 @@ function save(entries: HistoryEntry[]) {
 function topSeverity(result: FullAnalysisResult): HistoryEntry["severity"] {
   const secFindings = result.security?.findings ?? [];
   if (secFindings.some((f) => f.severity === "critical")) return "critical";
-  if (result.bugs?.risk_level === "critical") return "critical";
+  if (result.bug_prediction?.risk_level === "critical") return "critical";
   if (secFindings.some((f) => f.severity === "high")) return "high";
-  if (result.bugs?.risk_level === "high") return "high";
+  if (result.bug_prediction?.risk_level === "high") return "high";
   if (secFindings.some((f) => f.severity === "medium")) return "medium";
-  if (result.bugs?.risk_level === "medium") return "medium";
+  if (result.bug_prediction?.risk_level === "medium") return "medium";
   if (secFindings.length > 0) return "low";
   return "none";
 }
 
 /** Count total issues across all models */
 function countIssues(result: FullAnalysisResult): number {
+  const bugRisk = result.bug_prediction?.risk_level;
+  const bugCount = bugRisk === "critical" || bugRisk === "high" ? 1 : 0;
+  const patternCount = result.patterns?.label && result.patterns.label !== "clean" ? 1 : 0;
   return (
     (result.security?.findings?.length ?? 0) +
     (result.dead_code?.issues?.length ?? 0) +
     (result.refactoring?.suggestions?.length ?? 0) +
     (result.performance?.issues?.length ?? 0) +
     (result.dependencies?.issues?.length ?? 0) +
-    (result.clones?.clones?.length ?? 0)
+    (result.clones?.clones?.length ?? 0) +
+    bugCount +
+    patternCount
   );
 }
 
-/** Derive an overall score (0–100) from multiple model scores */
+/** Derive an overall score (0–100) from the backend's weighted score if available */
 function overallScore(result: FullAnalysisResult): number {
+  // Prefer the backend's pre-computed weighted score
+  if (result.overall_score != null && result.overall_score > 0) return result.overall_score;
+  // Fallback: average available model scores
   const scores: number[] = [];
   if (result.complexity?.score != null) scores.push(result.complexity.score);
   if (result.readability?.overall_score != null) scores.push(result.readability.overall_score);
   if (result.docs?.average_quality != null) scores.push(result.docs.average_quality);
   if (result.security?.vulnerability_score != null)
     scores.push(Math.max(0, 100 - result.security.vulnerability_score * 10));
-  if (result.overall_score) scores.push(result.overall_score);
   if (scores.length === 0) return 75;
   return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
@@ -135,6 +142,11 @@ export function markFalsePositive(entryId: string, issueKey: string) {
 
 export function clearHistory() {
   localStorage.removeItem(KEY);
+}
+
+export function deleteEntry(id: string) {
+  const entries = load().filter((e) => e.id !== id);
+  save(entries);
 }
 
 /** Compute dashboard stats from stored history */

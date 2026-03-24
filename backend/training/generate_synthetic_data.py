@@ -1,23 +1,30 @@
 """
-Synthetic Dataset Generator
-Generates labeled training datasets for all ML models without needing a GitHub
-token or internet access. Uses programmatic Python code generation + the
-existing feature extraction pipeline to produce realistic feature vectors.
+DEPRECATED — Synthetic Dataset Generator
+=========================================
+This file is kept for reference only.  The training pipeline now uses REAL
+public datasets fetched by:
 
-Usage:
-    cd backend
-    python training/generate_synthetic_data.py --all --out data/
-    python training/generate_synthetic_data.py --task complexity --n 2000 --out data/
-    python training/generate_synthetic_data.py --task security  --n 1500 --out data/
-    python training/generate_synthetic_data.py --task pattern   --n 2000 --out data/
-    python training/generate_synthetic_data.py --task bug       --n 2000 --out data/
+    python training/fetch_real_datasets.py --all --out data/
 
-Outputs (JSONL files):
-    data/complexity_dataset.jsonl
-    data/security_dataset.jsonl
-    data/pattern_dataset.jsonl
-    data/bug_dataset.jsonl
+Or run everything in one step:
+
+    python training/train_all.py
+
+The synthetic generator produces artificially simple code patterns that lead
+to over-fitted models (AUC 1.0 on training data, poor generalisation).
+Real data from Bandit examples, PyDriller commit mining, and actual Python
+open-source repos produces significantly more realistic model behaviour.
 """
+
+import sys
+print(
+    "\n[DEPRECATED] generate_synthetic_data.py is no longer used.\n"
+    "Run:  python training/fetch_real_datasets.py --all --out data/\n"
+    "  or: python training/train_all.py\n"
+)
+sys.exit(0)
+
+# ── Legacy code kept below for reference ────────────────────────────────────
 
 from __future__ import annotations
 

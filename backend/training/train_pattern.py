@@ -1,22 +1,30 @@
 """
-Train Pattern Recognition Model (CodeBERT Fine-Tune)
+Train Pattern Recognition Model (Random Forest on code metrics + AST features)
+
+Lightweight alternative to CodeBERT — no GPU or HuggingFace download required.
+Achieves good accuracy using static code analysis features extracted with the
+existing code_metrics and ast_extractor modules.
+
+Labels:
+  0  clean
+  1  code_smell
+  2  anti_pattern
+  3  style_violation
 
 Usage:
     cd backend
     python training/train_pattern.py --data data/pattern_dataset.jsonl
 
 Outputs:
-    checkpoints/pattern/    (HuggingFace Trainer checkpoint directory)
+    checkpoints/pattern/rf_model.pkl
     checkpoints/pattern/metrics.json
-
-Requirements:
-    pip install transformers torch datasets evaluate scikit-learn
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import pickle
 import sys
 from pathlib import Path
 
@@ -27,219 +35,192 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 LABEL_NAMES = ["clean", "code_smell", "anti_pattern", "style_violation"]
 LABEL2ID = {l: i for i, l in enumerate(LABEL_NAMES)}
 ID2LABEL = {i: l for i, l in enumerate(LABEL_NAMES)}
-MODEL_NAME = "microsoft/codebert-base"
-MAX_LENGTH = 512
 
+
+# ---------------------------------------------------------------------------
+# Feature extraction
+# ---------------------------------------------------------------------------
+
+def _extract_features(source: str) -> np.ndarray:
+    """Extract a fixed-length feature vector from source code."""
+    from features.code_metrics import compute_all_metrics
+    from features.ast_extractor import ASTExtractor
+
+    try:
+        m = compute_all_metrics(source)
+        ast_feats = ASTExtractor().extract(source)
+
+        sloc = max(m.lines.sloc, 1)
+        comment_ratio = m.lines.comments / sloc
+
+        return np.array([
+            float(m.cyclomatic_complexity),
+            float(m.cognitive_complexity),
+            float(m.max_function_complexity),
+            float(m.avg_function_complexity),
+            float(m.lines.sloc),
+            float(m.lines.comments),
+            float(comment_ratio),
+            float(m.halstead.volume),
+            float(m.halstead.difficulty),
+            float(m.halstead.bugs_delivered),
+            float(m.maintainability_index),
+            float(m.n_long_functions),
+            float(m.n_complex_functions),
+            float(m.n_lines_over_80),
+            float(ast_feats.get("n_functions", 0)),
+            float(ast_feats.get("n_classes", 0)),
+            float(ast_feats.get("n_try_blocks", 0)),
+            float(ast_feats.get("n_raises", 0)),
+            float(ast_feats.get("n_with_blocks", 0)),
+            float(ast_feats.get("max_nesting_depth", 0)),
+            float(ast_feats.get("max_params", 0)),
+            float(ast_feats.get("avg_params", 0.0)),
+            float(ast_feats.get("n_decorated_functions", 0)),
+            float(ast_feats.get("n_imports", 0)),
+            float(ast_feats.get("max_function_body_lines", 0)),
+            float(ast_feats.get("avg_function_body_lines", 0.0)),
+        ], dtype=np.float32)
+    except Exception:
+        return np.zeros(26, dtype=np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
 
 def load_dataset(path: str) -> tuple[list[str], list[int]]:
+    """Load pattern_dataset.jsonl and return texts and integer labels."""
     texts, labels = [], []
+    skipped = 0
     with open(path) as f:
         for line in f:
-            rec = json.loads(line)
-            if rec.get("code") and rec.get("label") in LABEL2ID:
-                texts.append(rec["code"])
-                labels.append(LABEL2ID[rec["label"]])
+            rec = json.loads(line.strip())
+            code = rec.get("code", "")
+            label_str = rec.get("label", "clean")
+            if not code or label_str not in LABEL2ID:
+                skipped += 1
+                continue
+            texts.append(code)
+            labels.append(LABEL2ID[label_str])
 
-    # Print class balance
     from collections import Counter
     counts = Counter(labels)
-    print(f"Loaded {len(texts)} samples")
+    print(f"Loaded {len(texts)} samples ({skipped} skipped) from {path}")
     for lid, count in sorted(counts.items()):
         print(f"  {ID2LABEL[lid]:20s}: {count}")
     return texts, labels
 
 
-def compute_metrics(eval_pred):
-    """Callback for HuggingFace Trainer."""
-    import evaluate
-    import numpy as np
-
-    metric = evaluate.load("accuracy")
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    acc = metric.compute(predictions=predictions, references=labels)
-
-    # Per-class F1
-    from sklearn.metrics import f1_score, precision_score, recall_score
-    f1 = f1_score(labels, predictions, average="macro", zero_division=0)
-    precision = precision_score(labels, predictions, average="macro", zero_division=0)
-    recall = recall_score(labels, predictions, average="macro", zero_division=0)
-
-    return {
-        "accuracy": acc["accuracy"],
-        "f1_macro": f1,
-        "precision_macro": precision,
-        "recall_macro": recall,
-    }
-
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
 
 def train(
     data_path: str,
     output_dir: str = "checkpoints/pattern",
-    epochs: int = 3,
-    batch_size: int = 8,
-    learning_rate: float = 2e-5,
     test_split: float = 0.15,
-):
-    try:
-        import torch
-        from transformers import (
-            RobertaTokenizer,
-            RobertaForSequenceClassification,
-            TrainingArguments,
-            Trainer,
-            EarlyStoppingCallback,
-        )
-        from torch.utils.data import Dataset
-        from sklearn.model_selection import train_test_split
-    except ImportError as e:
-        print(f"ERROR: {e}")
-        print("Install: pip install transformers torch evaluate scikit-learn")
-        sys.exit(1)
+    n_estimators: int = 300,
+    **kwargs,
+) -> dict:
+    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.metrics import (
+        classification_report, accuracy_score, f1_score, roc_auc_score
+    )
+    from sklearn.preprocessing import label_binarize
 
-    # ------------------------------------------------------------------
-    # Dataset class
-    # ------------------------------------------------------------------
-    class CodeDataset(Dataset):
-        def __init__(self, texts, labels, tokenizer):
-            self.encodings = tokenizer(
-                texts,
-                truncation=True,
-                max_length=MAX_LENGTH,
-                padding="max_length",
-                return_tensors="pt",
-            )
-            self.labels = torch.tensor(labels, dtype=torch.long)
-
-        def __len__(self):
-            return len(self.labels)
-
-        def __getitem__(self, idx):
-            return {
-                "input_ids": self.encodings["input_ids"][idx],
-                "attention_mask": self.encodings["attention_mask"][idx],
-                "labels": self.labels[idx],
-            }
-
-    # ------------------------------------------------------------------
-    # Load data
-    # ------------------------------------------------------------------
     texts, labels = load_dataset(data_path)
-    X_train, X_val, y_train, y_val = train_test_split(
-        texts, labels, test_size=test_split, stratify=labels, random_state=42
+
+    if len(texts) == 0:
+        print("[WARN] No samples loaded — skipping pattern training.")
+        return {}
+
+    # Extract features
+    print("\nExtracting code features...")
+    X = np.array([_extract_features(t) for t in texts], dtype=np.float32)
+    y = np.array(labels, dtype=np.int32)
+    print(f"Feature matrix: {X.shape}")
+
+    X_tr, X_te, y_tr, y_te = train_test_split(
+        X, y, test_size=test_split, stratify=y, random_state=42
     )
-    print(f"\nTrain: {len(X_train)}, Val: {len(X_val)}")
+    print(f"Train: {len(X_tr)}, Test: {len(X_te)}")
 
-    # ------------------------------------------------------------------
-    # Load tokenizer and model
-    # ------------------------------------------------------------------
-    print(f"\nLoading {MODEL_NAME}...")
-    tokenizer = RobertaTokenizer.from_pretrained(MODEL_NAME)
-    model = RobertaForSequenceClassification.from_pretrained(
-        MODEL_NAME,
-        num_labels=len(LABEL_NAMES),
-        id2label=ID2LABEL,
-        label2id=LABEL2ID,
-        ignore_mismatched_sizes=True,
+    print("\n-- Random Forest ---------------------------------------------")
+    base = RandomForestClassifier(
+        n_estimators=n_estimators,
+        max_depth=None,
+        min_samples_split=5,
+        class_weight="balanced",
+        n_jobs=-1,
+        random_state=42,
     )
+    clf = CalibratedClassifierCV(base, cv=5, method="sigmoid")
 
-    train_dataset = CodeDataset(X_train, y_train, tokenizer)
-    val_dataset = CodeDataset(X_val, y_val, tokenizer)
+    # Cross-validation
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_f1 = cross_val_score(clf, X_tr, y_tr, cv=skf, scoring="f1_macro", n_jobs=1)
+    cv_acc = cross_val_score(clf, X_tr, y_tr, cv=skf, scoring="accuracy", n_jobs=1)
+    print(f"CV F1 (macro):   {np.mean(cv_f1):.4f} ± {np.std(cv_f1):.4f}")
+    print(f"CV Accuracy:     {np.mean(cv_acc):.4f} ± {np.std(cv_acc):.4f}")
 
-    # ------------------------------------------------------------------
-    # Training arguments
-    # ------------------------------------------------------------------
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    clf.fit(X_tr, y_tr)
 
-    training_args = TrainingArguments(
-        output_dir=str(out_dir),
-        num_train_epochs=epochs,
-        per_device_train_batch_size=batch_size,
-        per_device_eval_batch_size=batch_size * 2,
-        learning_rate=learning_rate,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="f1_macro",
-        greater_is_better=True,
-        logging_dir=str(out_dir / "logs"),
-        logging_steps=50,
-        fp16=torch.cuda.is_available(),
-        dataloader_num_workers=0,
-        report_to="none",          # disable wandb/mlflow
-    )
+    y_pred = clf.predict(X_te)
+    test_acc = accuracy_score(y_te, y_pred)
+    test_f1 = f1_score(y_te, y_pred, average="macro")
+    print(f"\nTest Accuracy:   {test_acc:.4f}")
+    print(f"Test F1 (macro): {test_f1:.4f}")
+    print(classification_report(y_te, y_pred, target_names=LABEL_NAMES))
 
-    # ------------------------------------------------------------------
-    # Trainer
-    # ------------------------------------------------------------------
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
-    )
+    # Multi-class AUC (one-vs-rest)
+    y_te_bin = label_binarize(y_te, classes=list(range(4)))
+    y_prob = clf.predict_proba(X_te)
+    try:
+        test_auc = float(roc_auc_score(y_te_bin, y_prob, multi_class="ovr", average="macro"))
+    except Exception:
+        test_auc = 0.0
+    print(f"Test AUC (macro OvR): {test_auc:.4f}")
 
-    print("\nStarting fine-tuning...")
-    train_result = trainer.train()
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------------
-    # Save model + tokenizer
-    # ------------------------------------------------------------------
-    trainer.save_model(str(out_dir))
-    tokenizer.save_pretrained(str(out_dir))
-    print(f"\nModel saved to {out_dir}")
+    model_path = out / "rf_model.pkl"
+    with open(model_path, "wb") as f:
+        pickle.dump(clf, f)
+    print(f"\nRF model saved -> {model_path}")
 
-    # ------------------------------------------------------------------
-    # Final evaluation
-    # ------------------------------------------------------------------
-    eval_results = trainer.evaluate()
-    print("\nFinal Evaluation:")
-    for k, v in eval_results.items():
-        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
-
-    # ------------------------------------------------------------------
-    # Save metrics
-    # ------------------------------------------------------------------
     metrics = {
-        "train_loss": train_result.training_loss,
-        "train_steps": train_result.global_step,
-        **{k: float(v) if isinstance(v, float) else v for k, v in eval_results.items()},
-        "n_train": len(X_train),
-        "n_val": len(X_val),
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "learning_rate": learning_rate,
-        "base_model": MODEL_NAME,
+        "cv_f1_mean": float(np.mean(cv_f1)),
+        "cv_f1_std": float(np.std(cv_f1)),
+        "cv_acc_mean": float(np.mean(cv_acc)),
+        "cv_acc_std": float(np.std(cv_acc)),
+        "test_accuracy": float(test_acc),
+        "test_f1_macro": float(test_f1),
+        "test_auc_macro": float(test_auc),
+        "n_train": len(X_tr),
+        "n_test": len(X_te),
+        "n_features": int(X.shape[1]),
+        "label_names": LABEL_NAMES,
     }
-    metrics_path = out_dir / "metrics.json"
+    metrics_path = out / "metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"Metrics saved to {metrics_path}")
-
+    print(f"Metrics saved -> {metrics_path}")
+    print("\n[OK] Pattern classifier training complete.")
     return metrics
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune CodeBERT for pattern recognition")
-    parser.add_argument("--data", required=True, help="Path to JSONL dataset")
+    parser = argparse.ArgumentParser(description="Train RF pattern classifier")
+    parser.add_argument("--data", required=True, help="Path to pattern_dataset.jsonl")
     parser.add_argument("--out", default="checkpoints/pattern")
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--trees", type=int, default=300)
     args = parser.parse_args()
 
-    train(
-        data_path=args.data,
-        output_dir=args.out,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.lr,
-    )
+    train(data_path=args.data, output_dir=args.out, n_estimators=args.trees)
 
 
 if __name__ == "__main__":

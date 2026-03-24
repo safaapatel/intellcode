@@ -31,6 +31,7 @@ import {
   markResolved,
   markFalsePositive,
   clearHistory,
+  deleteEntry,
   type HistoryEntry,
 } from "@/services/reviewHistory";
 
@@ -43,6 +44,26 @@ const SEV_CLS: Record<string, string> = {
   low:      "bg-blue-500 text-white",
   none:     "bg-muted text-muted-foreground",
 };
+
+const SEV_BORDER: Record<string, string> = {
+  critical: "border-l-red-600",
+  high:     "border-l-orange-500",
+  medium:   "border-l-yellow-500",
+  low:      "border-l-blue-500",
+  none:     "border-l-emerald-500",
+};
+
+function ScoreMini({ score }: { score: number }) {
+  const color = score >= 80 ? "bg-emerald-500" : score >= 60 ? "bg-yellow-500" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${score}%` }} />
+      </div>
+      <span className="text-xs font-semibold tabular-nums text-foreground w-8 text-right">{score}/100</span>
+    </div>
+  );
+}
 
 const STATUS_CLS: Record<string, string> = {
   completed:   "bg-green-500/20 text-green-400 border-green-500/30",
@@ -68,8 +89,8 @@ function flatIssues(entry: HistoryEntry) {
   (r.security?.findings ?? []).forEach((f, i) =>
     items.push({ key: `security_${i}`, severity: f.severity ?? "medium", category: "Security", title: f.title ?? f.vuln_type ?? "Security Issue", description: f.description ?? "" })
   );
-  if (r.bugs?.risk_level && r.bugs.risk_level !== "low") {
-    items.push({ key: "bug_risk", severity: r.bugs.risk_level === "critical" ? "critical" : r.bugs.risk_level === "high" ? "high" : "medium", category: "Bug Risk", title: `Bug probability: ${Math.round((r.bugs.bug_probability ?? 0) * 100)}% (${r.bugs.risk_level})`, description: (r.bugs.risk_factors ?? []).join("; ") });
+  if (r.bug_prediction?.risk_level && r.bug_prediction.risk_level !== "low") {
+    items.push({ key: "bug_risk", severity: r.bug_prediction.risk_level === "critical" ? "critical" : r.bug_prediction.risk_level === "high" ? "high" : "medium", category: "Bug Risk", title: `Bug probability: ${Math.round((r.bug_prediction.bug_probability ?? 0) * 100)}% (${r.bug_prediction.risk_level})`, description: (r.bug_prediction.risk_factors ?? []).join("; ") });
   }
   (r.dead_code?.issues ?? []).forEach((iss, i) =>
     items.push({ key: `dead_${i}`, severity: "low", category: "Dead Code", title: iss.title ?? iss.issue_type ?? "Dead Code", description: iss.description ?? "" })
@@ -148,9 +169,11 @@ function ReviewCard({ entry, onUpdate }: { entry: HistoryEntry; onUpdate: () => 
   const refresh = () => { setTick((n) => n + 1); onUpdate(); };
 
   return (
-    <div className="bg-card border border-border rounded-xl mb-4 overflow-hidden">
+    <div className={`bg-card border border-border border-l-4 ${SEV_BORDER[entry.severity] ?? SEV_BORDER.none} rounded-xl mb-4 overflow-hidden`}>
       <div className="flex items-center gap-4 p-5 cursor-pointer hover:bg-secondary/20 transition-colors" onClick={() => setOpen((o) => !o)}>
-        <FileCode2 className="w-8 h-8 text-primary shrink-0" />
+        <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+          <FileCode2 className="w-5 h-5 text-primary" />
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-foreground truncate">{entry.filename}</span>
@@ -166,14 +189,26 @@ function ReviewCard({ entry, onUpdate }: { entry: HistoryEntry; onUpdate: () => 
             <span>{fmt(entry.submittedAt)}</span>
             <span>·</span>
             <span>{entry.issueCount} issues</span>
-            <span>·</span>
-            <span>Score {entry.overallScore}/100</span>
           </div>
         </div>
+        <ScoreMini score={entry.overallScore} />
         <div className="flex items-center gap-2 shrink-0">
-          <Button size="sm" variant="outline" className="gap-1.5 text-xs"
-            onClick={(e) => { e.stopPropagation(); navigate("/reviews/result", { state: { result: entry.result } }); }}>
+          <Button size="sm" variant="outline" className="gap-1.5 text-xs hidden sm:flex"
+            onClick={(e) => { e.stopPropagation(); navigate(`/reviews/${entry.id}`); }}>
             <ExternalLink className="w-3.5 h-3.5" /> Full Report
+          </Button>
+          <Button
+            size="sm" variant="ghost"
+            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
+            title="Delete this review"
+            onClick={(e) => {
+              e.stopPropagation();
+              deleteEntry(entry.id);
+              onUpdate();
+              toast.success("Review deleted");
+            }}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </Button>
           {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </div>
@@ -215,16 +250,32 @@ const Reviews = () => {
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"date" | "score" | "issues" | "severity">("date");
 
   const reload = () => setEntries(getEntries());
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "intellcode_review_history") reload();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
-  const filtered = entries.filter((e) => {
-    const matchSearch = !search || e.filename.toLowerCase().includes(search.toLowerCase()) || e.summary.toLowerCase().includes(search.toLowerCase());
-    const matchSev = severityFilter === "all" || e.severity === severityFilter;
-    const matchStatus = statusFilter === "all" || e.status === statusFilter;
-    return matchSearch && matchSev && matchStatus;
-  });
+  const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, none: 4 };
+  const filtered = entries
+    .filter((e) => {
+      const matchSearch = !search || e.filename.toLowerCase().includes(search.toLowerCase()) || e.summary.toLowerCase().includes(search.toLowerCase());
+      const matchSev = severityFilter === "all" || e.severity === severityFilter;
+      const matchStatus = statusFilter === "all" || e.status === statusFilter;
+      return matchSearch && matchSev && matchStatus;
+    })
+    .sort((a, b) => {
+      if (sortBy === "score") return a.overallScore - b.overallScore;
+      if (sortBy === "issues") return b.issueCount - a.issueCount;
+      if (sortBy === "severity") return (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5);
+      return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+    });
 
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
@@ -310,6 +361,17 @@ const Reviews = () => {
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+            <SelectTrigger className="w-36 bg-input border-border"><SelectValue placeholder="Sort by" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="date">Newest First</SelectItem>
+              <SelectItem value="score">Lowest Score</SelectItem>
+              <SelectItem value="issues">Most Issues</SelectItem>
+              <SelectItem value="severity">Highest Severity</SelectItem>
             </SelectContent>
           </Select>
         </div>

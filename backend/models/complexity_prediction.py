@@ -153,12 +153,16 @@ class ComplexityPredictionModel:
         metrics = compute_all_metrics(source)
         ast_feats = ASTExtractor().extract(source)
 
+        rule_score = _rule_based_score(metrics)
         if self._regressor is not None:
             feat_vec = np.array([metrics_to_feature_vector(metrics)], dtype=np.float32)
             raw_score = float(self._regressor.predict(feat_vec)[0])
-            score = max(0.0, min(100.0, raw_score))
+            ml_score = max(0.0, min(100.0, raw_score))
+            # Blend 40% ML + 60% rule-based: prevents out-of-distribution extremes
+            # The XGBoost was trained on synthetic data and can extrapolate wildly on real code
+            score = ml_score * 0.4 + rule_score * 0.6
         else:
-            score = _rule_based_score(metrics)
+            score = rule_score
 
         # Build per-function issues
         function_issues: list[FunctionIssue] = []

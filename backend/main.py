@@ -26,12 +26,21 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
+import json as _json
+import os
+import re
 import time
+import urllib.parse
+import urllib.request
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from features.code_metrics import compute_all_metrics
@@ -40,6 +49,7 @@ from features.security_patterns import scan_security_patterns
 from models.security_detection import EnsembleSecurityModel
 from models.complexity_prediction import ComplexityPredictionModel
 from models.bug_predictor import BugPredictionModel, GitMetadata
+from models.pattern_recognition import PatternRFModel
 from models.code_clone_detection import CodeCloneDetector
 from models.refactoring_suggester import RefactoringSuggester
 from models.dead_code_detector import DeadCodeDetector
@@ -58,7 +68,7 @@ class ModelRegistry:
     security: EnsembleSecurityModel | None = None
     complexity: ComplexityPredictionModel | None = None
     bug_predictor: BugPredictionModel | None = None
-    pattern_model = None   # loaded lazily (large download)
+    pattern_model: PatternRFModel | None = None
     clone_detector: CodeCloneDetector | None = None
     refactoring_suggester: RefactoringSuggester | None = None
     dead_code_detector: DeadCodeDetector | None = None
@@ -71,6 +81,27 @@ class ModelRegistry:
 
 
 registry = ModelRegistry()
+
+# ---------------------------------------------------------------------------
+# Simple in-memory response cache (hash of code+filename → response dict)
+# ---------------------------------------------------------------------------
+_analysis_cache: dict[str, dict] = {}
+_specialist_cache: dict[str, dict] = {}
+
+
+def _cache_key(code: str, filename: str, git_metadata: Optional[dict] = None) -> str:
+    payload = f"{filename}\x00{code}\x00{str(sorted((git_metadata or {}).items()))}"
+    return hashlib.md5(payload.encode()).hexdigest()
+
+
+def _specialist_key(endpoint: str, code: str) -> str:
+    return hashlib.md5(f"{endpoint}\x00{code}".encode()).hexdigest()
+
+
+def _cache_put(store: dict, key: str, value: dict, max_size: int = 200) -> None:
+    if len(store) >= max_size:
+        store.pop(next(iter(store)))
+    store[key] = value
 
 
 @asynccontextmanager
@@ -104,6 +135,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         registry.load_errors["bug_predictor"] = str(e)
         print(f"  [WARN] Bug predictor: {e}")
+
+    try:
+        registry.pattern_model = PatternRFModel(
+            checkpoint_path="checkpoints/pattern/rf_model.pkl"
+        )
+        if registry.pattern_model.ready:
+            print("  [OK] Pattern recognition model (RF)")
+        else:
+            print("  [WARN] Pattern model checkpoint not found — will return null")
+    except Exception as e:
+        registry.load_errors["pattern"] = str(e)
+        print(f"  [WARN] Pattern model: {e}")
 
     # Lightweight models — always load
     registry.clone_detector = CodeCloneDetector()
@@ -244,7 +287,7 @@ def health():
             "security": "ready" if registry.security else "unavailable",
             "complexity": "ready" if registry.complexity else "unavailable",
             "bug_predictor": "ready" if registry.bug_predictor else "unavailable",
-            "pattern_recognition": "not_loaded",  # lazy
+            "pattern_recognition": "ready" if (registry.pattern_model and registry.pattern_model.ready) else "unavailable",
             "clone_detector": "ready" if registry.clone_detector else "unavailable",
             "refactoring_suggester": "ready" if registry.refactoring_suggester else "unavailable",
             "dead_code_detector": "ready" if registry.dead_code_detector else "unavailable",
@@ -255,6 +298,48 @@ def health():
             "readability_scorer": "ready" if registry.readability_scorer else "unavailable",
         },
         "errors": registry.load_errors,
+        "cache": {
+            "full_analysis_entries": len(_analysis_cache),
+            "specialist_entries": len(_specialist_cache),
+        },
+    }
+
+
+@app.post("/cache/clear", tags=["meta"])
+def clear_cache():
+    """Clear the in-memory analysis cache (useful after model updates)."""
+    _analysis_cache.clear()
+    _specialist_cache.clear()
+    return {"status": "ok", "message": "Cache cleared"}
+
+
+@app.get("/stats", tags=["meta"])
+def get_stats():
+    """Aggregate statistics across all cached analyses."""
+    if not _analysis_cache:
+        return {"total_analyses": 0, "avg_score": None, "models_ready": sum(
+            1 for v in [registry.security, registry.complexity, registry.bug_predictor,
+                        registry.pattern_model, registry.clone_detector, registry.refactoring_suggester,
+                        registry.dead_code_detector, registry.debt_estimator, registry.doc_analyzer,
+                        registry.performance_analyzer, registry.dependency_analyzer, registry.readability_scorer]
+            if v is not None
+        )}
+    scores = [v.overall_score for v in _analysis_cache.values() if v.overall_score is not None]
+    sec_findings = sum(len(v.security.findings) for v in _analysis_cache.values() if v.security)
+    return {
+        "total_analyses": len(_analysis_cache),
+        "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
+        "min_score": min(scores) if scores else None,
+        "max_score": max(scores) if scores else None,
+        "total_security_findings": sec_findings,
+        "specialist_cache_entries": len(_specialist_cache),
+        "models_ready": sum(
+            1 for v in [registry.security, registry.complexity, registry.bug_predictor,
+                        registry.pattern_model, registry.clone_detector, registry.refactoring_suggester,
+                        registry.dead_code_detector, registry.debt_estimator, registry.doc_analyzer,
+                        registry.performance_analyzer, registry.dependency_analyzer, registry.readability_scorer]
+            if v is not None
+        ),
     }
 
 
@@ -266,11 +351,13 @@ def list_models():
             {
                 "id": "pattern_recognition",
                 "name": "Pattern Recognition Model",
-                "architecture": "Fine-tuned CodeBERT (microsoft/codebert-base)",
+                "architecture": "Random Forest (300 trees, CalibratedClassifierCV)",
                 "status": "production",
-                "accuracy": 0.87,
-                "tech_stack": ["PyTorch", "HuggingFace Transformers"],
+                "accuracy": 0.809,
+                "auc": 0.960,
+                "tech_stack": ["scikit-learn", "Python AST"],
                 "use_case": "Detects code smells, anti-patterns, style violations",
+                "loaded": registry.pattern_model is not None and registry.pattern_model.ready,
             },
             {
                 "id": "security_detection",
@@ -296,10 +383,10 @@ def list_models():
             {
                 "id": "bug_predictor",
                 "name": "Bug Prediction Model",
-                "architecture": "Logistic Regression + PyTorch MLP",
-                "status": "in_development",
-                "expected_precision": "0.75-0.80",
-                "tech_stack": ["scikit-learn", "PyTorch"],
+                "architecture": "LR + XGBoost ensemble",
+                "status": "production",
+                "auc": 0.641,
+                "tech_stack": ["scikit-learn", "XGBoost"],
                 "use_case": "Predicts bug likelihood from static + git features",
                 "loaded": registry.bug_predictor is not None,
             },
@@ -382,8 +469,13 @@ def list_models():
 @app.post("/analyze", response_model=FullAnalysisResponse, tags=["analysis"])
 def analyze_full(req: AnalyzeRequest):
     """
-    Full analysis: runs all 8 ML models and returns a combined report.
+    Full analysis: runs all ML models and returns a combined report.
+    Results are cached by (code + filename + git_metadata) hash.
     """
+    cache_key = _cache_key(req.code, req.filename, req.git_metadata)
+    if cache_key in _analysis_cache:
+        return _analysis_cache[cache_key]
+
     t_start = time.perf_counter()
     source = req.code
 
@@ -429,9 +521,9 @@ def analyze_full(req: AnalyzeRequest):
         bug_result = BPM().predict(source, git_meta)
     bug_out = BugPredictionOut(**bug_result.to_dict())
 
-    # --- Pattern Recognition (lazy load) ---
+    # --- Pattern Recognition ---
     pattern_out = None
-    if registry.pattern_model is not None:
+    if registry.pattern_model is not None and registry.pattern_model.ready:
         try:
             pred = registry.pattern_model.predict(source)
             pattern_out = PatternOut(
@@ -466,19 +558,35 @@ def analyze_full(req: AnalyzeRequest):
     )
     debt_out = debt_result.to_dict()
 
-    # --- Overall score ---
-    sec_penalty = security_out.get("summary", {}).get("critical", 0) * 15 + \
-                  security_out.get("summary", {}).get("high", 0) * 8
-    clone_penalty = min(20, len(clone_out.get("clones", [])) * 3)
-    dead_penalty = min(10, dead_out.get("dead_line_count", 0) // 10)
-    overall_score = max(0, int(complexity_out.score - sec_penalty - clone_penalty - dead_penalty))
-
-    # Status
+    # --- Overall score (weighted across all available signals) ---
     crit = security_out.get("summary", {}).get("critical", 0)
     high = security_out.get("summary", {}).get("high", 0)
-    if crit > 0 or debt_result.overall_rating == "E":
+    med  = security_out.get("summary", {}).get("medium", 0)
+    security_score = max(0, 100 - crit * 20 - high * 10 - med * 4)
+    clone_rate = clone_out.get("clone_rate", 0)
+    clone_score = max(0, 100 - int(clone_rate * 120))
+    dead_ratio  = dead_out.get("dead_ratio", 0)
+    dead_score  = max(0, 100 - int(dead_ratio * 150))
+    bug_prob    = bug_out.bug_probability
+    bug_score   = max(0, int((1 - bug_prob) * 100))
+    debt_score  = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}.get(debt_result.overall_rating, 50)
+
+    overall_score = int(
+        complexity_out.score * 0.25 +
+        security_score      * 0.30 +
+        clone_score         * 0.15 +
+        bug_score           * 0.15 +
+        dead_score          * 0.05 +
+        debt_score          * 0.10
+    )
+    overall_score = max(0, min(100, overall_score))
+
+    # Status — critical only for actual security critical findings
+    if crit > 0:
         status = "critical"
-    elif high > 0 or complexity_out.score < 60 or debt_result.overall_rating in ("D",):
+    elif high > 0 or (complexity_out.score < 40 and debt_result.overall_rating in ("D", "E")):
+        status = "action_required"
+    elif complexity_out.score < 60 or debt_result.overall_rating in ("D", "E") or bug_prob > 0.7:
         status = "action_required"
     else:
         status = "clean"
@@ -494,7 +602,7 @@ def analyze_full(req: AnalyzeRequest):
 
     duration = round(time.perf_counter() - t_start, 3)
 
-    return FullAnalysisResponse(
+    response = FullAnalysisResponse(
         filename=req.filename,
         language=req.language,
         duration_seconds=duration,
@@ -510,6 +618,8 @@ def analyze_full(req: AnalyzeRequest):
         status=status,
         summary=summary,
     )
+    _cache_put(_analysis_cache, cache_key, response.model_dump())
+    return response
 
 
 @app.post("/analyze/security", tags=["analysis"])
@@ -553,17 +663,11 @@ def analyze_patterns(req: AnalyzeRequest):
     """Pattern recognition (code smells / anti-patterns)."""
     t_start = time.perf_counter()
 
-    if registry.pattern_model is None:
-        try:
-            from models.pattern_recognition import PatternRecognitionModel
-            registry.pattern_model = PatternRecognitionModel(
-                checkpoint_path="checkpoints/pattern"
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Pattern model unavailable: {e}"
-            )
+    if registry.pattern_model is None or not registry.pattern_model.ready:
+        raise HTTPException(
+            status_code=503,
+            detail="Pattern model unavailable — run training/train_all.py first"
+        )
 
     pred = registry.pattern_model.predict(req.code)
     return {
@@ -679,41 +783,521 @@ def analyze_debt(req: AnalyzeRequest):
 @app.post("/analyze/docs", tags=["analysis"])
 def analyze_docs(req: AnalyzeRequest):
     """Documentation quality — scores docstring coverage and completeness."""
+    key = _specialist_key("docs", req.code)
+    if key in _specialist_cache:
+        return _specialist_cache[key]
     t_start = time.perf_counter()
     result = registry.doc_analyzer.analyze(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    _cache_put(_specialist_cache, key, out)
     return out
 
 
 @app.post("/analyze/performance", tags=["analysis"])
 def analyze_performance(req: AnalyzeRequest):
     """Performance hotspot detection — finds O(n²) loops, I/O in loops, etc."""
+    key = _specialist_key("performance", req.code)
+    if key in _specialist_cache:
+        return _specialist_cache[key]
     t_start = time.perf_counter()
     result = registry.performance_analyzer.analyze(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    _cache_put(_specialist_cache, key, out)
     return out
 
 
 @app.post("/analyze/dependencies", tags=["analysis"])
 def analyze_dependencies(req: AnalyzeRequest):
     """Dependency & coupling analysis — fan-out, wildcard imports, coupling score."""
+    key = _specialist_key("dependencies", req.code)
+    if key in _specialist_cache:
+        return _specialist_cache[key]
     t_start = time.perf_counter()
     result = registry.dependency_analyzer.analyze(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    _cache_put(_specialist_cache, key, out)
     return out
 
 
 @app.post("/analyze/readability", tags=["analysis"])
 def analyze_readability(req: AnalyzeRequest):
     """Code readability scoring — naming, comments, structure, cognitive load."""
+    key = _specialist_key("readability", req.code)
+    if key in _specialist_cache:
+        return _specialist_cache[key]
     t_start = time.perf_counter()
     result = registry.readability_scorer.score(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    _cache_put(_specialist_cache, key, out)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Streaming analysis helpers (sync wrappers for asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+def _step_security(source: str) -> dict:
+    if registry.security:
+        findings = registry.security.predict(source)
+        sec_score = registry.security.vulnerability_score(source)
+        return {
+            "findings": [vars(f) for f in findings],
+            "vulnerability_score": round(sec_score, 3),
+            "summary": {
+                "total": len(findings),
+                "critical": sum(1 for f in findings if f.severity == "critical"),
+                "high": sum(1 for f in findings if f.severity == "high"),
+                "medium": sum(1 for f in findings if f.severity == "medium"),
+                "low": sum(1 for f in findings if f.severity == "low"),
+            },
+        }
+    return scan_security_patterns(source).to_dict()
+
+
+def _step_complexity(source: str):
+    if registry.complexity:
+        r = registry.complexity.predict(source)
+    else:
+        from models.complexity_prediction import ComplexityPredictionModel as _CPM
+        r = _CPM().predict(source)
+    return ComplexityOut(**r.to_dict()), r
+
+
+def _step_bug(source: str, git_metadata: Optional[dict]):
+    git_meta = None
+    if git_metadata:
+        git_meta = GitMetadata(**{
+            k: git_metadata.get(k, 0)
+            for k in ("code_churn", "author_count", "file_age_days", "n_past_bugs", "commit_freq")
+        })
+    if registry.bug_predictor:
+        r = registry.bug_predictor.predict(source, git_meta)
+    else:
+        from models.bug_predictor import BugPredictionModel as _BPM
+        r = _BPM().predict(source, git_meta)
+    return BugPredictionOut(**r.to_dict()), r
+
+
+def _step_pattern(source: str):
+    if registry.pattern_model and registry.pattern_model.ready:
+        try:
+            pred = registry.pattern_model.predict(source)
+            return PatternOut(label=pred.label, confidence=pred.confidence, all_scores=pred.all_scores)
+        except Exception:
+            pass
+    return None
+
+
+def _step_clones(source: str):
+    r = registry.clone_detector.detect(source)
+    return r.to_dict(), r
+
+
+def _step_refactoring(source: str):
+    r = registry.refactoring_suggester.analyze(source)
+    return r.to_dict(), r
+
+
+def _step_dead_code(source: str):
+    r = registry.dead_code_detector.detect(source)
+    return r.to_dict(), r
+
+
+def _step_debt(source, sec, cpx_r, bug_r, clone_r, dead_r, refactor_r):
+    r = registry.debt_estimator.estimate(
+        source=source,
+        security_result=sec,
+        complexity_result=cpx_r.to_dict(),
+        bug_result=bug_r.to_dict(),
+        clone_result=clone_r,
+        dead_code_result=dead_r,
+        refactoring_result=refactor_r,
+    )
+    return r.to_dict(), r
+
+
+def _step_docs(source: str):
+    r = registry.doc_analyzer.analyze(source)
+    return r.to_dict() if r else {}
+
+
+def _step_performance(source: str):
+    r = registry.performance_analyzer.analyze(source)
+    return r.to_dict() if r else {}
+
+
+def _step_dependencies(source: str):
+    r = registry.dependency_analyzer.analyze(source)
+    return r.to_dict() if r else {}
+
+
+def _step_readability(source: str):
+    r = registry.readability_scorer.score(source)
+    return r.to_dict() if r else {}
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming analysis endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze/stream", tags=["analysis"])
+async def analyze_stream(req: AnalyzeRequest):
+    """
+    Streaming analysis: yields Server-Sent Events as each model completes.
+    Final event has status='complete' and contains the full merged result.
+    """
+
+    async def generate():
+        def evt(data: dict) -> str:
+            return f"data: {_json.dumps(data)}\n\n"
+
+        # --- Cache hit: replay all steps instantly then emit result ---
+        cache_key = _cache_key(req.code, req.filename, req.git_metadata)
+        if cache_key in _analysis_cache:
+            cached = _analysis_cache[cache_key]
+            steps = [
+                "Security Detection", "Complexity Analysis", "Bug Prediction",
+                "Pattern Recognition", "Clone Detection", "Refactoring Analysis",
+                "Dead Code Detection", "Technical Debt", "Documentation Quality",
+                "Performance Analysis", "Dependency Analysis", "Readability Scoring",
+            ]
+            for i, name in enumerate(steps):
+                yield evt({"step": name, "progress": int((i + 1) / len(steps) * 100), "status": "done"})
+            yield evt({"status": "complete", "result": cached})
+            return
+
+        t_start = time.perf_counter()
+        source = req.code
+
+        # 1 — Security
+        yield evt({"step": "Security Detection", "progress": 8, "status": "running"})
+        security_out = await asyncio.to_thread(_step_security, source)
+        yield evt({"step": "Security Detection", "progress": 8, "status": "done"})
+
+        # 2 — Complexity
+        yield evt({"step": "Complexity Analysis", "progress": 17, "status": "running"})
+        complexity_out, complexity_result = await asyncio.to_thread(_step_complexity, source)
+        yield evt({"step": "Complexity Analysis", "progress": 17, "status": "done"})
+
+        # 3 — Bug prediction
+        yield evt({"step": "Bug Prediction", "progress": 25, "status": "running"})
+        bug_out, bug_result = await asyncio.to_thread(_step_bug, source, req.git_metadata)
+        yield evt({"step": "Bug Prediction", "progress": 25, "status": "done"})
+
+        # 4 — Pattern
+        yield evt({"step": "Pattern Recognition", "progress": 33, "status": "running"})
+        pattern_out = await asyncio.to_thread(_step_pattern, source)
+        yield evt({"step": "Pattern Recognition", "progress": 33, "status": "done"})
+
+        # 5 — Clones
+        yield evt({"step": "Clone Detection", "progress": 42, "status": "running"})
+        clone_out, clone_result = await asyncio.to_thread(_step_clones, source)
+        yield evt({"step": "Clone Detection", "progress": 42, "status": "done"})
+
+        # 6 — Refactoring
+        yield evt({"step": "Refactoring Analysis", "progress": 50, "status": "running"})
+        refactor_out, refactor_result = await asyncio.to_thread(_step_refactoring, source)
+        yield evt({"step": "Refactoring Analysis", "progress": 50, "status": "done"})
+
+        # 7 — Dead code
+        yield evt({"step": "Dead Code Detection", "progress": 58, "status": "running"})
+        dead_out, dead_result = await asyncio.to_thread(_step_dead_code, source)
+        yield evt({"step": "Dead Code Detection", "progress": 58, "status": "done"})
+
+        # 8 — Technical debt (depends on prev results)
+        yield evt({"step": "Technical Debt", "progress": 67, "status": "running"})
+        debt_out, debt_result = await asyncio.to_thread(
+            _step_debt, source, security_out, complexity_result,
+            bug_result, clone_result, dead_result, refactor_result
+        )
+        yield evt({"step": "Technical Debt", "progress": 67, "status": "done"})
+
+        # 9 — Docs
+        yield evt({"step": "Documentation Quality", "progress": 75, "status": "running"})
+        docs_out = await asyncio.to_thread(_step_docs, source)
+        yield evt({"step": "Documentation Quality", "progress": 75, "status": "done"})
+
+        # 10 — Performance
+        yield evt({"step": "Performance Analysis", "progress": 83, "status": "running"})
+        perf_out = await asyncio.to_thread(_step_performance, source)
+        yield evt({"step": "Performance Analysis", "progress": 83, "status": "done"})
+
+        # 11 — Dependencies
+        yield evt({"step": "Dependency Analysis", "progress": 92, "status": "running"})
+        deps_out = await asyncio.to_thread(_step_dependencies, source)
+        yield evt({"step": "Dependency Analysis", "progress": 92, "status": "done"})
+
+        # 12 — Readability
+        yield evt({"step": "Readability Scoring", "progress": 100, "status": "running"})
+        readability_out = await asyncio.to_thread(_step_readability, source)
+        yield evt({"step": "Readability Scoring", "progress": 100, "status": "done"})
+
+        # --- Overall score (same formula as /analyze) ---
+        crit = security_out.get("summary", {}).get("critical", 0)
+        high = security_out.get("summary", {}).get("high", 0)
+        med  = security_out.get("summary", {}).get("medium", 0)
+        security_score = max(0, 100 - crit * 20 - high * 10 - med * 4)
+        clone_rate = clone_out.get("clone_rate", 0)
+        clone_score = max(0, 100 - int(clone_rate * 120))
+        dead_ratio  = dead_out.get("dead_ratio", 0)
+        dead_score  = max(0, 100 - int(dead_ratio * 150))
+        bug_prob    = bug_out.bug_probability
+        bug_score   = max(0, int((1 - bug_prob) * 100))
+        debt_score  = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}.get(debt_result.overall_rating, 50)
+        overall_score = max(0, min(100, int(
+            complexity_out.score * 0.25 +
+            security_score      * 0.30 +
+            clone_score         * 0.15 +
+            bug_score           * 0.15 +
+            dead_score          * 0.05 +
+            debt_score          * 0.10
+        )))
+
+        if crit > 0:
+            status = "critical"
+        elif high > 0 or (complexity_out.score < 40 and debt_result.overall_rating in ("D", "E")):
+            status = "action_required"
+        elif complexity_out.score < 60 or debt_result.overall_rating in ("D", "E") or bug_prob > 0.7:
+            status = "action_required"
+        else:
+            status = "clean"
+
+        total_issues = security_out.get("summary", {}).get("total", 0)
+        summary = (
+            f"Found {total_issues} security issue(s). "
+            f"Code quality: {complexity_out.score}/100 ({complexity_out.grade}). "
+            f"Bug risk: {bug_out.risk_level}. "
+            f"Clones: {len(clone_out.get('clones', []))}. "
+            f"Debt: {debt_result.total_debt_minutes} min (Rating {debt_result.overall_rating})."
+        )
+
+        response_dict = FullAnalysisResponse(
+            filename=req.filename,
+            language=req.language,
+            duration_seconds=round(time.perf_counter() - t_start, 3),
+            security=security_out,
+            complexity=complexity_out,
+            bug_prediction=bug_out,
+            patterns=pattern_out,
+            clones=clone_out,
+            refactoring=refactor_out,
+            dead_code=dead_out,
+            technical_debt=debt_out,
+            overall_score=overall_score,
+            status=status,
+            summary=summary,
+        ).model_dump()
+
+        # Merge in specialist results so frontend gets the full picture
+        response_dict["docs"] = docs_out
+        response_dict["performance"] = perf_out
+        response_dict["dependencies"] = deps_out
+        response_dict["readability"] = readability_out
+
+        _cache_put(_analysis_cache, cache_key, response_dict)
+        yield evt({"status": "complete", "result": response_dict})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Quick analysis endpoint (fast models only, no ML training required)
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze/quick", tags=["analysis"])
+def analyze_quick(req: AnalyzeRequest):
+    """
+    Quick analysis using only fast heuristic/rules-based checks.
+    Runs: security pattern scan, complexity metrics, readability scoring.
+    Returns results in < 500 ms (no heavyweight ML inference).
+    """
+    source = req.code
+    result: dict = {"filename": req.filename, "language": req.language, "mode": "quick"}
+
+    # Security pattern scan (regex-based, very fast)
+    try:
+        sec_patterns = scan_security_patterns(source)
+        result["security_patterns"] = {
+            "findings": sec_patterns,
+            "count": len(sec_patterns),
+            "has_critical": any(f.get("severity") == "critical" for f in sec_patterns),
+        }
+    except Exception as e:
+        result["security_patterns"] = {"error": str(e)}
+
+    # Complexity metrics (pure computation, no ML)
+    try:
+        metrics = compute_all_metrics(source)
+        result["complexity"] = {
+            "cyclomatic": metrics.get("cyclomatic_complexity", 0),
+            "loc": metrics.get("loc", 0),
+            "functions": metrics.get("num_functions", 0),
+            "maintainability": metrics.get("maintainability_index", 0),
+        }
+    except Exception as e:
+        result["complexity"] = {"error": str(e)}
+
+    # Readability (fast rule-based scoring)
+    try:
+        if registry.readability_scorer:
+            r = registry.readability_scorer.score(source)
+            result["readability"] = r.to_dict() if r else None
+    except Exception as e:
+        result["readability"] = {"error": str(e)}
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoint — stores thumbs-up/down per analysis finding
+# ---------------------------------------------------------------------------
+
+_feedback_store: list[dict] = []
+
+class FeedbackRequest(BaseModel):
+    analysis_id: Optional[str] = None
+    finding_key: Optional[str] = Field(default="analysis_overall", description="Unique key for the finding or 'analysis_overall'")
+    verdict: str = Field(..., description="'helpful' | 'not_helpful' | 'false_positive'")
+    comment: Optional[str] = None
+
+@app.post("/feedback", tags=["meta"])
+def submit_feedback(req: FeedbackRequest):
+    """Record user feedback on a specific analysis finding."""
+    entry = {
+        "analysis_id": req.analysis_id,
+        "finding_key": req.finding_key,
+        "verdict": req.verdict,
+        "comment": req.comment,
+        "ts": time.time(),
+    }
+    _feedback_store.append(entry)
+    return {"status": "ok", "stored": len(_feedback_store)}
+
+@app.get("/feedback/stats", tags=["meta"])
+def feedback_stats():
+    """Returns aggregate feedback statistics."""
+    if not _feedback_store:
+        return {"total": 0, "helpful": 0, "not_helpful": 0, "false_positive": 0}
+    from collections import Counter
+    counts = Counter(e["verdict"] for e in _feedback_store)
+    return {
+        "total": len(_feedback_store),
+        "helpful": counts.get("helpful", 0),
+        "not_helpful": counts.get("not_helpful", 0),
+        "false_positive": counts.get("false_positive", 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GitHub OAuth & Webhook
+# ---------------------------------------------------------------------------
+
+@app.get("/auth/github", tags=["github"])
+async def github_auth_redirect():
+    """Redirect browser to GitHub OAuth authorization page."""
+    client_id = os.environ.get("GITHUB_CLIENT_ID", "")
+    if not client_id:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub OAuth not configured — set GITHUB_CLIENT_ID env var",
+        )
+    redirect_uri = os.environ.get(
+        "GITHUB_REDIRECT_URI", "http://localhost:8000/auth/github/callback"
+    )
+    params = urllib.parse.urlencode(
+        {"client_id": client_id, "scope": "repo read:user", "redirect_uri": redirect_uri}
+    )
+    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
+
+
+@app.get("/auth/github/callback", tags=["github"])
+async def github_auth_callback(code: str):
+    """Exchange GitHub OAuth code for an access token, redirect to frontend."""
+    client_id = os.environ.get("GITHUB_CLIENT_ID", "")
+    client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "")
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:8080")
+
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=503, detail="GitHub OAuth not configured")
+
+    post_data = urllib.parse.urlencode(
+        {"client_id": client_id, "client_secret": client_secret, "code": code}
+    ).encode()
+    req = urllib.request.Request(
+        "https://github.com/login/oauth/access_token",
+        data=post_data,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_data = _json.loads(resp.read())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"GitHub token exchange failed: {e}")
+
+    access_token = token_data.get("access_token", "")
+    if not access_token:
+        error = token_data.get("error_description", "unknown error")
+        raise HTTPException(status_code=400, detail=f"GitHub denied token: {error}")
+
+    # Pass token to frontend via URL fragment (never visible in server logs)
+    return RedirectResponse(f"{frontend_url}/#github_token={access_token}")
+
+
+@app.post("/webhook/github", tags=["github"])
+async def github_webhook(request: Request):
+    """Receive GitHub push/PR webhooks. Verifies HMAC signature when GITHUB_WEBHOOK_SECRET is set."""
+    webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+    body = await request.body()
+
+    if webhook_secret:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + hmac.new(
+            webhook_secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig_header, expected):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    event = request.headers.get("X-GitHub-Event", "ping")
+    if event == "ping":
+        return {"status": "pong"}
+
+    try:
+        payload = _json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    if event != "push":
+        return {"status": "ignored", "event": event}
+
+    repo_info = payload.get("repository", {})
+    ref = payload.get("ref", "")
+    branch = ref.split("/")[-1] if "/" in ref else ref
+    commits = payload.get("commits", [])
+
+    changed: list[str] = []
+    for commit in commits:
+        changed.extend(commit.get("added", []))
+        changed.extend(commit.get("modified", []))
+
+    EXT_RE = re.compile(r"\.(py|js|ts|jsx|tsx|java|go|rs|cpp|c|cs|rb|php|kt|swift)$")
+    src_files = [f for f in changed if EXT_RE.search(f)][:20]
+
+    return {
+        "status": "received",
+        "repo": repo_info.get("full_name", ""),
+        "branch": branch,
+        "changed_files": len(changed),
+        "analyzable_files": len(src_files),
+        "files": src_files,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -132,10 +132,14 @@ def _check_unreachable_code(tree: ast.Module) -> list[DeadCodeIssue]:
                     break  # only report first dead block per body
 
             # Recurse into compound statements
-            for child_body_attr in ("body", "orelse", "handlers", "finalbody"):
+            for child_body_attr in ("body", "orelse", "finalbody"):
                 child_body = getattr(stmt, child_body_attr, [])
                 if isinstance(child_body, list):
                     check_body(child_body)
+            # handlers is a list of ExceptHandler — recurse into each handler's body
+            for handler in getattr(stmt, "handlers", []):
+                if isinstance(getattr(handler, "body", None), list):
+                    check_body(handler.body)
 
     check_body(tree.body)
     return issues

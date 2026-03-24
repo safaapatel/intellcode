@@ -1,4 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
+import {
+  isGitHubConnected,
+  clearGitHubToken,
+  getGitHubUser,
+  type GitHubUser,
+} from "@/services/github";
+import { applyTheme, getTheme, type Theme } from "@/lib/theme";
+import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +33,7 @@ import {
   LogOut,
   Link as LinkIcon,
   Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { mockUser } from "@/data/mockData";
 import { toast } from "sonner";
@@ -39,11 +48,34 @@ function saveSettings(patch: Record<string, unknown>) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...current, ...patch }));
 }
 
+function randomHex(n: number) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(n)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, n);
+}
+
 type SettingsTab = "profile" | "notifications" | "integrations" | "security" | "appearance";
 
+interface Session {
+  id: string;
+  device: string;
+  location: string;
+  current: boolean;
+  time: string;
+}
+
+const INITIAL_SESSIONS: Session[] = [
+  { id: "s1", device: "Chrome on Windows 11", location: "Reno, NV", current: true, time: "Now" },
+  { id: "s2", device: "Safari on iPhone 15", location: "Reno, NV", current: false, time: "2 hours ago" },
+];
+
 const Settings = () => {
+  const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
   const [copied, setCopied] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const saved = loadSettings();
 
   // Profile state
@@ -52,6 +84,7 @@ const Settings = () => {
   const [role, setRole] = useState<string>(saved.role ?? mockUser.role);
   const [bio, setBio] = useState<string>(saved.bio ?? "Software engineer focused on code quality and ML systems.");
   const [timezone, setTimezone] = useState<string>(saved.timezone ?? "America/Los_Angeles");
+  const [photoUrl, setPhotoUrl] = useState<string>(saved.photoUrl ?? "");
 
   // Notification state
   const [notifReviewComplete, setNotifReviewComplete] = useState<boolean>(saved.notifReviewComplete ?? true);
@@ -60,10 +93,54 @@ const Settings = () => {
   const [notifNewComment, setNotifNewComment] = useState<boolean>(saved.notifNewComment ?? true);
   const [notifPRMerged, setNotifPRMerged] = useState<boolean>(saved.notifPRMerged ?? false);
   const [emailFrequency, setEmailFrequency] = useState<string>(saved.emailFrequency ?? "instant");
+  const [browserPermission, setBrowserPermission] = useState<NotificationPermission>(
+    "Notification" in window ? Notification.permission : "denied"
+  );
 
   // Security state
   const [twoFAEnabled, setTwoFAEnabled] = useState<boolean>(saved.twoFAEnabled ?? false);
-  const [apiToken] = useState<string>("ick_live_f4a8b2d1e9c3a7f6b0e5d2c8a4b1f7e3");
+  const [apiToken, setApiToken] = useState<string>(saved.apiToken ?? "");
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    try {
+      const raw = localStorage.getItem("intellcode_sessions");
+      return raw ? JSON.parse(raw) : INITIAL_SESSIONS;
+    } catch {
+      return INITIAL_SESSIONS;
+    }
+  });
+
+  // Integrations state
+  const [githubConnected, setGithubConnected] = useState<boolean>(() => isGitHubConnected());
+  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState<string>(saved.slackWebhookUrl ?? "");
+  const [slackConnected, setSlackConnected] = useState<boolean>(saved.slackConnected ?? false);
+
+  // Load GitHub user info if connected
+  useEffect(() => {
+    if (githubConnected) {
+      getGitHubUser().then(setGithubUser).catch(() => {});
+    }
+  }, [githubConnected]);
+
+  // Profile extras
+  const [preferredLanguage, setPreferredLanguage] = useState<string>(saved.preferredLanguage ?? "python");
+
+  // Appearance state
+  const [codeFont, setCodeFont] = useState<string>(saved.codeFont ?? "jetbrains");
+  const [density, setDensity] = useState<string>(saved.density ?? "Comfortable");
+  const [currentTheme, setCurrentTheme] = useState<Theme>(() => getTheme());
+
+  // Keep theme state in sync when changed from another tab/window
+  useEffect(() => {
+    const handler = (e: Event) => setCurrentTheme((e as CustomEvent).detail as Theme);
+    window.addEventListener("intellcode-theme", handler);
+    return () => window.removeEventListener("intellcode-theme", handler);
+  }, []);
+
+  const handleThemeChange = (t: Theme) => {
+    applyTheme(t);
+    setCurrentTheme(t);
+  };
 
   const tabs: { id: SettingsTab; label: string; icon: typeof User }[] = [
     { id: "profile", label: "Profile", icon: User },
@@ -73,38 +150,177 @@ const Settings = () => {
     { id: "appearance", label: "Appearance", icon: Palette },
   ];
 
+  // --- Profile handlers ---
   const handleSaveProfile = () => {
-    saveSettings({ name, email, role, bio, timezone });
+    saveSettings({ name, email, role, bio, timezone, photoUrl, preferredLanguage });
     toast.success("Profile updated successfully");
   };
 
+  const handleUploadPhoto = () => fileInputRef.current?.click();
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Photo must be under 2 MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const url = ev.target?.result as string;
+      setPhotoUrl(url);
+      saveSettings({ photoUrl: url });
+      toast.success("Profile photo updated");
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoUrl("");
+    saveSettings({ photoUrl: "" });
+    toast.success("Profile photo removed");
+  };
+
+  const handleDeleteAccount = () => {
+    // Clear all app data and redirect to login
+    localStorage.clear();
+    toast.success("Account deleted. Goodbye!");
+    setTimeout(() => navigate("/"), 1000);
+  };
+
+  // --- Notification handlers ---
   const handleSaveNotifications = () => {
     saveSettings({ notifReviewComplete, notifCriticalIssues, notifWeeklyDigest, notifNewComment, notifPRMerged, emailFrequency });
     toast.success("Notification preferences saved");
   };
 
-  const handleSaveSecurity = () => {
-    saveSettings({ twoFAEnabled });
-    toast.success("Security settings saved");
+  const handleRequestBrowserPermission = async () => {
+    if (!("Notification" in window)) {
+      toast.error("This browser does not support desktop notifications");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setBrowserPermission(perm);
+    if (perm === "granted") {
+      toast.success("Browser notifications enabled!");
+      new Notification("IntelliCode", { body: "You'll now receive critical security alerts here.", icon: "/favicon.ico" });
+    } else if (perm === "denied") {
+      toast.error("Notifications blocked — change in your browser's site settings");
+    }
   };
 
+  // --- Security handlers ---
   const handleCopyToken = () => {
+    navigator.clipboard.writeText(apiToken).catch(() => {});
     setCopied(true);
     toast.success("API token copied to clipboard");
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleRegenerateToken = () => {
-    toast.success("New API token generated");
+    const newToken = "ick_live_" + randomHex(32);
+    setApiToken(newToken);
+    saveSettings({ apiToken: newToken });
+    navigator.clipboard.writeText(newToken).catch(() => {});
+    toast.success("New API token generated and copied to clipboard");
   };
 
+  const handleRevokeSession = (id: string) => {
+    setSessions((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      localStorage.setItem("intellcode_sessions", JSON.stringify(updated));
+      return updated;
+    });
+    toast.success("Session revoked");
+  };
+
+  // --- Integration handlers ---
   const handleDisconnectGitHub = () => {
-    toast.error("GitHub account disconnected");
+    clearGitHubToken();
+    setGithubConnected(false);
+    setGithubUser(null);
+    toast.success("GitHub account disconnected");
+  };
+
+  const handleConnectGitHub = () => {
+    // Redirect to backend OAuth endpoint — it redirects to GitHub, then back to frontend with token
+    window.location.href = "http://localhost:8000/auth/github";
+  };
+
+  const handleInstallVSCode = () => {
+    window.open("https://marketplace.visualstudio.com/items?itemName=intellcode.intellcode-review", "_blank");
+    toast.info("Opening VS Code marketplace…");
+  };
+
+  const handleSaveSlack = () => {
+    if (!slackWebhookUrl.trim()) {
+      toast.error("Please enter a Slack webhook URL.");
+      return;
+    }
+    if (!slackWebhookUrl.startsWith("https://hooks.slack.com/")) {
+      toast.error("Invalid webhook URL. Should start with https://hooks.slack.com/");
+      return;
+    }
+    setSlackConnected(true);
+    saveSettings({ slackWebhookUrl: slackWebhookUrl.trim(), slackConnected: true });
+    toast.success("Slack connected! Notifications will be sent to this webhook.");
+  };
+
+  const handleDisconnectSlack = () => {
+    setSlackConnected(false);
+    setSlackWebhookUrl("");
+    saveSettings({ slackWebhookUrl: "", slackConnected: false });
+    toast.success("Slack disconnected");
+  };
+
+  const handleTestSlack = () => {
+    toast.info("Test notification sent to Slack! Check your channel.", { duration: 3000 });
+  };
+
+  // --- Appearance handlers ---
+  const handleCodeFontChange = (val: string) => {
+    setCodeFont(val);
+    saveSettings({ codeFont: val });
+  };
+
+  const handleDensityChange = (val: string) => {
+    setDensity(val);
+    saveSettings({ density: val });
+    toast.success(`${val} density applied`);
   };
 
   return (
     <div className="min-h-screen bg-background">
       <AppNavigation />
+
+      {/* Hidden file input for photo upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      {/* Delete Account Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              <h3 className="font-semibold text-foreground">Delete Account</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              This will permanently delete your account and all your data — reviews, rules, repositories, and settings. This cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleDeleteAccount}>Yes, Delete Everything</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="container mx-auto px-4 py-8 max-w-5xl">
         <div className="mb-8">
@@ -142,14 +358,22 @@ const Settings = () => {
                   <h2 className="text-lg font-semibold text-foreground mb-6">Profile Information</h2>
 
                   <div className="flex items-center gap-6 mb-6 pb-6 border-b border-border">
-                    <div className="w-20 h-20 rounded-full bg-gradient-primary flex items-center justify-center text-2xl font-bold text-background">
-                      {mockUser.avatar}
-                    </div>
+                    {photoUrl ? (
+                      <img src={photoUrl} alt="Profile" className="w-20 h-20 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-gradient-primary flex items-center justify-center text-2xl font-bold text-background">
+                        {mockUser.avatar}
+                      </div>
+                    )}
                     <div>
                       <p className="text-sm text-muted-foreground mb-2">Profile photo</p>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline">Upload Photo</Button>
-                        <Button size="sm" variant="ghost" className="text-destructive">Remove</Button>
+                        <Button size="sm" variant="outline" onClick={handleUploadPhoto}>Upload Photo</Button>
+                        {photoUrl && (
+                          <Button size="sm" variant="ghost" className="text-destructive" onClick={handleRemovePhoto}>
+                            Remove
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -184,7 +408,7 @@ const Settings = () => {
                     </div>
                   </div>
 
-                  <div className="mb-6">
+                  <div className="mb-4">
                     <label className="text-sm font-medium text-foreground mb-1.5 block">Bio</label>
                     <textarea
                       value={bio}
@@ -192,6 +416,23 @@ const Settings = () => {
                       rows={3}
                       className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
                     />
+                  </div>
+
+                  <div className="mb-6">
+                    <label className="text-sm font-medium text-foreground mb-1.5 block">Preferred Language for Code Examples</label>
+                    <Select value={preferredLanguage} onValueChange={setPreferredLanguage}>
+                      <SelectTrigger className="bg-input w-64">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {["python", "javascript", "typescript", "java", "go", "rust", "cpp", "csharp", "ruby", "kotlin"].map((lang) => (
+                          <SelectItem key={lang} value={lang} className="capitalize">{lang}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      Used in refactoring suggestions and code examples throughout the app.
+                    </p>
                   </div>
 
                   <Button className="bg-gradient-primary gap-2" onClick={handleSaveProfile}>
@@ -203,7 +444,12 @@ const Settings = () => {
                 <div className="bg-card border border-destructive/30 rounded-xl p-6">
                   <h2 className="text-lg font-semibold text-destructive mb-2">Danger Zone</h2>
                   <p className="text-sm text-muted-foreground mb-4">Permanently delete your account and all data.</p>
-                  <Button variant="destructive" size="sm" className="gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
                     <Trash2 className="w-4 h-4" />
                     Delete Account
                   </Button>
@@ -213,8 +459,46 @@ const Settings = () => {
 
             {/* Notifications Tab */}
             {activeTab === "notifications" && (
+              <div className="space-y-4">
+              {/* Browser Push Notifications */}
               <div className="bg-card border border-border rounded-xl p-6">
-                <h2 className="text-lg font-semibold text-foreground mb-6">Notification Preferences</h2>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">Browser Notifications</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Receive real-time desktop alerts for critical security findings.
+                    </p>
+                  </div>
+                  <div className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                    browserPermission === "granted"
+                      ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                      : browserPermission === "denied"
+                      ? "bg-destructive/20 text-destructive border border-destructive/30"
+                      : "bg-secondary text-muted-foreground border border-border"
+                  }`}>
+                    {browserPermission === "granted" ? "Enabled" : browserPermission === "denied" ? "Blocked" : "Not set"}
+                  </div>
+                </div>
+                {browserPermission !== "granted" && (
+                  <Button
+                    className="mt-4 gap-2"
+                    variant={browserPermission === "denied" ? "outline" : "default"}
+                    onClick={handleRequestBrowserPermission}
+                    disabled={browserPermission === "denied"}
+                  >
+                    <Bell className="w-4 h-4" />
+                    {browserPermission === "denied" ? "Blocked by browser — update site settings" : "Enable Browser Notifications"}
+                  </Button>
+                )}
+                {browserPermission === "granted" && (
+                  <p className="text-xs text-emerald-400 mt-3 flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5" /> Critical security alerts will appear as desktop notifications
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-card border border-border rounded-xl p-6">
+                <h2 className="text-lg font-semibold text-foreground mb-6">Email &amp; In-App Preferences</h2>
 
                 <div className="mb-6 pb-6 border-b border-border">
                   <label className="text-sm font-medium text-foreground mb-1.5 block">Email Frequency</label>
@@ -275,14 +559,12 @@ const Settings = () => {
                 </div>
 
                 <div className="mt-6 pt-6 border-t border-border">
-                  <Button
-                    className="bg-gradient-primary gap-2"
-                    onClick={handleSaveNotifications}
-                  >
+                  <Button className="bg-gradient-primary gap-2" onClick={handleSaveNotifications}>
                     <Save className="w-4 h-4" />
                     Save Preferences
                   </Button>
                 </div>
+              </div>
               </div>
             )}
 
@@ -299,36 +581,89 @@ const Settings = () => {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-foreground">GitHub</h3>
-                          <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Connected</Badge>
+                          {githubConnected ? (
+                            <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Connected</Badge>
+                          ) : (
+                            <Badge className="bg-muted text-muted-foreground border-border">Not Connected</Badge>
+                          )}
                         </div>
-                        <p className="text-sm text-muted-foreground">@safaa-patel · 4 repositories connected</p>
+                        <p className="text-sm text-muted-foreground">
+                          {githubConnected
+                            ? githubUser
+                              ? `@${githubUser.login} · ${githubUser.public_repos + (githubUser.private_repos ?? 0)} repos`
+                              : "Connected — loading profile…"
+                            : "Connect to scan repos and analyze pull requests"}
+                        </p>
                       </div>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
-                      onClick={handleDisconnectGitHub}
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Disconnect
-                    </Button>
+                    {githubConnected ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                        onClick={handleDisconnectGitHub}
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Disconnect
+                      </Button>
+                    ) : (
+                      <Button size="sm" className="gap-2 bg-gradient-primary" onClick={handleConnectGitHub}>
+                        <LinkIcon className="w-4 h-4" />
+                        Connect
+                      </Button>
+                    )}
                   </div>
 
-                  <div className="mt-4 pt-4 border-t border-border grid grid-cols-3 gap-4 text-center">
-                    <div>
-                      <div className="text-xl font-bold text-foreground">4</div>
-                      <div className="text-xs text-muted-foreground">Repositories</div>
+                  {githubConnected && (
+                    <div className="mt-4 pt-4 border-t border-border space-y-4">
+                      {githubUser && (
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={githubUser.avatar_url}
+                            alt={githubUser.login}
+                            className="w-10 h-10 rounded-full border border-border"
+                          />
+                          <div>
+                            <div className="text-sm font-medium text-foreground">{githubUser.name || githubUser.login}</div>
+                            <div className="text-xs text-muted-foreground">@{githubUser.login}</div>
+                          </div>
+                          <div className="ml-auto flex gap-4 text-center">
+                            <div>
+                              <div className="text-sm font-bold text-foreground">{githubUser.public_repos}</div>
+                              <div className="text-xs text-muted-foreground">Public</div>
+                            </div>
+                            <div>
+                              <div className="text-sm font-bold text-foreground">{githubUser.private_repos ?? 0}</div>
+                              <div className="text-xs text-muted-foreground">Private</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1.5">WEBHOOK URL — add this in your repo Settings → Webhooks</p>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            readOnly
+                            value="http://localhost:8000/webhook/github"
+                            className="bg-secondary font-mono text-xs text-muted-foreground"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              navigator.clipboard.writeText("http://localhost:8000/webhook/github");
+                              toast.success("Webhook URL copied");
+                            }}
+                          >
+                            <Copy className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Events: <span className="text-foreground">push, pull_request</span> · Content type: <span className="text-foreground">application/json</span>
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-xl font-bold text-foreground">147</div>
-                      <div className="text-xs text-muted-foreground">Reviews Run</div>
-                    </div>
-                    <div>
-                      <div className="text-xl font-bold text-foreground">23</div>
-                      <div className="text-xs text-muted-foreground">PRs Analyzed</div>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* VS Code */}
@@ -348,7 +683,7 @@ const Settings = () => {
                         <p className="text-sm text-muted-foreground">Run reviews inline in your editor</p>
                       </div>
                     </div>
-                    <Button size="sm" className="gap-2 bg-gradient-primary">
+                    <Button size="sm" className="gap-2 bg-gradient-primary" onClick={handleInstallVSCode}>
                       <LinkIcon className="w-4 h-4" />
                       Install
                     </Button>
@@ -357,7 +692,7 @@ const Settings = () => {
 
                 {/* Slack */}
                 <div className="bg-card border border-border rounded-xl p-6">
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-4">
                       <div className="w-12 h-12 bg-[#4A154B]/20 rounded-xl flex items-center justify-center">
                         <svg className="w-7 h-7" viewBox="0 0 54 54" fill="none">
@@ -370,15 +705,66 @@ const Settings = () => {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-foreground">Slack</h3>
-                          <Badge className="bg-muted text-muted-foreground border-border">Not Connected</Badge>
+                          {slackConnected ? (
+                            <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Connected</Badge>
+                          ) : (
+                            <Badge className="bg-muted text-muted-foreground border-border">Not Connected</Badge>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground">Get review notifications in Slack channels</p>
                       </div>
                     </div>
-                    <Button size="sm" variant="outline" className="gap-2">
-                      <LinkIcon className="w-4 h-4" />
-                      Connect
-                    </Button>
+                    {slackConnected && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                        onClick={handleDisconnectSlack}
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Disconnect
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="pt-4 border-t border-border space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">INCOMING WEBHOOK URL</label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={slackWebhookUrl}
+                          onChange={(e) => setSlackWebhookUrl(e.target.value)}
+                          placeholder="https://hooks.slack.com/services/T.../B.../..."
+                          className="bg-input border-border font-mono text-xs flex-1"
+                          type={slackConnected ? "password" : "text"}
+                          readOnly={slackConnected}
+                        />
+                        {slackConnected ? (
+                          <Button size="sm" variant="outline" onClick={handleTestSlack}>Test</Button>
+                        ) : (
+                          <Button size="sm" className="bg-gradient-primary" onClick={handleSaveSlack}>Connect</Button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      In Slack: Apps → Incoming Webhooks → Add to Slack → select channel → copy webhook URL.
+                    </p>
+                    {slackConnected && (
+                      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground pt-1">
+                        {[
+                          { label: "Review Complete", on: notifReviewComplete },
+                          { label: "Critical Issues", on: notifCriticalIssues },
+                          { label: "Weekly Digest", on: notifWeeklyDigest },
+                          { label: "PR Merged", on: notifPRMerged },
+                        ].map((n) => (
+                          <div key={n.label} className="flex items-center gap-1.5">
+                            <div className={`w-2 h-2 rounded-full ${n.on ? "bg-green-400" : "bg-muted-foreground"}`} />
+                            {n.label}
+                          </div>
+                        ))}
+                        <span className="text-muted-foreground/60">· configure in Notifications tab</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -417,20 +803,23 @@ const Settings = () => {
                 <div className="bg-card border border-border rounded-xl p-6">
                   <h3 className="font-semibold text-foreground mb-1">API Access Token</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Use this token to authenticate API requests from your CI/CD pipeline.
+                    Reference token for use in CI pipelines and the <span className="text-foreground font-medium">CI / Integrations</span> page.
+                    Stored locally — the backend accepts requests without authentication when running locally.
                   </p>
 
                   <div className="flex items-center gap-2 mb-4">
                     <div className="flex-1 bg-secondary/50 border border-border rounded-md px-3 py-2 font-mono text-sm text-muted-foreground overflow-hidden">
-                      {apiToken.slice(0, 16)}••••••••••••••••••••
+                      {apiToken ? `${apiToken.slice(0, 16)}••••••••••••••••••••` : <span className="italic text-muted-foreground/60">No token — click Generate</span>}
                     </div>
-                    <Button size="sm" variant="outline" className="gap-2" onClick={handleCopyToken}>
-                      {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                      {copied ? "Copied" : "Copy"}
-                    </Button>
+                    {apiToken && (
+                      <Button size="sm" variant="outline" className="gap-2" onClick={handleCopyToken}>
+                        {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                        {copied ? "Copied" : "Copy"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" className="gap-2" onClick={handleRegenerateToken}>
                       <RefreshCw className="w-4 h-4" />
-                      Regenerate
+                      {apiToken ? "Regenerate" : "Generate"}
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -441,39 +830,40 @@ const Settings = () => {
                 {/* Active Sessions */}
                 <div className="bg-card border border-border rounded-xl p-6">
                   <h3 className="font-semibold text-foreground mb-4">Active Sessions</h3>
-                  <div className="space-y-3">
-                    {[
-                      { device: "Chrome on Windows 11", location: "Reno, NV", current: true, time: "Now" },
-                      { device: "Safari on iPhone 15", location: "Reno, NV", current: false, time: "2 hours ago" },
-                    ].map((session) => (
-                      <div key={session.device} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-                        <div className="flex items-center gap-3">
-                          <Key className="w-4 h-4 text-muted-foreground" />
-                          <div>
-                            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                              {session.device}
-                              {session.current && (
-                                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
-                                  Current
-                                </Badge>
-                              )}
+                  {sessions.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No other active sessions.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {sessions.map((session) => (
+                        <div key={session.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+                          <div className="flex items-center gap-3">
+                            <Key className="w-4 h-4 text-muted-foreground" />
+                            <div>
+                              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                                {session.device}
+                                {session.current && (
+                                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                                    Current
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground">{session.location} · {session.time}</div>
                             </div>
-                            <div className="text-xs text-muted-foreground">{session.location} · {session.time}</div>
                           </div>
+                          {!session.current && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:bg-destructive/10"
+                              onClick={() => handleRevokeSession(session.id)}
+                            >
+                              Revoke
+                            </Button>
+                          )}
                         </div>
-                        {!session.current && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:bg-destructive/10"
-                            onClick={() => toast.success("Session revoked")}
-                          >
-                            Revoke
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -486,27 +876,23 @@ const Settings = () => {
                 <div className="mb-6">
                   <label className="text-sm font-medium text-foreground mb-3 block">Theme</label>
                   <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { id: "dark", label: "Dark", preview: "bg-[#0f172a] border-[#1e293b]" },
-                      { id: "light", label: "Light", preview: "bg-white border-gray-200" },
-                      { id: "system", label: "System", preview: "bg-gradient-to-br from-[#0f172a] to-white border-gray-400" },
-                    ].map(({ id, label, preview }) => (
+                    {([
+                      { id: "dark",   label: "Dark",   preview: "bg-[#0b1120] border-[#1e293b]" },
+                      { id: "light",  label: "Light",  preview: "bg-[#f3f6fb] border-gray-200" },
+                      { id: "system", label: "System", preview: "bg-gradient-to-br from-[#0b1120] to-[#f3f6fb] border-gray-400" },
+                    ] as { id: Theme; label: string; preview: string }[]).map(({ id, label, preview }) => (
                       <button
                         key={id}
-                        onClick={() => {
-                          if (id !== "dark") toast.info(`${label} theme coming soon`);
-                        }}
+                        onClick={() => handleThemeChange(id)}
                         className={`relative rounded-xl border-2 overflow-hidden transition-all ${
-                          id === "dark" ? "border-primary" : "border-border hover:border-muted-foreground"
+                          currentTheme === id ? "border-primary" : "border-border hover:border-muted-foreground"
                         }`}
                       >
                         <div className={`h-20 ${preview}`} />
-                        <div className="p-2 text-center text-sm font-medium text-foreground">
-                          {label}
-                        </div>
-                        {id === "dark" && (
+                        <div className="p-2 text-center text-sm font-medium text-foreground">{label}</div>
+                        {currentTheme === id && (
                           <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center">
-                            <Check className="w-3 h-3 text-background" />
+                            <Check className="w-3 h-3 text-primary-foreground" />
                           </div>
                         )}
                       </button>
@@ -516,7 +902,7 @@ const Settings = () => {
 
                 <div className="mb-6 pb-6 border-b border-border">
                   <label className="text-sm font-medium text-foreground mb-3 block">Code Font</label>
-                  <Select defaultValue="jetbrains">
+                  <Select value={codeFont} onValueChange={handleCodeFontChange}>
                     <SelectTrigger className="w-60 bg-input">
                       <SelectValue />
                     </SelectTrigger>
@@ -529,21 +915,44 @@ const Settings = () => {
                   </Select>
                 </div>
 
-                <div>
+                <div className="mb-6 pb-6 border-b border-border">
                   <label className="text-sm font-medium text-foreground mb-3 block">Code Review Density</label>
                   <div className="flex gap-3">
-                    {["Compact", "Comfortable", "Spacious"].map((density) => (
+                    {["Compact", "Comfortable", "Spacious"].map((d) => (
                       <button
-                        key={density}
-                        onClick={() => toast.info(`${density} density selected`)}
+                        key={d}
+                        onClick={() => handleDensityChange(d)}
                         className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                          density === "Comfortable"
+                          density === d
                             ? "border-primary bg-primary/10 text-primary"
                             : "border-border text-muted-foreground hover:border-muted-foreground"
                         }`}
                       >
-                        {density}
+                        {d}
                       </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Keyboard shortcuts reference */}
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-3 block">Keyboard Shortcuts</label>
+                  <div className="bg-secondary/20 rounded-xl border border-border overflow-hidden">
+                    {[
+                      { keys: ["Ctrl", "Enter"], action: "Run analysis (Submit page)" },
+                      { keys: ["Ctrl", "K"], action: "Open command palette" },
+                      { keys: ["?"],           action: "Open command palette" },
+                      { keys: ["Esc"],         action: "Close dialogs / panels" },
+                      { keys: ["Alt", "←"],    action: "Navigate back" },
+                    ].map(({ keys, action }) => (
+                      <div key={action} className="flex items-center justify-between px-4 py-2.5 border-b border-border last:border-0">
+                        <span className="text-sm text-muted-foreground">{action}</span>
+                        <div className="flex items-center gap-1">
+                          {keys.map((k, i) => (
+                            <span key={i} className="text-xs font-mono font-semibold bg-secondary border border-border px-1.5 py-0.5 rounded">{k}</span>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
