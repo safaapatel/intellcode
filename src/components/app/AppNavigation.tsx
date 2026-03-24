@@ -28,7 +28,6 @@ const baseNavLinks = [
   { name: "Compare",       path: "/compare" },
   { name: "Diff",          path: "/diff" },
   { name: "Analytics",     path: "/analytics" },
-  { name: "ML Models",     path: "/models" },
   { name: "Rules",         path: "/rules" },
   { name: "CI / Integrations", path: "/ci" },
   { name: "Settings",      path: "/settings" },
