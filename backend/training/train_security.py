@@ -111,15 +111,25 @@ def train(
     X_rf_train, y_rf_train = build_rf_features_from_records(train_records)
     X_rf_test, y_rf_test = build_rf_features_from_records(test_records)
 
+    rf_threshold = 0.5  # default
     if len(X_rf_train) > 0:
         rf_model = RandomForestSecurityModel()
         rf_model.fit(X_rf_train, y_rf_train, n_estimators=rf_estimators)
         rf_model.save(str(out_dir / "rf_model.pkl"))
 
-        rf_preds = np.array([rf_model.predict_proba(x) for x in X_rf_test])
-        rf_labels = (rf_preds > 0.5).astype(int)
+        # Find optimal threshold using Youden's J on training predictions
+        from sklearn.metrics import roc_curve
+        rf_train_probs = np.array([rf_model.predict_proba(x) for x in X_rf_train])
+        fpr, tpr, thresholds = roc_curve(y_rf_train, rf_train_probs)
+        youden_j = tpr - fpr
+        optimal_idx = int(np.argmax(youden_j))
+        rf_threshold = float(thresholds[optimal_idx])
+        print(f"Optimal RF threshold (Youden's J): {rf_threshold:.4f}")
 
-        print(f"\nRF Test Results:")
+        rf_preds = np.array([rf_model.predict_proba(x) for x in X_rf_test])
+        rf_labels = (rf_preds > rf_threshold).astype(int)
+
+        print(f"\nRF Test Results (threshold={rf_threshold:.3f}):")
         print(classification_report(y_rf_test, rf_labels,
                                     target_names=["clean", "vulnerable"]))
         rf_auc = roc_auc_score(y_rf_test, rf_preds)
@@ -132,10 +142,11 @@ def train(
     # Build vocabulary and train CNN
     # ----------------------------------------------------------------
     print("\n=== Building Token Vocabulary ===")
-    all_token_lists = [rec.get("tokens", []) for rec in records]
+    # Build vocab from training records only to avoid data leakage from test set
+    train_token_lists = [rec.get("tokens", []) for rec in train_records]
 
     # Build vocab from raw token lists (flatten back to strings)
-    token_corpus = [" ".join(tl) for tl in all_token_lists]
+    token_corpus = [" ".join(tl) for tl in train_token_lists]
     vocab = build_token_vocab(token_corpus, max_vocab=10_000)
     print(f"Vocabulary size: {len(vocab)}")
 
@@ -180,7 +191,7 @@ def train(
         if len(X_rf_test) > 0:
             rf_w, cnn_w = 0.55, 0.45
             ensemble_probs = rf_w * rf_preds + cnn_w * cnn_probs
-            ensemble_labels = (ensemble_probs > 0.5).astype(int)
+            ensemble_labels = (ensemble_probs > rf_threshold).astype(int)
             ensemble_auc = roc_auc_score(y_cnn_test, ensemble_probs)
             print(classification_report(y_cnn_test, ensemble_labels,
                                         target_names=["clean", "vulnerable"]))
@@ -193,6 +204,7 @@ def train(
     # Save metrics
     metrics = {
         "rf_auc": float(rf_auc),
+        "rf_threshold": float(rf_threshold),
         "cnn_auc": float(cnn_auc) if cnn_auc is not None else None,
         "ensemble_auc": float(ensemble_auc) if ensemble_auc is not None else float(rf_auc),
         "n_train": len(train_records),

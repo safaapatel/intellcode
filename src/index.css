@@ -60,6 +60,36 @@ All colors MUST be HSL.
   }
 }
 
+/* ── Light theme ─────────────────────────────────────────────────────── */
+.light {
+  --background: 210 20% 97%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 190 80% 35%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 215 20% 90%;
+  --secondary-foreground: 222 47% 20%;
+  --muted: 215 16% 93%;
+  --muted-foreground: 215 14% 45%;
+  --accent: 180 65% 32%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 82% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 215 20% 83%;
+  --input: 215 16% 93%;
+  --ring: 190 80% 35%;
+  --gradient-primary: linear-gradient(135deg, hsl(190, 80%, 35%), hsl(210, 80%, 42%));
+  --gradient-accent: linear-gradient(135deg, hsl(180, 65%, 32%), hsl(190, 80%, 35%));
+  --gradient-hero: linear-gradient(180deg, hsl(210, 20%, 97%) 0%, hsl(215, 20%, 92%) 100%);
+  --glow-primary: 0 0 30px hsla(190, 80%, 35%, 0.18);
+  --glow-accent: 0 0 20px hsla(180, 65%, 32%, 0.12);
+  --success: 142 76% 28%;
+  --warning: 38 85% 42%;
+}
+
 @layer base {
   * {
     @apply border-border;

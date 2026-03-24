@@ -99,8 +99,8 @@ def train_lr(
 
     # Cross-validation
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    cv_auc = cross_val_score(clf, X, y, cv=skf, scoring="roc_auc", n_jobs=-1)
-    cv_acc = cross_val_score(clf, X, y, cv=skf, scoring="accuracy", n_jobs=-1)
+    cv_auc = cross_val_score(clf, X, y, cv=skf, scoring="roc_auc", n_jobs=1)
+    cv_acc = cross_val_score(clf, X, y, cv=skf, scoring="accuracy", n_jobs=1)
     print(f"CV AUC:      {np.mean(cv_auc):.4f} ± {np.std(cv_auc):.4f}")
     print(f"CV Accuracy: {np.mean(cv_acc):.4f} ± {np.std(cv_acc):.4f}")
 
@@ -229,6 +229,78 @@ def train_mlp(
 
 
 # ---------------------------------------------------------------------------
+# XGBoost training
+# ---------------------------------------------------------------------------
+
+def train_xgb(
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    X_te: np.ndarray,
+    y_te: np.ndarray,
+    save_path: str,
+) -> dict:
+    try:
+        from xgboost import XGBClassifier
+    except ImportError:
+        print("WARNING: xgboost not installed. Skipping XGB training.")
+        return {}
+
+    from sklearn.metrics import roc_auc_score, accuracy_score
+
+    print("\n-- XGBoost ---------------------------------------------------")
+    n_buggy = int(y_tr.sum())
+    n_clean = int((y_tr == 0).sum())
+    scale = n_clean / max(n_buggy, 1)
+
+    clf = XGBClassifier(
+        n_estimators=300,
+        max_depth=4,           # reduced 6→4 to prevent overfitting
+        learning_rate=0.05,
+        subsample=0.7,         # reduced 0.8→0.7
+        colsample_bytree=0.7,  # reduced 0.8→0.7
+        min_child_weight=5,    # increased 3→5
+        gamma=0.3,             # increased 0.1→0.3
+        reg_alpha=0.5,         # L1 regularization (new)
+        reg_lambda=1.5,        # L2 regularization (new)
+        scale_pos_weight=scale,
+        eval_metric="logloss",
+        random_state=42,
+        n_jobs=-1,
+        early_stopping_rounds=30,
+    )
+
+    clf.fit(
+        X_tr, y_tr,
+        eval_set=[(X_te, y_te)],
+        verbose=False,
+    )
+    print(f"Best iteration: {clf.best_iteration}")
+
+    te_prob = clf.predict_proba(X_te)[:, 1]
+    te_auc = roc_auc_score(y_te, te_prob)
+    te_acc = accuracy_score(y_te, (te_prob >= 0.5).astype(int))
+    print(f"Test  AUC:   {te_auc:.4f}")
+    print(f"Test  Acc:   {te_acc:.4f}")
+
+    tr_prob = clf.predict_proba(X_tr)[:, 1]
+    tr_auc = roc_auc_score(y_tr, tr_prob)
+    print(f"Train AUC:   {tr_auc:.4f}")
+
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, "wb") as f:
+        import pickle
+        pickle.dump(clf, f)
+    print(f"XGB model saved -> {save_path}")
+
+    return {
+        "train_auc": float(tr_auc),
+        "test_auc": float(te_auc),
+        "test_acc": float(te_acc),
+        "best_iteration": int(clf.best_iteration),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -267,14 +339,35 @@ def train(
     print(f"\nTest AUC (LR): {lr_metrics['test_auc']:.4f}")
     print(f"Test Acc (LR): {lr_metrics['test_acc']:.4f}")
 
+    # -- XGBoost --
+    xgb_metrics = train_xgb(X_tr, y_tr, X_te, y_te, str(out / "xgb_model.pkl"))
+
     # -- MLP --
     mlp_metrics = {}
     if use_mlp:
         mlp_metrics = train_mlp(X_tr, y_tr, str(out / "mlp_model.pt"), epochs=epochs)
 
+    # -- Ensemble: LR + XGBoost --
+    from sklearn.metrics import roc_auc_score, accuracy_score
+    ensemble_metrics = {}
+    if xgb_metrics:
+        with open(out / "xgb_model.pkl", "rb") as f:
+            xgb_clf = pickle.load(f)
+        lr_probs_te = lr_clf.predict_proba(X_te)[:, 1]
+        xgb_probs_te = xgb_clf.predict_proba(X_te)[:, 1]
+        ens_probs = 0.5 * lr_probs_te + 0.5 * xgb_probs_te
+        ens_auc = roc_auc_score(y_te, ens_probs)
+        ens_acc = accuracy_score(y_te, (ens_probs >= 0.5).astype(int))
+        print(f"\n-- Ensemble (LR + XGBoost) -----------------------------------")
+        print(f"Test AUC: {ens_auc:.4f}")
+        print(f"Test Acc: {ens_acc:.4f}")
+        ensemble_metrics = {"test_auc": float(ens_auc), "test_acc": float(ens_acc)}
+
     # -- Save combined metrics --
     metrics = {
         "logistic_regression": lr_metrics,
+        "xgboost": xgb_metrics,
+        "ensemble_lr_xgb": ensemble_metrics,
         "mlp": mlp_metrics,
         "n_train": len(X_tr),
         "n_test": len(X_te),

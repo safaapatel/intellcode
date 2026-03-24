@@ -2,29 +2,35 @@
 Master Training Pipeline — Train All IntelliCode ML Models
 
 Runs the full pipeline with a single command:
-  1. Generate synthetic datasets (no GitHub token needed)
+  1. Fetch REAL datasets from public sources (Bandit, GitHub, PyDriller)
   2. Train Complexity model    (XGBoost)
   3. Train Security model      (Random Forest + 1D CNN)
   4. Train Bug Predictor       (Logistic Regression + MLP)
   5. Optionally train Pattern  (CodeBERT fine-tune — slow, GPU recommended)
 
+Real data sources used (no GitHub token required):
+  Security  — Bandit's own labelled examples + security-fix commits (PyDriller)
+  Complexity — Real Python files from psf/requests, pallets/flask, etc.
+  Bug        — Real bug-fix commits from Django, Flask, requests, pip, etc.
+  Pattern    — Real Python functions labelled by code-quality heuristics
+
 Usage:
     cd backend
 
-    # Fast mode: all models except CodeBERT
+    # Full pipeline with real data (recommended)
     python training/train_all.py
 
     # Everything including CodeBERT (requires GPU for reasonable speed)
     python training/train_all.py --with-pattern
 
-    # Skip data generation if you already have datasets
+    # Skip data fetching if you already have datasets
     python training/train_all.py --skip-datagen
 
-    # Smaller datasets for a quick smoke test
+    # Smaller dataset for a quick smoke test
     python training/train_all.py --n 300 --no-mlp
 
 Outputs:
-    data/                          — JSONL datasets
+    data/                          — JSONL datasets (real data)
     checkpoints/complexity/        — XGBoost model + metrics
     checkpoints/security/          — RF + CNN models + metrics
     checkpoints/bug_predictor/     — LR + MLP models + metrics
@@ -92,37 +98,34 @@ def run_step(label: str, fn, *args, **kwargs) -> tuple[bool, dict, float]:
 # ---------------------------------------------------------------------------
 
 def step_datagen(n: int, out_dir: str, tasks: list[str]):
-    """Generate synthetic datasets for each requested task."""
-    import importlib, sys
+    """Fetch REAL datasets from public sources (Bandit, GitHub, PyDriller)."""
+    import importlib.util, sys
     from pathlib import Path as P
 
     backend_dir = P(__file__).resolve().parent.parent
     sys.path.insert(0, str(backend_dir))
 
-    # Import the generator module
-    import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "generate_synthetic_data",
-        backend_dir / "training" / "generate_synthetic_data.py",
+        "fetch_real_datasets",
+        backend_dir / "training" / "fetch_real_datasets.py",
     )
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
+    fetcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetcher)
 
     counts = {}
     for task in tasks:
-        print(f"Generating {task} dataset ({n} samples)...")
+        out_path = f"{out_dir}/{task}_dataset.jsonl"
+        print(f"\nFetching real {task} dataset (target {n} samples)…")
         if task == "complexity":
-            samples = gen.generate_complexity_samples(n)
-            gen.write_jsonl(samples, f"{out_dir}/complexity_dataset.jsonl")
+            samples = fetcher.fetch_complexity_dataset(n=n, out=out_path)
         elif task == "security":
-            samples = gen.generate_security_samples(n)
-            gen.write_jsonl(samples, f"{out_dir}/security_dataset.jsonl")
+            samples = fetcher.fetch_security_dataset(n=n, out=out_path)
         elif task == "pattern":
-            samples = gen.generate_pattern_samples(n)
-            gen.write_jsonl(samples, f"{out_dir}/pattern_dataset.jsonl")
+            samples = fetcher.fetch_pattern_dataset(n=n, out=out_path)
         elif task == "bug":
-            samples = gen.generate_bug_samples(n)
-            gen.write_jsonl(samples, f"{out_dir}/bug_dataset.jsonl")
+            samples = fetcher.fetch_bug_dataset(n=n, out=out_path)
+        else:
+            samples = []
         counts[task] = len(samples)
     return counts
 
@@ -256,17 +259,15 @@ def main():
     Path(data_dir).mkdir(parents=True, exist_ok=True)
     Path(ckpt_dir).mkdir(parents=True, exist_ok=True)
 
-    tasks_for_datagen = ["complexity", "security", "bug"]
-    if args.with_pattern:
-        tasks_for_datagen.append("pattern")
+    tasks_for_datagen = ["complexity", "security", "bug", "pattern"]
 
     report = {"steps": {}, "args": vars(args)}
     t_start = time.time()
 
-    # ── 1. Data generation ───────────────────────────────────────────────────
+    # ── 1. Data fetching ─────────────────────────────────────────────────────
     if not args.skip_datagen and args.only in (None, "datagen"):
         ok, res, elapsed = run_step(
-            "Generate Synthetic Data",
+            "Fetch Real Datasets",
             step_datagen,
             n=args.n,
             out_dir=data_dir,
@@ -327,12 +328,12 @@ def main():
             ok, res, elapsed = False, {"error": "dataset missing"}, 0.0
         report["steps"]["bugs"] = {"success": ok, "result": res, "elapsed_seconds": elapsed}
 
-    # ── 5. Pattern (optional) ────────────────────────────────────────────────
-    if args.with_pattern and args.only in (None, "pattern"):
+    # ── 5. Pattern (RF classifier, always runs) ──────────────────────────────
+    if args.only in (None, "pattern"):
         data_path = f"{data_dir}/pattern_dataset.jsonl"
         if Path(data_path).exists():
             ok, res, elapsed = run_step(
-                "Fine-tune CodeBERT Pattern",
+                "Train Pattern Classifier (RF)",
                 step_pattern,
                 data_path=data_path,
                 out_dir=f"{ckpt_dir}/pattern",

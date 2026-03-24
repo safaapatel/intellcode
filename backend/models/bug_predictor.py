@@ -69,14 +69,20 @@ _RISK_THRESHOLDS = {
 STATIC_FEATURE_NAMES = [
     "cyclomatic_complexity",
     "cognitive_complexity",
+    "max_function_complexity",
+    "avg_function_complexity",
+    "sloc",
+    "comments",
+    "blank",
+    "halstead_volume",
+    "halstead_difficulty",
+    "halstead_effort",
     "halstead_bugs",
+    "maintainability_index",
     "n_long_functions",
     "n_complex_functions",
-    "sloc",
-    "n_functions",
-    "n_try_blocks",
-    "n_raises",
-    "max_params",
+    "max_line_length",
+    "avg_line_length",
     "n_lines_over_80",
 ]
 
@@ -96,22 +102,10 @@ ALL_FEATURE_NAMES = STATIC_FEATURE_NAMES + GIT_FEATURE_NAMES
 # ---------------------------------------------------------------------------
 
 def _extract_static_features(source: str) -> np.ndarray:
+    from features.code_metrics import metrics_to_feature_vector
     metrics = compute_all_metrics(source)
-    ast_feats = ASTExtractor().extract(source)
-
-    return np.array([
-        float(metrics.cyclomatic_complexity),
-        float(metrics.cognitive_complexity),
-        float(metrics.halstead.bugs_delivered),
-        float(metrics.n_long_functions),
-        float(metrics.n_complex_functions),
-        float(metrics.lines.sloc),
-        float(ast_feats.get("n_functions", 0)),
-        float(ast_feats.get("n_try_blocks", 0)),
-        float(ast_feats.get("n_raises", 0)),
-        float(ast_feats.get("max_params", 0)),
-        float(metrics.n_lines_over_80),
-    ], dtype=np.float32)
+    # Use metrics_to_feature_vector to match the 17-feature vector used during training
+    return np.array(metrics_to_feature_vector(metrics), dtype=np.float32)
 
 
 def _extract_git_features(git: Optional[GitMetadata]) -> np.ndarray:
@@ -296,7 +290,14 @@ class MLPBugPredictor:
         torch.save(self._model.state_dict(), path)
 
     def load(self, path: str):
+        import json
         import torch
+        # Read saved input_dim from companion meta file (written by train_bugs.py)
+        meta_path = Path(path).parent / "mlp_meta.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                meta = json.load(f)
+            self._input_dim = meta.get("input_dim", self._input_dim)
         self.build()
         self._model.load_state_dict(torch.load(path, map_location=self._device))
         self._model.eval()
@@ -306,13 +307,28 @@ class MLPBugPredictor:
 # Main BugPredictionModel
 # ---------------------------------------------------------------------------
 
+class XGBoostBugPredictor:
+    """XGBoost bug predictor — best single model for this task."""
+
+    def __init__(self):
+        self._clf = None
+
+    def predict_proba(self, x: np.ndarray) -> float:
+        if self._clf is None:
+            raise RuntimeError("Not loaded.")
+        return float(self._clf.predict_proba(x.reshape(1, -1))[0, 1])
+
+    def load(self, path: str):
+        with open(path, "rb") as f:
+            self._clf = pickle.load(f)
+
+
 class BugPredictionModel:
     """
-    Combines LogisticRegression (baseline) and MLP (full model) into
+    Combines XGBoost (primary), LogisticRegression (baseline) and MLP (full model) into
     a single predict() interface.
 
-    Status: In Development — falls back to heuristic scoring when no
-    trained model is available.
+    Priority: XGBoost > MLP > LR > heuristic
     """
 
     def __init__(
@@ -320,8 +336,10 @@ class BugPredictionModel:
         checkpoint_dir: str = "checkpoints/bug_predictor",
     ):
         self._checkpoint_dir = Path(checkpoint_dir)
+        self._xgb = XGBoostBugPredictor()
         self._lr = LogisticRegressionBugPredictor()
         self._mlp = MLPBugPredictor()
+        self._xgb_ready = False
         self._lr_ready = False
         self._mlp_ready = False
         self._try_load()
@@ -349,11 +367,35 @@ class BugPredictionModel:
         git_feats = _extract_git_features(git_metadata)
         full_feats = np.concatenate([static_feats, git_feats])
 
-        # Determine probability
-        if self._mlp_ready:
+        # Determine probability — prefer ensemble(XGB+LR) > XGB > MLP > LR > heuristic
+        if self._xgb_ready and self._lr_ready:
+            try:
+                xgb_prob = self._xgb.predict_proba(full_feats)
+                lr_prob = self._lr.predict_proba(full_feats)
+                prob = 0.5 * xgb_prob + 0.5 * lr_prob
+                source_name = "ensemble_xgb_lr"
+                static_score = prob
+                git_score = prob if git_metadata else None
+            except Exception:
+                self._xgb_ready = False
+                prob, static_score = self._heuristic_proba(static_feats)
+                git_score = None
+                source_name = "heuristic"
+        elif self._xgb_ready:
+            try:
+                prob = self._xgb.predict_proba(full_feats)
+                source_name = "xgboost"
+                static_score = prob
+                git_score = prob if git_metadata else None
+            except Exception:
+                self._xgb_ready = False
+                prob, static_score = self._heuristic_proba(static_feats)
+                git_score = None
+                source_name = "heuristic"
+        elif self._mlp_ready:
             prob = self._mlp.predict_proba(full_feats)
             source_name = "mlp"
-            static_score = prob  # approximation
+            static_score = prob
             git_score = prob if git_metadata else None
         elif self._lr_ready:
             try:
@@ -362,19 +404,18 @@ class BugPredictionModel:
                 static_score = prob
                 git_score = prob if git_metadata else None
             except Exception:
-                # Checkpoint version mismatch — fall back to heuristic
                 self._lr_ready = False
                 prob, static_score = self._heuristic_proba(static_feats)
                 git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
                 if git_score is not None:
-                    prob = min(1.0, (prob + git_score) / 2 * 1.2)
+                    prob = git_score  # _git_adjustment returns the adjusted probability directly
                 source_name = "heuristic"
         else:
             # Heuristic fallback
             prob, static_score = self._heuristic_proba(static_feats)
             git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
             if git_score is not None:
-                prob = min(1.0, (prob + git_score) / 2 * 1.2)
+                prob = git_score  # _git_adjustment returns the adjusted probability directly
             source_name = "heuristic"
 
         # Risk level
@@ -386,11 +427,17 @@ class BugPredictionModel:
 
         risk_factors = _risk_factors_from_features(source, git_metadata)
 
+        if self._xgb_ready and self._lr_ready:
+            confidence = 0.87
+        elif self._xgb_ready or self._lr_ready:
+            confidence = 0.80
+        else:
+            confidence = 0.60
         return BugPrediction(
             bug_probability=round(prob, 3),
             risk_level=risk_level,
             risk_factors=risk_factors,
-            confidence=0.78 if self._lr_ready else 0.60,
+            confidence=confidence,
             static_score=round(static_score, 3),
             git_score=round(git_score, 3) if git_score is not None else None,
         )
@@ -449,21 +496,26 @@ class BugPredictionModel:
     @staticmethod
     def _heuristic_proba(static_feats: np.ndarray) -> tuple[float, float]:
         """
-        Rule-based probability estimate from static features.
+        Rule-based probability estimate from static features (17-feature vector).
         Returns (probability, static_score).
         """
-        (cc, cog, hb, n_long, n_complex, sloc,
-         n_funcs, n_try, n_raises, max_params, over_80) = static_feats.tolist()
+        f = static_feats.tolist()
+        # indices match STATIC_FEATURE_NAMES / metrics_to_feature_vector order
+        cc      = f[0]   # cyclomatic_complexity
+        cog     = f[1]   # cognitive_complexity
+        hb      = f[10]  # halstead_bugs
+        mi      = f[11]  # maintainability_index
+        n_long  = f[12]  # n_long_functions
+        n_complex = f[13] # n_complex_functions
+        over_80 = f[16]  # n_lines_over_80
 
         score = 0.0
-        # Each metric pushes toward 1.0
         score += min(0.3, (cc - 5) * 0.02) if cc > 5 else 0
         score += min(0.2, cog * 0.008)
         score += min(0.15, hb * 0.05)
         score += min(0.15, n_complex * 0.05)
         score += min(0.10, n_long * 0.03)
-        if n_try == 0 and n_funcs > 0:
-            score += 0.05   # no error handling
+        score += min(0.05, max(0.0, (50.0 - mi) / 50.0) * 0.10)  # low MI = risky
         score += min(0.05, over_80 * 0.001)
 
         return min(0.95, max(0.02, score)), min(0.95, max(0.02, score))
@@ -485,8 +537,16 @@ class BugPredictionModel:
         return min(0.95, base_prob + adjustment)
 
     def _try_load(self):
+        xgb_path = self._checkpoint_dir / "xgb_model.pkl"
         lr_path = self._checkpoint_dir / "lr_model.pkl"
         mlp_path = self._checkpoint_dir / "mlp_model.pt"
+
+        if xgb_path.exists():
+            try:
+                self._xgb.load(str(xgb_path))
+                self._xgb_ready = True
+            except Exception:
+                pass
 
         if lr_path.exists():
             try:

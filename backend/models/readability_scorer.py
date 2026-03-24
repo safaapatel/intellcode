@@ -123,13 +123,21 @@ def _count_sloc(source: str) -> int:
 def _count_comment_lines(source: str) -> int:
     count = 0
     in_docstring = False
+    quote_char = ""
     for line in source.splitlines():
         s = line.strip()
-        if s.startswith('"""') or s.startswith("'''"):
-            in_docstring = not in_docstring
+        if in_docstring:
             count += 1
-        elif in_docstring:
+            if quote_char in s:
+                in_docstring = False
+                quote_char = ""
+        elif s.startswith('"""') or s.startswith("'''"):
             count += 1
+            q = '"""' if s.startswith('"""') else "'''"
+            # Only enter docstring mode if the closing quote is not on the same line
+            if q not in s[3:]:
+                in_docstring = True
+                quote_char = q
         elif s.startswith("#"):
             count += 1
     return count

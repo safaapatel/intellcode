@@ -320,6 +320,7 @@ class EnsembleSecurityModel:
         self._cnn = CNNSecurityModel()
         self._rf_ready = False
         self._cnn_ready = False
+        self._rf_threshold: float = 0.5   # loaded from metrics.json if available
 
         self._try_load()
 
@@ -356,7 +357,7 @@ class EnsembleSecurityModel:
             vuln_prob = self._ensemble_proba(source)
             # Only report an additional ML finding if high confidence AND
             # no pattern-scan finding was already found
-            if vuln_prob > 0.70 and not results:
+            if vuln_prob > self._rf_threshold and not results:
                 results.append(VulnerabilityPrediction(
                     vuln_type="unknown_vulnerability",
                     severity="high",
@@ -421,6 +422,7 @@ class EnsembleSecurityModel:
         rf_path = self._checkpoint_dir / "rf_model.pkl"
         cnn_model_path = self._checkpoint_dir / "cnn_model.pt"
         cnn_vocab_path = self._checkpoint_dir / "cnn_vocab.json"
+        metrics_path = self._checkpoint_dir / "metrics.json"
 
         if rf_path.exists():
             try:
@@ -433,6 +435,15 @@ class EnsembleSecurityModel:
             try:
                 self._cnn.load(str(cnn_model_path), str(cnn_vocab_path))
                 self._cnn_ready = True
+            except Exception:
+                pass
+
+        # Load optimal threshold saved during training
+        if metrics_path.exists():
+            try:
+                with open(metrics_path) as f:
+                    saved_metrics = json.load(f)
+                self._rf_threshold = float(saved_metrics.get("rf_threshold", 0.5))
             except Exception:
                 pass
 

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { analyzeCodeStream } from "@/services/api";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,68 @@ function saveRulesState(state: object) {
   localStorage.setItem(RULES_KEY, JSON.stringify(state));
 }
 
+// Sample code designed to exercise all rule categories
+const SAMPLE_CODE = `import os, subprocess
+
+def compute_report(data, config, flag, extra, mode, debug, verbose):
+    """Intentionally complex function for preview."""
+    result = []
+    for item in data:
+        if item > 0:
+            if config:
+                if flag:
+                    if extra:
+                        if mode == "fast":
+                            result.append(item * 2)
+                        else:
+                            result.append(item * 3)
+                    else:
+                        result.append(item)
+                else:
+                    result.append(0)
+            else:
+                result.append(-item)
+        elif item == 0:
+            result.append(None)
+        else:
+            result.append(item ** 2)
+    if debug and verbose and len(result) > 100:
+        print("debug:", result)
+    return result
+
+def get_user(db, username):
+    query = "SELECT * FROM users WHERE username = '" + username + "'"
+    return db.execute(query)
+
+def run_cmd(user_input):
+    os.system("ls " + user_input)
+
+def process_items_a(items):
+    output = []
+    for i in items:
+        if i > 10:
+            output.append(i * 2)
+    return output
+
+def process_items_b(items):
+    output = []
+    for i in items:
+        if i > 10:
+            output.append(i * 2)
+    return output
+
+this_is_a_very_long_variable_name_that_makes_the_line_exceed_the_configured_maximum_line_length_threshold = 42
+`;
+
+const SEV_CLS: Record<string, string> = {
+  critical: "bg-destructive/20 text-destructive border border-destructive/40",
+  high: "bg-orange-500/20 text-orange-400 border border-orange-500/40",
+  medium: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/40",
+  low: "bg-primary/20 text-primary border border-primary/40",
+  info: "bg-secondary text-muted-foreground border border-border",
+  none: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40",
+};
+
 const severityOptions = [
   { value: "low", label: "Low", color: "bg-primary" },
   { value: "medium", label: "Medium", color: "bg-warning" },
@@ -53,11 +116,15 @@ const Rules = () => {
   const [ruleSets, setRuleSets] = useState(saved?.ruleSets ?? mockRuleSets);
   const [selectedRuleSet, setSelectedRuleSet] = useState(saved?.ruleSets?.[0] ?? mockRuleSets[0]);
   const [isDefault, setIsDefault] = useState(selectedRuleSet.isDefault);
+  // Sync isDefault when selected rule set changes
+  useEffect(() => { setIsDefault(selectedRuleSet.isDefault); }, [selectedRuleSet.id]);
   const [codeQualityRules, setCodeQualityRules] = useState(saved?.codeQualityRules ?? mockCodeQualityRules);
   const [securityRules, setSecurityRules] = useState(saved?.securityRules ?? mockSecurityRules);
   const [codeSmellRules, setCodeSmellRules] = useState(saved?.codeSmellRules ?? mockCodeSmellRules);
   const [previewFile, setPreviewFile] = useState("sample_analytics.py");
-  const [previewResults, setPreviewResults] = useState<string[] | null>(null);
+  const [previewCode, setPreviewCode] = useState(SAMPLE_CODE);
+  const [previewResults, setPreviewResults] = useState<Array<{ text: string; sev: string }> | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
@@ -131,12 +198,62 @@ const Rules = () => {
     toast.info("Rule set deleted");
   };
 
-  const handlePreview = () => {
-    setPreviewResults([
-      "Line 45: Complexity exceeds threshold (15)",
-      "Line 87: Line too long (96 characters)",
-    ]);
-    toast.info("Preview completed - 2 issues found");
+  const handlePreview = async () => {
+    setIsPreviewing(true);
+    setPreviewResults(null);
+    try {
+      const result = await analyzeCodeStream(previewCode, previewFile || "preview.py", "python", () => {});
+      const violations: Array<{ text: string; sev: string }> = [];
+
+      // Code Quality Rules
+      for (const rule of codeQualityRules.filter((r) => r.enabled)) {
+        const rn = rule.name.toLowerCase();
+        if (rn.includes("complexity") && result.complexity.cyclomatic > rule.threshold) {
+          for (const fi of result.complexity.function_issues) {
+            violations.push({ text: `'${fi.name}' — ${fi.issue}`, sev: rule.severity });
+          }
+          if (result.complexity.function_issues.length === 0) {
+            violations.push({ text: `Cyclomatic complexity ${result.complexity.cyclomatic} exceeds threshold ${rule.threshold}`, sev: rule.severity });
+          }
+        }
+        if ((rn.includes("line") || rn.includes("length")) && result.complexity.n_lines_over_80 > 0) {
+          violations.push({ text: `${result.complexity.n_lines_over_80} line(s) exceed ${rule.threshold} characters`, sev: rule.severity });
+        }
+      }
+
+      // Security Rules
+      if (securityRules.some((r) => r.enabled)) {
+        for (const finding of result.security.findings) {
+          violations.push({ text: `Line ${finding.lineno}: [${finding.severity.toUpperCase()}] ${finding.title} — ${finding.description}`, sev: finding.severity });
+        }
+      }
+
+      // Code Smell Rules
+      if (codeSmellRules.some((r) => r.enabled)) {
+        for (const s of result.refactoring.suggestions.slice(0, 5)) {
+          violations.push({ text: `${s.title} (${s.effort_minutes} min effort)`, sev: s.priority ?? "medium" });
+        }
+        for (const d of result.dead_code.issues.slice(0, 3)) {
+          violations.push({ text: `Dead code: ${d.title}`, sev: d.severity ?? "low" });
+        }
+        if (result.clones.clones.length > 0) {
+          violations.push({ text: `${result.clones.clones.length} duplicate code block(s) detected`, sev: "medium" });
+        }
+      }
+
+      const seen = new Set<string>();
+      const unique = violations.filter((v) => { if (seen.has(v.text)) return false; seen.add(v.text); return true; });
+      if (unique.length === 0) {
+        unique.push({ text: "No violations found — code passes all active rules ✓", sev: "none" });
+      }
+      setPreviewResults(unique);
+      toast.success(`Preview completed — ${unique.length} issue(s) found`);
+    } catch {
+      toast.error("Backend offline. Start the server at localhost:8000 first.");
+      setPreviewResults([{ text: "Error: Could not connect to backend. Run: uvicorn main:app --reload --port 8000", sev: "critical" }]);
+    } finally {
+      setIsPreviewing(false);
+    }
   };
 
   const toggleRule = (
@@ -418,31 +535,53 @@ const Rules = () => {
 
           {/* Preview Section */}
           <div className="bg-card border border-border rounded-xl p-6 mb-6">
-            <h2 className="text-lg font-semibold text-foreground mb-4">Preview with Sample Code</h2>
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Choose File:</span>
+            <h2 className="text-lg font-semibold text-foreground mb-1">Preview with Code</h2>
+            <p className="text-xs text-muted-foreground mb-4">Edit the code below and run the active rules against it to see what would be flagged.</p>
+
+            {/* Code editor chrome */}
+            <div className="rounded-lg border border-border overflow-hidden mb-4">
+              <div className="flex items-center justify-between bg-secondary/60 px-3 py-2 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-red-500/70" />
+                    <span className="w-3 h-3 rounded-full bg-yellow-500/70" />
+                    <span className="w-3 h-3 rounded-full bg-emerald-500/70" />
+                  </div>
+                  <Input
+                    value={previewFile}
+                    onChange={(e) => setPreviewFile(e.target.value)}
+                    placeholder="preview.py"
+                    className="h-6 text-xs bg-transparent border-none p-0 font-mono text-muted-foreground w-48 focus-visible:ring-0"
+                  />
+                </div>
+                <Button onClick={handlePreview} size="sm" disabled={isPreviewing} className="h-7 text-xs">
+                  <Play className={`w-3.5 h-3.5 mr-1.5 ${isPreviewing ? "animate-spin" : ""}`} />
+                  {isPreviewing ? "Analyzing…" : "Run Preview"}
+                </Button>
               </div>
-              <Input
-                value={previewFile}
-                onChange={(e) => setPreviewFile(e.target.value)}
-                className="flex-1 max-w-md bg-input font-mono"
+              <textarea
+                value={previewCode}
+                onChange={(e) => setPreviewCode(e.target.value)}
+                spellCheck={false}
+                className="w-full bg-[#0d1117] text-[#e6edf3] font-mono text-xs leading-5 p-4 resize-none outline-none min-h-[220px]"
+                style={{ tabSize: 4 }}
               />
-              <Button onClick={handlePreview} size="sm">
-                <Play className="w-4 h-4 mr-2" />
-                Preview
-              </Button>
             </div>
+
             {previewResults && (
               <div className="bg-secondary/30 border border-border rounded-lg p-4">
-                <p className="text-sm font-medium text-foreground mb-2">
-                  Results: {previewResults.length} issues found
+                <p className="text-sm font-medium text-foreground mb-3">
+                  {previewResults[0]?.sev === "none"
+                    ? "All rules passed"
+                    : `${previewResults.length} issue${previewResults.length !== 1 ? "s" : ""} found`}
                 </p>
-                <ul className="space-y-1">
-                  {previewResults.map((result, index) => (
-                    <li key={index} className="text-sm text-primary font-mono">
-                      • {result}
+                <ul className="space-y-2">
+                  {previewResults.map((v, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm font-mono">
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase shrink-0 mt-0.5 ${SEV_CLS[v.sev] ?? SEV_CLS.info}`}>
+                        {v.sev === "none" ? "ok" : v.sev}
+                      </span>
+                      <span className="text-foreground">{v.text}</span>
                     </li>
                   ))}
                 </ul>
@@ -454,7 +593,7 @@ const Rules = () => {
           <div className="flex items-center gap-3">
             <Button className="bg-gradient-primary" onClick={handleSaveChanges}>
               <Check className="w-4 h-4 mr-2" />
-              Save Changes
+              Save Default Setting
             </Button>
             <Button variant="outline" onClick={handleDuplicate}>
               Duplicate Rule Set
