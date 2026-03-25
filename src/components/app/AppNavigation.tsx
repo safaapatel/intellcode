@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Code2, ChevronDown, ShieldCheck, Menu, X } from "lucide-react";
+import { Code2, ChevronDown, ShieldCheck, Menu, X, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,6 +11,24 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { mockUser } from "@/data/mockData";
 import { getSession, clearSession } from "@/services/auth";
+import { getEntries, type HistoryEntry } from "@/services/reviewHistory";
+
+const NOTIF_KEY = "intellcode_notif_seen";
+
+function getUnreadNotifs(): HistoryEntry[] {
+  const lastSeen = Number(localStorage.getItem(NOTIF_KEY) ?? 0);
+  return getEntries()
+    .filter(
+      (e) =>
+        (e.severity === "critical" || e.severity === "high") &&
+        new Date(e.submittedAt).getTime() > lastSeen
+    )
+    .slice(0, 10);
+}
+
+function markNotifsRead() {
+  localStorage.setItem(NOTIF_KEY, String(Date.now()));
+}
 
 function loadProfileSettings() {
   try {
@@ -39,6 +57,33 @@ export const AppNavigation = () => {
   const session = getSession();
   const isAdmin = session?.role === "admin";
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [unread, setUnread] = useState<HistoryEntry[]>([]);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const refresh = () => setUnread(getUnreadNotifs());
+    refresh();
+    const id = setInterval(refresh, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Close notif panel on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleOpenNotifs = () => {
+    setNotifOpen((v) => !v);
+    markNotifsRead();
+    setTimeout(() => setUnread([]), 300);
+  };
 
   // Reactive profile — updates immediately when Settings saves to localStorage
   const [profile, setProfile] = useState(loadProfileSettings);
@@ -124,6 +169,69 @@ export const AppNavigation = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Notification bell */}
+          {session && (
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={handleOpenNotifs}
+                className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {unread.length > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                )}
+              </button>
+
+              {notifOpen && (
+                <div className="absolute right-0 top-10 w-80 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                    <span className="text-sm font-semibold text-foreground">Notifications</span>
+                    <button onClick={() => setNotifOpen(false)} className="text-muted-foreground hover:text-foreground">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {(() => {
+                    const recent = getEntries()
+                      .filter((e) => e.severity === "critical" || e.severity === "high")
+                      .slice(0, 8);
+                    return recent.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        No critical or high-severity findings
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border max-h-72 overflow-y-auto">
+                        {recent.map((e) => (
+                          <button
+                            key={e.id}
+                            className="w-full text-left px-4 py-3 hover:bg-secondary/50 transition-colors flex items-start gap-3"
+                            onClick={() => { navigate(`/reviews/${e.id}`); setNotifOpen(false); }}
+                          >
+                            <span className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${e.severity === "critical" ? "bg-red-500" : "bg-orange-400"}`} />
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-foreground truncate">{e.filename}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {e.severity === "critical" ? "Critical" : "High"} severity · {e.issueCount} issue{e.issueCount !== 1 ? "s" : ""}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  <div className="border-t border-border px-4 py-2">
+                    <button
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => { navigate("/reviews"); setNotifOpen(false); }}
+                    >
+                      View all reviews →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Backend status dot */}
           {session && backendUp !== null && (
             <div

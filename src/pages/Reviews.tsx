@@ -288,6 +288,30 @@ const Reviews = () => {
     toast.success("Reviews exported as JSON");
   };
 
+  const handleExportCSV = () => {
+    const header = ["id", "filename", "language", "submittedAt", "overallScore", "issueCount", "severity", "status", "summary"];
+    const rows = entries.map((e) => [
+      e.id,
+      `"${e.filename.replace(/"/g, '""')}"`,
+      e.language,
+      e.submittedAt,
+      e.overallScore,
+      e.issueCount,
+      e.severity,
+      e.status,
+      `"${(e.summary ?? "").replace(/"/g, '""')}"`,
+    ]);
+    const csv = [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `intellcode_reviews_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Reviews exported as CSV");
+  };
+
   const handleClear = () => {
     if (window.confirm("Delete all review history? This cannot be undone.")) {
       clearHistory();
@@ -310,7 +334,10 @@ const Reviews = () => {
             {entries.length > 0 && (
               <>
                 <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
-                  <Download className="w-4 h-4" /> Export
+                  <Download className="w-4 h-4" /> JSON
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportCSV} className="gap-1.5">
+                  <Download className="w-4 h-4" /> CSV
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleClear} className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
                   <Trash2 className="w-4 h-4" /> Clear
