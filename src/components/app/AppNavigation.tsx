@@ -101,7 +101,7 @@ export const AppNavigation = () => {
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
   useEffect(() => {
     const check = () => {
-      fetch(`${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/health`, { signal: AbortSignal.timeout(3000) })
+      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(8000) })
         .then((r) => setBackendUp(r.ok))
         .catch(() => setBackendUp(false));
     };
