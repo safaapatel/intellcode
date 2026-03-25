@@ -237,9 +237,9 @@ const Submit = () => {
       .finally(() => setLoadingFiles(false));
   }, [selectedRepo, selectedBranch, connectedRepos]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const loadFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
@@ -248,6 +248,18 @@ const Submit = () => {
       toast.success(`Loaded ${file.name} (${text.split("\n").length} lines)`);
     };
     reader.readAsText(file);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) loadFile(file);
   };
 
   // Ctrl+Enter → submit
@@ -464,7 +476,12 @@ const Submit = () => {
 
         {/* Code Editor */}
         {submissionMethod === "upload" && (
-          <div className="bg-card border border-border rounded-xl overflow-hidden mb-6">
+          <div
+            className={`bg-card border rounded-xl overflow-hidden mb-6 transition-colors ${isDragOver ? "border-primary bg-primary/5" : "border-border"}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+          >
             {/* Editor chrome bar */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-secondary/60 border-b border-border">
               <div className="flex items-center gap-2">
@@ -503,14 +520,21 @@ const Submit = () => {
                 />
               </div>
             </div>
-            <textarea
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              rows={22}
-              spellCheck={false}
-              className="w-full bg-[hsl(220,26%,4%)] font-mono text-sm text-foreground p-4 resize-y focus:outline-none border-none"
-              placeholder="Paste your code here..."
-            />
+            <div className="relative">
+              <textarea
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                rows={22}
+                spellCheck={false}
+                className="w-full bg-[hsl(220,26%,4%)] font-mono text-sm text-foreground p-4 resize-y focus:outline-none border-none"
+                placeholder="Paste your code here, or drag & drop a file..."
+              />
+              {isDragOver && (
+                <div className="absolute inset-0 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded pointer-events-none">
+                  <p className="text-primary font-semibold text-sm">Drop file to load</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

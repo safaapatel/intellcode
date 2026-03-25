@@ -9,6 +9,7 @@ import { getEntries, getDashboardStats } from "@/services/reviewHistory";
 import {
   ExternalLink, Clock, FileCode2, AlertTriangle, ClipboardCheck,
   CheckCircle2, TrendingUp, Shield, Zap, BarChart3, Plus, GitCompare,
+  Flame, X,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -115,6 +116,19 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [historyVersion]
   );
+
+  const [urgentDismissed, setUrgentDismissed] = useState(false);
+  const urgentItems = useMemo(() => {
+    const items: { label: string; entryId: string; detail: string }[] = [];
+    allEntries.forEach((e) => {
+      if (e.severity === "critical")
+        items.push({ label: e.filename, entryId: e.id, detail: `Critical severity · score ${e.overallScore}` });
+      else if (e.severity === "high" && e.overallScore < 60)
+        items.push({ label: e.filename, entryId: e.id, detail: `High severity · score ${e.overallScore}` });
+    });
+    return items.slice(0, 5);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyVersion]);
 
   const pendingReviewEntries = isReviewer
     ? getEntries().filter((e) => {
@@ -249,6 +263,38 @@ const Dashboard = () => {
             </div>
           ))}
         </div>
+
+        {/* ── Urgent Actions ── */}
+        {!urgentDismissed && urgentItems.length > 0 && (
+          <div className="bg-red-500/5 border border-red-500/20 rounded-xl mb-8 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-red-500/20">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-red-400" />
+                <h2 className="font-semibold text-foreground text-sm">Urgent Actions</h2>
+                <span className="bg-red-500/20 text-red-400 text-xs font-bold px-2 py-0.5 rounded-full">{urgentItems.length}</span>
+              </div>
+              <button onClick={() => setUrgentDismissed(true)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="divide-y divide-red-500/10">
+              {urgentItems.map((item) => (
+                <div
+                  key={item.entryId}
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-red-500/5 cursor-pointer transition-colors"
+                  onClick={() => navigate(`/reviews/${item.entryId}`)}
+                >
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.detail}</p>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Quality Trend ── */}
         {trendData.length >= 2 && (
