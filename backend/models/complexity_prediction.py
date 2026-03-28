@@ -2,12 +2,15 @@
 Complexity Prediction Model — XGBoost
 Predicts a maintainability score (0–100) and flags problematic functions.
 
-Features (17-dim vector from code_metrics.py):
+Features (16-dim vector from code_metrics.py):
   cyclomatic_complexity, cognitive_complexity, max_function_complexity,
   avg_function_complexity, sloc, comments, blank_lines,
   halstead_volume, halstead_difficulty, halstead_effort, bugs_delivered,
-  maintainability_index (raw), n_long_functions, n_complex_functions,
+  n_long_functions, n_complex_functions,
   max_line_length, avg_line_length, n_lines_over_80
+
+  NOTE: maintainability_index is intentionally excluded — it is the training
+  target, so including it as a feature would cause direct target leakage.
 
 Target: maintainability score in [0, 100] (100 = perfectly clean)
 """
@@ -42,7 +45,6 @@ FEATURE_NAMES = [
     "halstead_difficulty",
     "halstead_effort",
     "bugs_delivered",
-    "maintainability_index_raw",
     "n_long_functions",
     "n_complex_functions",
     "max_line_length",
@@ -220,7 +222,7 @@ class ComplexityPredictionModel:
         Train an XGBoost regressor.
 
         Args:
-            X: Feature matrix of shape (N, 17) from metrics_to_feature_vector().
+            X: Feature matrix of shape (N, 16) from metrics_to_feature_vector().
             y: Target scores in [0, 100].
             output_path: Where to save the trained model.
 
@@ -248,15 +250,17 @@ class ComplexityPredictionModel:
         }
 
         self._regressor = xgb.XGBRegressor(**params)
+        from sklearn.model_selection import train_test_split
+        X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
         self._regressor.fit(
-            X, y,
-            eval_set=[(X, y)],
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
             verbose=False,
         )
 
-        y_pred = self._regressor.predict(X)
-        rmse = math.sqrt(mean_squared_error(y, y_pred))
-        r2 = r2_score(y, y_pred)
+        y_pred = self._regressor.predict(X_val)
+        rmse = math.sqrt(mean_squared_error(y_val, y_pred))
+        r2 = r2_score(y_val, y_pred)
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "wb") as f:

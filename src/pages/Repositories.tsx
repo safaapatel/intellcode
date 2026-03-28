@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,8 @@ import { toast } from "sonner";
 import { analyzeCode } from "@/services/api";
 import {
   isGitHubConnected,
+  setGitHubToken,
+  clearGitHubToken,
   getGitHubUser,
   listUserRepos,
   getRepoInfo,
@@ -48,6 +50,20 @@ import {
 } from "@/services/github";
 
 const REPOS_KEY = "intellcode_repositories";
+
+/** Extract Python source from Jupyter notebook JSON — discards outputs/images */
+function extractNotebookCode(raw: string): string {
+  try {
+    const nb = JSON.parse(raw);
+    return (nb.cells as Array<{ cell_type: string; source: string | string[] }>)
+      .filter((c) => c.cell_type === "code")
+      .map((c) => (Array.isArray(c.source) ? c.source.join("") : c.source))
+      .filter((src) => src.trim().length > 0)
+      .join("\n\n# ── next cell ──\n\n");
+  } catch {
+    return raw; // not valid JSON — send as-is
+  }
+}
 
 const LANG_COLORS: Record<string, string> = {
   Python: "#3572A5",
@@ -131,6 +147,10 @@ const statusConfig: Record<RepoStatus, { label: string; color: string; icon: typ
 };
 
 const Repositories = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const fromSubmit = (location.state as { from?: string } | null)?.from === "submit";
+
   const [repos, setRepos] = useState<Repository[]>(mockRepos);
 
   useEffect(() => { setRepos(loadRepos()); }, []);
@@ -146,8 +166,11 @@ const Repositories = () => {
   const [scanProgress, setScanProgress] = useState<Record<string, { done: number; total: number }>>({});
 
   // GitHub OAuth state
-  const [ghConnected] = useState(() => isGitHubConnected());
+  const [ghConnected, setGhConnected] = useState(() => isGitHubConnected());
   const [ghUser, setGhUser] = useState<GitHubUser | null>(null);
+  const [patOpen, setPatOpen] = useState(false);
+  const [patValue, setPatValue] = useState("");
+  const [patLoading, setPatLoading] = useState(false);
   const [ghRepos, setGhRepos] = useState<GitHubRepo[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [loadingGhRepos, setLoadingGhRepos] = useState(false);
@@ -158,6 +181,25 @@ const Repositories = () => {
       getGitHubUser().then(setGhUser).catch(() => {});
     }
   }, [ghConnected]);
+
+  const handleConnectPAT = async () => {
+    if (!patValue.trim()) { toast.error("Paste your GitHub token first"); return; }
+    setPatLoading(true);
+    try {
+      setGitHubToken(patValue.trim());
+      const user = await getGitHubUser();
+      setGhUser(user);
+      setGhConnected(true);
+      setPatOpen(false);
+      setPatValue("");
+      toast.success(`Connected as @${user.login}`);
+    } catch {
+      clearGitHubToken();
+      toast.error("Invalid token or no internet — check the token and try again");
+    } finally {
+      setPatLoading(false);
+    }
+  };
 
   const handleOpenImport = async () => {
     setImportOpen(true);
@@ -284,21 +326,21 @@ const Repositories = () => {
         );
       }
 
-      // 2. Filter analyzable source files (all supported languages)
-      const EXT_RE = /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|rb|php|kt|swift)$/;
+      // 2. Filter analyzable source files (all supported languages + Jupyter notebooks)
+      const EXT_RE = /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|rb|php|kt|swift|ipynb)$/;
       const EXT_LANG: Record<string, string> = {
         py: "python", js: "javascript", ts: "typescript",
         jsx: "javascript", tsx: "typescript", java: "java",
         go: "go", rs: "rust", cpp: "cpp", cc: "cpp",
         c: "c", cs: "csharp", rb: "ruby", php: "php",
-        kt: "kotlin", swift: "swift",
+        kt: "kotlin", swift: "swift", ipynb: "python",
       };
       const srcFiles: Array<{ path: string; size: number; lang: string }> = (treeData.tree || [])
         .filter(
           (f: { type: string; path: string; size?: number }) =>
             f.type === "blob" &&
             EXT_RE.test(f.path) &&
-            (f.size ?? 0) < 100_000 &&
+            (f.size ?? 0) < 500_000 && // notebooks can be larger; we extract code cells only
             !SCAN_SKIP.some((skip) => f.path.includes(skip))
         )
         .slice(0, 20)
@@ -327,9 +369,11 @@ const Repositories = () => {
       for (let i = 0; i < srcFiles.length; i++) {
         const file = srcFiles[i];
         try {
-          const code = await getRawFile(fullName, branch, file.path);
+          const raw = await getRawFile(fullName, branch, file.path);
+          // For Jupyter notebooks extract Python code cells only
+          const code = file.path.endsWith(".ipynb") ? extractNotebookCode(raw) : raw;
           if (code.trim().length < 20) continue;
-          const result = await analyzeCode(code, file.path, file.lang);
+          const result = await analyzeCode(code, file.path, file.lang, undefined, fullName);
           results.push(result);
         } catch {
           // skip individual file failures silently
@@ -409,6 +453,15 @@ const Repositories = () => {
       <AppNavigation />
 
       <main className="container mx-auto px-4 py-8">
+        {/* Back-to-Submit banner */}
+        {fromSubmit && (
+          <div className="flex items-center justify-between bg-primary/10 border border-primary/20 rounded-xl px-5 py-3 mb-6">
+            <p className="text-sm text-foreground">Connect or select a repository, then go back to Submit to scan its files.</p>
+            <Button size="sm" className="gap-1.5 bg-gradient-primary shrink-0" onClick={() => navigate("/submit")}>
+              ← Back to Submit
+            </Button>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-start justify-between mb-8">
           <div>
@@ -416,7 +469,7 @@ const Repositories = () => {
             <p className="text-muted-foreground mt-1">
               {ghConnected && ghUser
                 ? `Connected as @${ghUser.login} · ${ghUser.public_repos + (ghUser.private_repos ?? 0)} repos available`
-                : "Connect GitHub repositories and scan with 12 ML models"}
+                : "Connect GitHub repositories and scan with ML models"}
             </p>
           </div>
           <div className="flex gap-2">
@@ -426,7 +479,7 @@ const Repositories = () => {
                 Import from GitHub
               </Button>
             ) : (
-              <Button variant="outline" className="gap-2" onClick={() => { window.location.href = "http://localhost:8000/auth/github"; }}>
+              <Button variant="outline" className="gap-2" onClick={() => setPatOpen(true)}>
                 <Github className="w-4 h-4" />
                 Connect GitHub
               </Button>
@@ -584,7 +637,7 @@ const Repositories = () => {
                           }
                         </Button>
                         <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground hover:text-foreground" asChild>
-                          <Link to="/reviews" title="View reviews"><ExternalLink className="w-4 h-4" /></Link>
+                          <Link to={`/reviews?repo=${encodeURIComponent(repo.fullName)}`} title="View reviews"><ExternalLink className="w-4 h-4" /></Link>
                         </Button>
                         <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground hover:text-foreground" asChild title="Settings">
                           <Link to="/rules"><Settings className="w-4 h-4" /></Link>
@@ -606,6 +659,41 @@ const Repositories = () => {
           )}
         </div>
       </main>
+
+      {/* GitHub PAT connect dialog */}
+      <Dialog open={patOpen} onOpenChange={setPatOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Github className="w-5 h-5" /> Connect GitHub
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Paste a GitHub Personal Access Token (PAT) with <code className="bg-secondary px-1 rounded text-xs">repo</code> scope.
+              Create one at{" "}
+              <a href="https://github.com/settings/tokens/new?scopes=repo&description=IntelliCode" target="_blank" rel="noreferrer" className="text-primary underline">
+                github.com/settings/tokens
+              </a>.
+            </p>
+            <Input
+              type="password"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              value={patValue}
+              onChange={(e) => setPatValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleConnectPAT(); }}
+              className="font-mono bg-input border-border"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPatOpen(false)}>Cancel</Button>
+            <Button className="bg-gradient-primary gap-2" onClick={handleConnectPAT} disabled={patLoading}>
+              {patLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
+              Connect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Connect Repository Dialog */}
       <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
@@ -654,7 +742,7 @@ const Repositories = () => {
 
             <div className="bg-secondary/20 border border-border rounded-lg p-3">
               <p className="text-xs text-muted-foreground">
-                After connecting, click <strong className="text-foreground">Scan</strong> to fetch Python files and run all 12 ML models.
+                After connecting, click <strong className="text-foreground">Scan</strong> to fetch Python files and run all ML models.
                 Up to 20 files are analyzed per scan.
               </p>
             </div>

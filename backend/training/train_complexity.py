@@ -15,12 +15,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Global seed for reproducibility
+random.seed(42)
+np.random.seed(42)
 
 
 def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +131,7 @@ def train(
         "cyclomatic_complexity", "cognitive_complexity", "max_func_cc",
         "avg_func_cc", "sloc", "comments", "blank_lines",
         "halstead_volume", "halstead_difficulty", "halstead_effort",
-        "bugs_delivered", "maintainability_index_raw",
+        "bugs_delivered",
         "n_long_functions", "n_complex_functions",
         "max_line_length", "avg_line_length", "n_lines_over_80",
     ]

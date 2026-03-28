@@ -50,7 +50,7 @@ export function isGitHubConnected(): boolean {
 
 // ─── Authenticated fetch helpers ──────────────────────────────────────────────
 
-function authHeaders(): HeadersInit {
+export function authHeaders(): HeadersInit {
   const token = getGitHubToken();
   return token
     ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
@@ -120,16 +120,16 @@ export async function getRawFile(
 }
 
 /**
- * Read the GitHub OAuth token from the URL hash fragment after OAuth redirect.
+ * Read the GitHub OAuth token from the URL query string after OAuth redirect.
  * Returns the token if found and cleans the URL, otherwise returns null.
  */
 export function consumeTokenFromHash(): string | null {
-  const hash = window.location.hash;
-  const match = hash.match(/github_token=([^&]+)/);
-  if (!match) return null;
-  const token = match[1];
-  // Clean the token from the URL without triggering a navigation
-  const cleanHash = hash.replace(/github_token=[^&]+&?/, "").replace(/#$/, "");
-  window.history.replaceState(null, "", window.location.pathname + window.location.search + (cleanHash || ""));
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("github_token");
+  if (!token) return null;
+  // Remove github_token from query string without triggering a navigation
+  params.delete("github_token");
+  const newSearch = params.toString() ? `?${params.toString()}` : "";
+  window.history.replaceState(null, "", window.location.pathname + newSearch + window.location.hash);
   return token;
 }

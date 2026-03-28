@@ -66,7 +66,9 @@ export function getUsers(): StoredUser[] {
 }
 
 export function saveUsers(users: StoredUser[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  try {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  } catch { /* quota exceeded — ignore */ }
 }
 
 export function getSession(): Session | null {
@@ -79,20 +81,22 @@ export function getSession(): Session | null {
 }
 
 export function saveSession(user: StoredUser) {
-  const session: Session = {
-    userId: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    loggedInAt: new Date().toISOString(),
-  };
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  // Sync with intellcode_settings so AppNavigation picks up the name/email/role
-  const existing = JSON.parse(localStorage.getItem("intellcode_settings") ?? "{}");
-  localStorage.setItem(
-    "intellcode_settings",
-    JSON.stringify({ ...existing, name: user.name, email: user.email, role: user.role })
-  );
+  try {
+    const session: Session = {
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      loggedInAt: new Date().toISOString(),
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    // Sync with intellcode_settings so AppNavigation picks up the name/email/role
+    const existing = JSON.parse(localStorage.getItem("intellcode_settings") ?? "{}");
+    localStorage.setItem(
+      "intellcode_settings",
+      JSON.stringify({ ...existing, name: user.name, email: user.email, role: user.role })
+    );
+  } catch { /* quota exceeded — ignore */ }
 }
 
 export function clearSession() {

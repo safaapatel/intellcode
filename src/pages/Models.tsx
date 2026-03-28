@@ -23,7 +23,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-// ─── All 12 models with real checkpoint metrics ───────────────────────────────
+// ─── All models with real checkpoint metrics ───────────────────────────────
 
 const ALL_MODELS = [
   {

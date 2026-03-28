@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   isGitHubConnected,
+  setGitHubToken,
   clearGitHubToken,
   getGitHubUser,
   type GitHubUser,
@@ -10,6 +11,9 @@ import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -34,6 +38,7 @@ import {
   Link as LinkIcon,
   Trash2,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { mockUser } from "@/data/mockData";
 import { toast } from "sonner";
@@ -243,9 +248,27 @@ const Settings = () => {
     toast.success("GitHub account disconnected");
   };
 
-  const handleConnectGitHub = () => {
-    // Redirect to backend OAuth endpoint — it redirects to GitHub, then back to frontend with token
-    window.location.href = "http://localhost:8000/auth/github";
+  const [patOpen, setPatOpen] = useState(false);
+  const [patValue, setPatValue] = useState("");
+  const [patLoading, setPatLoading] = useState(false);
+
+  const handleConnectGitHub = async () => {
+    if (!patValue.trim()) { toast.error("Paste your GitHub token first"); return; }
+    setPatLoading(true);
+    try {
+      setGitHubToken(patValue.trim());
+      const user = await getGitHubUser();
+      setGithubUser(user);
+      setGithubConnected(true);
+      setPatOpen(false);
+      setPatValue("");
+      toast.success(`Connected as @${user.login}`);
+    } catch {
+      clearGitHubToken();
+      toast.error("Invalid token — check it has 'repo' scope and try again");
+    } finally {
+      setPatLoading(false);
+    }
   };
 
   const handleInstallVSCode = () => {
@@ -607,7 +630,7 @@ const Settings = () => {
                         Disconnect
                       </Button>
                     ) : (
-                      <Button size="sm" className="gap-2 bg-gradient-primary" onClick={handleConnectGitHub}>
+                      <Button size="sm" className="gap-2 bg-gradient-primary" onClick={() => setPatOpen(true)}>
                         <LinkIcon className="w-4 h-4" />
                         Connect
                       </Button>
@@ -644,14 +667,14 @@ const Settings = () => {
                         <div className="flex items-center gap-2">
                           <Input
                             readOnly
-                            value="http://localhost:8000/webhook/github"
+                            value={`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/webhook/github`}
                             className="bg-secondary font-mono text-xs text-muted-foreground"
                           />
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              navigator.clipboard.writeText("http://localhost:8000/webhook/github");
+                              navigator.clipboard.writeText(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/webhook/github`);
                               toast.success("Webhook URL copied");
                             }}
                           >
@@ -961,6 +984,41 @@ const Settings = () => {
           </div>
         </div>
       </main>
+
+      {/* GitHub PAT connect dialog */}
+      <Dialog open={patOpen} onOpenChange={setPatOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Github className="w-5 h-5" /> Connect GitHub
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Paste a GitHub Personal Access Token (PAT) with <code className="bg-secondary px-1 rounded text-xs">repo</code> scope.
+              Create one at{" "}
+              <a href="https://github.com/settings/tokens/new?scopes=repo&description=IntelliCode" target="_blank" rel="noreferrer" className="text-primary underline">
+                github.com/settings/tokens
+              </a>.
+            </p>
+            <Input
+              type="password"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              value={patValue}
+              onChange={(e) => setPatValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleConnectGitHub(); }}
+              className="font-mono bg-input border-border"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPatOpen(false)}>Cancel</Button>
+            <Button className="bg-gradient-primary gap-2" onClick={handleConnectGitHub} disabled={patLoading}>
+              {patLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Github className="w-4 h-4" />}
+              Connect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

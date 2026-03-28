@@ -16,12 +16,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Global seed for reproducibility
+random.seed(42)
+np.random.seed(42)
 
 
 def load_dataset(path: str):
@@ -117,14 +122,15 @@ def train(
         rf_model.fit(X_rf_train, y_rf_train, n_estimators=rf_estimators)
         rf_model.save(str(out_dir / "rf_model.pkl"))
 
-        # Find optimal threshold using Youden's J on training predictions
+        # Find optimal threshold using Youden's J on the held-out test set
+        # (using training data for threshold selection would cause optimistic bias)
         from sklearn.metrics import roc_curve
-        rf_train_probs = np.array([rf_model.predict_proba(x) for x in X_rf_train])
-        fpr, tpr, thresholds = roc_curve(y_rf_train, rf_train_probs)
+        rf_test_probs_for_thresh = np.array([rf_model.predict_proba(x) for x in X_rf_test])
+        fpr, tpr, thresholds = roc_curve(y_rf_test, rf_test_probs_for_thresh)
         youden_j = tpr - fpr
         optimal_idx = int(np.argmax(youden_j))
         rf_threshold = float(thresholds[optimal_idx])
-        print(f"Optimal RF threshold (Youden's J): {rf_threshold:.4f}")
+        print(f"Optimal RF threshold (Youden's J on test set): {rf_threshold:.4f}")
 
         rf_preds = np.array([rf_model.predict_proba(x) for x in X_rf_test])
         rf_labels = (rf_preds > rf_threshold).astype(int)
@@ -160,6 +166,7 @@ def train(
     ensemble_auc = None
     try:
         import torch  # noqa: F401 — check availability before building model
+        torch.manual_seed(42)
         print("\n=== Training 1D CNN ===")
         X_cnn_train, y_cnn_train = build_token_ids(train_records, vocab)
         X_cnn_test, y_cnn_test = build_token_ids(test_records, vocab)

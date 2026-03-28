@@ -262,7 +262,7 @@ const Compare = () => {
               <div>
                 <h1 className="text-xl font-bold text-foreground">Code Comparison</h1>
                 <p className="text-sm text-muted-foreground">
-                  Run both versions through all 12 ML models and compare every metric
+                  Run both versions through all ML models and compare every metric
                 </p>
               </div>
             </div>
@@ -314,7 +314,7 @@ const Compare = () => {
           <div className="bg-card border border-border rounded-xl p-6 mb-6 flex items-center justify-center gap-3">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">
-              Running 12 ML models on both versions in parallel…
+              Running ML models on both versions in parallel…
             </p>
           </div>
         )}
@@ -451,7 +451,7 @@ const Compare = () => {
               <Button
                 variant="outline"
                 className="gap-2"
-                onClick={() => navigate("/reviews/result", { state: { result: slotA.result } })}
+                onClick={() => navigate(slotA.result._entryId ? `/reviews/${slotA.result._entryId}` : "/reviews/result", { state: { result: slotA.result } })}
               >
                 <ExternalLink className="w-4 h-4" />
                 Full Report — Version A
@@ -459,7 +459,7 @@ const Compare = () => {
               <Button
                 variant="outline"
                 className="gap-2"
-                onClick={() => navigate("/reviews/result", { state: { result: slotB.result } })}
+                onClick={() => navigate(slotB.result._entryId ? `/reviews/${slotB.result._entryId}` : "/reviews/result", { state: { result: slotB.result } })}
               >
                 <ExternalLink className="w-4 h-4" />
                 Full Report — Version B

@@ -69,7 +69,7 @@ const Login = () => {
     toast.success(`Welcome back, ${user.name.split(" ")[0]}!`, {
       description: `Signed in as ${user.role}`,
     });
-    navigate(user.role === "admin" ? "/admin" : "/dashboard");
+    navigate("/dashboard");
   };
 
   return (
@@ -201,6 +201,27 @@ const Login = () => {
             </div>
             <div className="relative flex justify-center text-xs text-muted-foreground bg-background px-2">
               or sign in with email
+            </div>
+          </div>
+
+          {/* Quick-fill demo accounts */}
+          <div className="mb-4">
+            <p className="text-xs text-muted-foreground mb-2">Quick demo login:</p>
+            <div className="flex gap-2">
+              {[
+                { label: "Developer", email: "dev@intellicode.io" },
+                { label: "Admin", email: "admin@intellicode.io" },
+                { label: "Reviewer", email: "reviewer@intellicode.io" },
+              ].map(({ label, email: e }) => (
+                <button
+                  key={e}
+                  type="button"
+                  className="flex-1 text-xs py-1.5 px-2 rounded-lg border border-border bg-secondary/40 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => { setEmail(e); setPassword("demo"); setLoginError(null); }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 

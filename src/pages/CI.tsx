@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { getSession } from "@/services/auth";
 import { getEntries } from "@/services/reviewHistory";
 
-const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
 
 function CopyBlock({ code, lang = "bash" }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);

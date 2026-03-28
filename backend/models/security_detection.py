@@ -256,7 +256,7 @@ class CNNSecurityModel:
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = _build_cnn_model(num_classes=2).to(self._device)
         self._model.load_state_dict(
-            torch.load(model_path, map_location=self._device)
+            torch.load(model_path, map_location=self._device, weights_only=True)
         )
         self._model.eval()
 

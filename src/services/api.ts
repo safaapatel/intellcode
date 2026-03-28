@@ -45,12 +45,13 @@ async function post<T>(path: string, body: AnalyzeRequest): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Run all 12 ML models on the given code. Calls /analyze + 4 specialist endpoints in parallel. */
+/** Run all ML models on the given code. Calls /analyze + 4 specialist endpoints in parallel. */
 export async function analyzeCode(
   code: string,
   filename = "snippet.py",
   language = "python",
-  gitMetadata?: Record<string, number>
+  gitMetadata?: Record<string, number>,
+  repoName?: string
 ): Promise<FullAnalysisResult & { _entryId?: string }> {
   const req: AnalyzeRequest = {
     code,
@@ -76,7 +77,7 @@ export async function analyzeCode(
     readability,
   };
 
-  // Recompute overall score to incorporate all 12 model signals (specialists included)
+  // Recompute overall score to incorporate all model signals (specialists included)
   const specialistScores: number[] = [];
   if (readability?.overall_score != null) specialistScores.push(readability.overall_score);
   if (docs?.average_quality != null) specialistScores.push(docs.average_quality);
@@ -90,7 +91,7 @@ export async function analyzeCode(
   }
 
   // Persist to localStorage so Reviews + Dashboard show real data
-  const entry = addEntry(result, filename, language);
+  const entry = addEntry(result, filename, language, repoName);
   notifyIfCritical(result);
 
   return { ...result, _entryId: entry.id };
@@ -106,17 +107,23 @@ export async function analyzeCodeStream(
   filename = "snippet.py",
   language = "python",
   onStep: (step: string, progress: number) => void,
-  gitMetadata?: Record<string, number>
+  gitMetadata?: Record<string, number>,
+  repoName?: string
 ): Promise<FullAnalysisResult & { _entryId?: string }> {
   const req: AnalyzeRequest = { code, filename, language, git_metadata: gitMetadata };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000);
 
   const res = await fetch(`${BASE_URL}/analyze/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
+    signal: controller.signal,
   });
 
   if (!res.ok) {
+    clearTimeout(timeoutId);
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
   }
@@ -125,32 +132,37 @@ export async function analyzeCodeStream(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    // Process complete SSE lines
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      // Process complete SSE lines
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const payload = JSON.parse(line.slice(6));
-        if (payload.status === "complete") {
-          const result = payload.result as FullAnalysisResult;
-          const entry = addEntry(result, filename, language);
-          notifyIfCritical(result);
-          return { ...result, _entryId: entry.id };
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const payload = JSON.parse(line.slice(6));
+          if (payload.status === "complete") {
+            clearTimeout(timeoutId);
+            const result = payload.result as FullAnalysisResult;
+            const entry = addEntry(result, filename, language, repoName);
+            notifyIfCritical(result);
+            return { ...result, _entryId: entry.id };
+          }
+          if (payload.step && payload.progress != null) {
+            onStep(payload.step, payload.progress);
+          }
+        } catch {
+          // malformed line, skip
         }
-        if (payload.step && payload.progress != null) {
-          onStep(payload.step, payload.progress);
-        }
-      } catch {
-        // malformed line, skip
       }
     }
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   throw new Error("Stream ended without a complete result");

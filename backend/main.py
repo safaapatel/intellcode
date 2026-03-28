@@ -35,8 +35,11 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from collections import Counter
 from contextlib import asynccontextmanager
-from typing import Optional
+from pathlib import Path
+import logging
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,6 +84,7 @@ class ModelRegistry:
 
 
 registry = ModelRegistry()
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Simple in-memory response cache (hash of code+filename → response dict)
@@ -173,6 +177,9 @@ async def lifespan(app: FastAPI):
     registry.readability_scorer = ReadabilityScorer()
     print("  [OK] Code readability scorer")
 
+    # Restore persisted feedback so stats survive restarts
+    _feedback_store.extend(_load_feedback_from_disk())
+
     print("Models ready.")
     yield
     print("Shutting down.")
@@ -191,7 +198,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # restrict to your frontend origin in production
+    allow_origins=[
+        "https://safaapatel.github.io",
+        "http://localhost:5173",
+        "http://localhost:4173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -203,7 +214,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 class AnalyzeRequest(BaseModel):
-    code: str = Field(..., description="Python source code to analyze", min_length=1)
+    code: str = Field(..., description="Source code to analyze", min_length=1, max_length=500_000)
     filename: str = Field(default="snippet.py", description="Filename for context")
     language: str = Field(default="python", description="Programming language")
     git_metadata: Optional[dict] = Field(
@@ -305,9 +316,17 @@ def health():
     }
 
 
+def _require_internal_key(request: Request):
+    """Reject requests that don't supply the correct INTERNAL_API_KEY header."""
+    secret = os.environ.get("INTERNAL_API_KEY", "")
+    if secret and request.headers.get("X-Internal-Key", "") != secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @app.post("/cache/clear", tags=["meta"])
-def clear_cache():
+def clear_cache(request: Request):
     """Clear the in-memory analysis cache (useful after model updates)."""
+    _require_internal_key(request)
     _analysis_cache.clear()
     _specialist_cache.clear()
     return {"status": "ok", "message": "Cache cleared"}
@@ -316,16 +335,14 @@ def clear_cache():
 @app.get("/stats", tags=["meta"])
 def get_stats():
     """Aggregate statistics across all cached analyses."""
+    models_ready = _count_ready()
     if not _analysis_cache:
-        return {"total_analyses": 0, "avg_score": None, "models_ready": sum(
-            1 for v in [registry.security, registry.complexity, registry.bug_predictor,
-                        registry.pattern_model, registry.clone_detector, registry.refactoring_suggester,
-                        registry.dead_code_detector, registry.debt_estimator, registry.doc_analyzer,
-                        registry.performance_analyzer, registry.dependency_analyzer, registry.readability_scorer]
-            if v is not None
-        )}
-    scores = [v.overall_score for v in _analysis_cache.values() if v.overall_score is not None]
-    sec_findings = sum(len(v.security.findings) for v in _analysis_cache.values() if v.security)
+        return {"total_analyses": 0, "avg_score": None, "models_ready": models_ready}
+    scores = [v["overall_score"] for v in _analysis_cache.values() if v.get("overall_score") is not None]
+    sec_findings = sum(
+        len(v.get("security", {}).get("findings", []))
+        for v in _analysis_cache.values()
+    )
     return {
         "total_analyses": len(_analysis_cache),
         "avg_score": round(sum(scores) / len(scores), 1) if scores else None,
@@ -333,13 +350,7 @@ def get_stats():
         "max_score": max(scores) if scores else None,
         "total_security_findings": sec_findings,
         "specialist_cache_entries": len(_specialist_cache),
-        "models_ready": sum(
-            1 for v in [registry.security, registry.complexity, registry.bug_predictor,
-                        registry.pattern_model, registry.clone_detector, registry.refactoring_suggester,
-                        registry.dead_code_detector, registry.debt_estimator, registry.doc_analyzer,
-                        registry.performance_analyzer, registry.dependency_analyzer, registry.readability_scorer]
-            if v is not None
-        ),
+        "models_ready": models_ready,
     }
 
 
@@ -466,6 +477,56 @@ def list_models():
     }
 
 
+def _count_ready() -> int:
+    """Count how many ML models are loaded and ready."""
+    return sum(1 for m in [
+        registry.security, registry.complexity, registry.bug_predictor,
+        registry.pattern_model, registry.clone_detector, registry.refactoring_suggester,
+        registry.dead_code_detector, registry.debt_estimator, registry.doc_analyzer,
+        registry.performance_analyzer, registry.dependency_analyzer, registry.readability_scorer,
+    ] if m is not None)
+
+
+def _parse_git_meta(raw: Optional[dict]) -> Optional[GitMetadata]:
+    """Parse optional git metadata dict into a GitMetadata dataclass."""
+    if not raw:
+        return None
+    return GitMetadata(**{
+        k: raw.get(k, 0)
+        for k in ("code_churn", "author_count", "file_age_days", "n_past_bugs", "commit_freq")
+    })
+
+
+def _compute_overall_score(
+    complexity_score: float,
+    security_out: dict,
+    clone_out: dict,
+    bug_out,
+    dead_out: dict,
+    debt_result,
+) -> int:
+    """Shared weighted scoring formula used by both /analyze and /analyze/stream."""
+    crit = security_out.get("summary", {}).get("critical", 0)
+    high = security_out.get("summary", {}).get("high", 0)
+    med  = security_out.get("summary", {}).get("medium", 0)
+    security_score = max(0, 100 - crit * 20 - high * 10 - med * 4)
+    clone_rate = clone_out.get("clone_rate", 0)
+    clone_score = max(0, 100 - int(clone_rate * 120))
+    dead_ratio  = dead_out.get("dead_ratio", 0)
+    dead_score  = max(0, 100 - int(dead_ratio * 150))
+    bug_prob    = bug_out.bug_probability if bug_out is not None else 0.5
+    bug_score   = max(0, int((1 - bug_prob) * 100))
+    debt_score  = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}.get(debt_result.overall_rating, 50)
+    return max(0, min(100, int(
+        complexity_score * 0.25 +
+        security_score   * 0.30 +
+        clone_score      * 0.15 +
+        bug_score        * 0.15 +
+        dead_score       * 0.05 +
+        debt_score       * 0.10
+    )))
+
+
 @app.post("/analyze", response_model=FullAnalysisResponse, tags=["analysis"])
 def analyze_full(req: AnalyzeRequest):
     """
@@ -499,26 +560,16 @@ def analyze_full(req: AnalyzeRequest):
         security_out = scan.to_dict()
 
     # --- Complexity ---
-    if registry.complexity:
-        complexity_result = registry.complexity.predict(source)
-    else:
-        from models.complexity_prediction import ComplexityPredictionModel as CPM
-        complexity_result = CPM().predict(source)
+    if not registry.complexity:
+        raise HTTPException(status_code=503, detail="Complexity model unavailable")
+    complexity_result = registry.complexity.predict(source)
     complexity_out = ComplexityOut(**complexity_result.to_dict())
 
     # --- Bug Prediction ---
-    git_meta = None
-    if req.git_metadata:
-        git_meta = GitMetadata(**{
-            k: req.git_metadata.get(k, 0)
-            for k in ("code_churn", "author_count", "file_age_days",
-                      "n_past_bugs", "commit_freq")
-        })
-    if registry.bug_predictor:
-        bug_result = registry.bug_predictor.predict(source, git_meta)
-    else:
-        from models.bug_predictor import BugPredictionModel as BPM
-        bug_result = BPM().predict(source, git_meta)
+    git_meta = _parse_git_meta(req.git_metadata)
+    if not registry.bug_predictor:
+        raise HTTPException(status_code=503, detail="Bug prediction model unavailable")
+    bug_result = registry.bug_predictor.predict(source, git_meta)
     bug_out = BugPredictionOut(**bug_result.to_dict())
 
     # --- Pattern Recognition ---
@@ -531,8 +582,8 @@ def analyze_full(req: AnalyzeRequest):
                 confidence=pred.confidence,
                 all_scores=pred.all_scores,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Pattern model prediction failed: %s", e)
 
     # --- Code Clone Detection ---
     clone_result = registry.clone_detector.detect(source)
@@ -559,29 +610,14 @@ def analyze_full(req: AnalyzeRequest):
     debt_out = debt_result.to_dict()
 
     # --- Overall score (weighted across all available signals) ---
-    crit = security_out.get("summary", {}).get("critical", 0)
-    high = security_out.get("summary", {}).get("high", 0)
-    med  = security_out.get("summary", {}).get("medium", 0)
-    security_score = max(0, 100 - crit * 20 - high * 10 - med * 4)
-    clone_rate = clone_out.get("clone_rate", 0)
-    clone_score = max(0, 100 - int(clone_rate * 120))
-    dead_ratio  = dead_out.get("dead_ratio", 0)
-    dead_score  = max(0, 100 - int(dead_ratio * 150))
-    bug_prob    = bug_out.bug_probability
-    bug_score   = max(0, int((1 - bug_prob) * 100))
-    debt_score  = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}.get(debt_result.overall_rating, 50)
-
-    overall_score = int(
-        complexity_out.score * 0.25 +
-        security_score      * 0.30 +
-        clone_score         * 0.15 +
-        bug_score           * 0.15 +
-        dead_score          * 0.05 +
-        debt_score          * 0.10
+    overall_score = _compute_overall_score(
+        complexity_out.score, security_out, clone_out, bug_out, dead_out, debt_result
     )
-    overall_score = max(0, min(100, overall_score))
 
     # Status — critical only for actual security critical findings
+    crit = security_out.get("summary", {}).get("critical", 0)
+    high = security_out.get("summary", {}).get("high", 0)
+    bug_prob = bug_out.bug_probability if bug_out is not None else 0.5
     if crit > 0:
         status = "critical"
     elif high > 0 or (complexity_out.score < 40 and debt_result.overall_rating in ("D", "E")):
@@ -647,12 +683,9 @@ def analyze_complexity(req: AnalyzeRequest):
     """Complexity and maintainability analysis only."""
     t_start = time.perf_counter()
 
-    if registry.complexity:
-        result = registry.complexity.predict(req.code)
-    else:
-        from models.complexity_prediction import ComplexityPredictionModel as CPM
-        result = CPM().predict(req.code)
-
+    if not registry.complexity:
+        raise HTTPException(status_code=503, detail="Complexity model unavailable")
+    result = registry.complexity.predict(req.code)
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return out
@@ -665,7 +698,7 @@ def analyze_patterns(req: AnalyzeRequest):
 
     if registry.pattern_model is None or not registry.pattern_model.ready:
         raise HTTPException(
-            status_code=503,
+            status_code=501,
             detail="Pattern model unavailable — run training/train_all.py first"
         )
 
@@ -683,19 +716,11 @@ def analyze_bugs(req: AnalyzeRequest):
     """Bug probability prediction."""
     t_start = time.perf_counter()
 
-    git_meta = None
-    if req.git_metadata:
-        git_meta = GitMetadata(**{
-            k: req.git_metadata.get(k, 0)
-            for k in ("code_churn", "author_count", "file_age_days",
-                      "n_past_bugs", "commit_freq")
-        })
-
+    git_meta = _parse_git_meta(req.git_metadata)
     if registry.bug_predictor:
         result = registry.bug_predictor.predict(req.code, git_meta)
     else:
-        from models.bug_predictor import BugPredictionModel as BPM
-        result = BPM().predict(req.code, git_meta)
+        raise HTTPException(status_code=503, detail="Bug prediction model unavailable")
 
     out = result.to_dict()
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
@@ -859,26 +884,17 @@ def _step_security(source: str) -> dict:
 
 
 def _step_complexity(source: str):
-    if registry.complexity:
-        r = registry.complexity.predict(source)
-    else:
-        from models.complexity_prediction import ComplexityPredictionModel as _CPM
-        r = _CPM().predict(source)
+    if not registry.complexity:
+        raise RuntimeError("Complexity model unavailable")
+    r = registry.complexity.predict(source)
     return ComplexityOut(**r.to_dict()), r
 
 
 def _step_bug(source: str, git_metadata: Optional[dict]):
-    git_meta = None
-    if git_metadata:
-        git_meta = GitMetadata(**{
-            k: git_metadata.get(k, 0)
-            for k in ("code_churn", "author_count", "file_age_days", "n_past_bugs", "commit_freq")
-        })
-    if registry.bug_predictor:
-        r = registry.bug_predictor.predict(source, git_meta)
-    else:
-        from models.bug_predictor import BugPredictionModel as _BPM
-        r = _BPM().predict(source, git_meta)
+    git_meta = _parse_git_meta(git_metadata)
+    if not registry.bug_predictor:
+        raise RuntimeError("Bug prediction model unavailable")
+    r = registry.bug_predictor.predict(source, git_meta)
     return BugPredictionOut(**r.to_dict()), r
 
 
@@ -887,8 +903,8 @@ def _step_pattern(source: str):
         try:
             pred = registry.pattern_model.predict(source)
             return PatternOut(label=pred.label, confidence=pred.confidence, all_scores=pred.all_scores)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Pattern model prediction failed: %s", e)
     return None
 
 
@@ -1037,25 +1053,12 @@ async def analyze_stream(req: AnalyzeRequest):
         yield evt({"step": "Readability Scoring", "progress": 100, "status": "done"})
 
         # --- Overall score (same formula as /analyze) ---
+        overall_score = _compute_overall_score(
+            complexity_out.score, security_out, clone_out, bug_out, dead_out, debt_result
+        )
         crit = security_out.get("summary", {}).get("critical", 0)
         high = security_out.get("summary", {}).get("high", 0)
-        med  = security_out.get("summary", {}).get("medium", 0)
-        security_score = max(0, 100 - crit * 20 - high * 10 - med * 4)
-        clone_rate = clone_out.get("clone_rate", 0)
-        clone_score = max(0, 100 - int(clone_rate * 120))
-        dead_ratio  = dead_out.get("dead_ratio", 0)
-        dead_score  = max(0, 100 - int(dead_ratio * 150))
-        bug_prob    = bug_out.bug_probability
-        bug_score   = max(0, int((1 - bug_prob) * 100))
-        debt_score  = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}.get(debt_result.overall_rating, 50)
-        overall_score = max(0, min(100, int(
-            complexity_out.score * 0.25 +
-            security_score      * 0.30 +
-            clone_score         * 0.15 +
-            bug_score           * 0.15 +
-            dead_score          * 0.05 +
-            debt_score          * 0.10
-        )))
+        bug_prob = bug_out.bug_probability if bug_out is not None else 0.5
 
         if crit > 0:
             status = "critical"
@@ -1124,11 +1127,11 @@ def analyze_quick(req: AnalyzeRequest):
 
     # Security pattern scan (regex-based, very fast)
     try:
-        sec_patterns = scan_security_patterns(source)
+        sec_scan = scan_security_patterns(source)
         result["security_patterns"] = {
-            "findings": sec_patterns,
-            "count": len(sec_patterns),
-            "has_critical": any(f.get("severity") == "critical" for f in sec_patterns),
+            "findings": [vars(f) for f in sec_scan.findings],
+            "count": len(sec_scan.findings),
+            "has_critical": bool(sec_scan.critical),
         }
     except Exception as e:
         result["security_patterns"] = {"error": str(e)}
@@ -1137,10 +1140,10 @@ def analyze_quick(req: AnalyzeRequest):
     try:
         metrics = compute_all_metrics(source)
         result["complexity"] = {
-            "cyclomatic": metrics.get("cyclomatic_complexity", 0),
-            "loc": metrics.get("loc", 0),
-            "functions": metrics.get("num_functions", 0),
-            "maintainability": metrics.get("maintainability_index", 0),
+            "cyclomatic": metrics.cyclomatic_complexity,
+            "loc": metrics.lines.sloc,
+            "functions": metrics.n_complex_functions + metrics.n_long_functions,
+            "maintainability": round(metrics.maintainability_index, 1),
         }
     except Exception as e:
         result["complexity"] = {"error": str(e)}
@@ -1160,13 +1163,31 @@ def analyze_quick(req: AnalyzeRequest):
 # Feedback endpoint — stores thumbs-up/down per analysis finding
 # ---------------------------------------------------------------------------
 
-_feedback_store: list[dict] = []
+_feedback_store: list[dict] = []  # seeded from disk on first feedback_stats call
 
 class FeedbackRequest(BaseModel):
     analysis_id: Optional[str] = None
     finding_key: Optional[str] = Field(default="analysis_overall", description="Unique key for the finding or 'analysis_overall'")
-    verdict: str = Field(..., description="'helpful' | 'not_helpful' | 'false_positive'")
+    verdict: Literal["helpful", "not_helpful", "false_positive"] = Field(...)
     comment: Optional[str] = None
+
+_FEEDBACK_PATH = Path("feedback.jsonl")
+
+
+def _load_feedback_from_disk() -> list[dict]:
+    if not _FEEDBACK_PATH.exists():
+        return []
+    entries = []
+    try:
+        with open(_FEEDBACK_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entries.append(_json.loads(line))
+    except Exception:
+        pass
+    return entries
+
 
 @app.post("/feedback", tags=["meta"])
 def submit_feedback(req: FeedbackRequest):
@@ -1179,6 +1200,12 @@ def submit_feedback(req: FeedbackRequest):
         "ts": time.time(),
     }
     _feedback_store.append(entry)
+    # Persist to disk so feedback survives restarts
+    try:
+        with open(_FEEDBACK_PATH, "a") as f:
+            f.write(_json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.warning("Could not persist feedback to disk: %s", exc)
     return {"status": "ok", "stored": len(_feedback_store)}
 
 @app.get("/feedback/stats", tags=["meta"])
@@ -1186,7 +1213,6 @@ def feedback_stats():
     """Returns aggregate feedback statistics."""
     if not _feedback_store:
         return {"total": 0, "helpful": 0, "not_helpful": 0, "false_positive": 0}
-    from collections import Counter
     counts = Counter(e["verdict"] for e in _feedback_store)
     return {
         "total": len(_feedback_store),
@@ -1209,9 +1235,9 @@ async def github_auth_redirect():
             status_code=503,
             detail="GitHub OAuth not configured — set GITHUB_CLIENT_ID env var",
         )
-    redirect_uri = os.environ.get(
-        "GITHUB_REDIRECT_URI", "http://localhost:8000/auth/github/callback"
-    )
+    redirect_uri = os.environ.get("GITHUB_REDIRECT_URI")
+    if not redirect_uri:
+        raise HTTPException(status_code=503, detail="GITHUB_REDIRECT_URI env var not configured")
     params = urllib.parse.urlencode(
         {"client_id": client_id, "scope": "repo read:user", "redirect_uri": redirect_uri}
     )
@@ -1236,9 +1262,11 @@ async def github_auth_callback(code: str):
         data=post_data,
         headers={"Accept": "application/json"},
     )
-    try:
+    def _exchange() -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            token_data = _json.loads(resp.read())
+            return _json.loads(resp.read())
+    try:
+        token_data = await asyncio.to_thread(_exchange)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"GitHub token exchange failed: {e}")
 
@@ -1247,23 +1275,24 @@ async def github_auth_callback(code: str):
         error = token_data.get("error_description", "unknown error")
         raise HTTPException(status_code=400, detail=f"GitHub denied token: {error}")
 
-    # Pass token to frontend via URL fragment (never visible in server logs)
-    return RedirectResponse(f"{frontend_url}/#github_token={access_token}")
+    # Pass token via query param — frontend reads and cleans it immediately
+    return RedirectResponse(f"{frontend_url}/?github_token={access_token}")
 
 
 @app.post("/webhook/github", tags=["github"])
 async def github_webhook(request: Request):
     """Receive GitHub push/PR webhooks. Verifies HMAC signature when GITHUB_WEBHOOK_SECRET is set."""
     webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-    body = await request.body()
+    if not webhook_secret:
+        raise HTTPException(status_code=400, detail="Webhook not configured — set GITHUB_WEBHOOK_SECRET env var")
 
-    if webhook_secret:
-        sig_header = request.headers.get("X-Hub-Signature-256", "")
-        expected = "sha256=" + hmac.new(
-            webhook_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(sig_header, expected):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    body = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    expected = "sha256=" + hmac.new(
+        webhook_secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig_header, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     event = request.headers.get("X-GitHub-Event", "ping")
     if event == "ping":

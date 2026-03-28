@@ -90,7 +90,7 @@ const Diff = () => {
     setError(null);
     try {
       const result = await analyzeCode(addedCode, filename, "python");
-      navigate("/reviews/result", { state: { result } });
+      navigate(result._entryId ? `/reviews/${result._entryId}` : "/reviews/result", { state: { result } });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Analysis failed";
       setError(msg);

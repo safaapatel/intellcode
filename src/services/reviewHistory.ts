@@ -19,6 +19,7 @@ export interface HistoryEntry {
   result: FullAnalysisResult;
   resolvedIssues: string[];     // issue keys that user marked resolved
   falsePositives: string[];     // issue keys marked false positive
+  repoName?: string;            // e.g. "safaapatel/intellcode" — undefined for manual submissions
 }
 
 const KEY = "intellcode_review_history";
@@ -34,7 +35,15 @@ function load(): HistoryEntry[] {
 }
 
 function save(entries: HistoryEntry[]) {
-  localStorage.setItem(KEY, JSON.stringify(entries));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(entries));
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === "QuotaExceededError" || e.code === 22)) {
+      // Storage full — trim to oldest half and retry
+      const trimmed = entries.slice(0, Math.floor(entries.length / 2));
+      try { localStorage.setItem(KEY, JSON.stringify(trimmed)); } catch { /* give up */ }
+    }
+  }
 }
 
 /** Derive the top severity from a result */
@@ -87,7 +96,8 @@ function overallScore(result: FullAnalysisResult): number {
 export function addEntry(
   result: FullAnalysisResult,
   filename: string,
-  language: string
+  language: string,
+  repoName?: string
 ): HistoryEntry {
   const entries = load();
   const entry: HistoryEntry = {
@@ -103,6 +113,7 @@ export function addEntry(
     result,
     resolvedIssues: [],
     falsePositives: [],
+    repoName,
   };
   const updated = [entry, ...entries].slice(0, MAX_ENTRIES);
   save(updated);
