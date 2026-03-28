@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { Upload, Github, Loader2, AlertCircle, FolderOpen, ScanLine, Braces, Set
 import { mockRuleSets } from "@/data/mockData";
 import { toast } from "sonner";
 import { analyzeCode, analyzeCodeStream } from "@/services/api";
+import { authHeaders } from "@/services/github";
 
 function loadRuleSets() {
   try {
@@ -42,7 +43,21 @@ const EXT_LANG: Record<string, string> = {
   java: "java", go: "go", rs: "rust",
   cpp: "cpp", cc: "cpp", c: "c", cs: "csharp",
   rb: "ruby", php: "php", kt: "kotlin", swift: "swift",
+  ipynb: "python",
 };
+
+function extractNotebookCode(raw: string): string {
+  try {
+    const nb = JSON.parse(raw);
+    return (nb.cells as Array<{ cell_type: string; source: string | string[] }>)
+      .filter((c) => c.cell_type === "code")
+      .map((c) => (Array.isArray(c.source) ? c.source.join("") : c.source))
+      .filter((src) => src.trim().length > 0)
+      .join("\n\n# ── next cell ──\n\n");
+  } catch {
+    return raw;
+  }
+}
 
 function detectLanguage(fname: string): string {
   const ext = fname.split(".").pop()?.toLowerCase() ?? "";
@@ -76,8 +91,8 @@ def validate_input(data):
                     return True
     return False
 
-secret_key = "hardcoded-secret-key-12345"
-api_token = "sk-prod-abc123xyz"
+secret_key = "REPLACE_ME_do_not_hardcode"   # ← hardcoded secret (intentional demo issue)
+api_token = "REPLACE_ME_use_env_var"        # ← hardcoded token (intentional demo issue)
 `;
 
 const SCAN_SKIP = [
@@ -141,8 +156,19 @@ const Submit = () => {
     setDoneSteps(new Set(MODEL_STEPS.map((s) => s.id)));
   };
   const [submissionMethod, setSubmissionMethod] = useState<"upload" | "github">("upload");
-  const ruleSets = loadRuleSets();
-  const [connectedRepos] = useState(loadConnectedRepos);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const ruleSets = useMemo(() => loadRuleSets(), []);
+  const [connectedRepos, setConnectedRepos] = useState(loadConnectedRepos);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "intellcode_repositories") setConnectedRepos(loadConnectedRepos());
+    };
+    window.addEventListener("storage", onStorage);
+    // Reload on tab focus (user coming back from Repositories page)
+    const onVisible = () => { if (document.visibilityState === "visible") setConnectedRepos(loadConnectedRepos()); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("storage", onStorage); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
 
   // GitHub mode state
   const [selectedRepo, setSelectedRepo] = useState("");
@@ -184,8 +210,9 @@ const Submit = () => {
     setGhFiles([]);
     setSelectedFile("");
     setLoadingBranches(true);
-    fetch(`https://api.github.com/repos/${repo.fullName}/branches`)
+    fetch(`https://api.github.com/repos/${repo.fullName}/branches`, { headers: authHeaders() })
       .then((r) => {
+        if (r.status === 401) throw new Error("GitHub token expired — reconnect in Repositories.");
         if (r.status === 403) throw new Error("GitHub API rate limit reached. Wait a minute and try again.");
         if (r.status === 404) throw new Error("Repository not found or is private.");
         return r.json();
@@ -209,26 +236,31 @@ const Submit = () => {
     setGhFiles([]);
     setSelectedFile("");
     setLoadingFiles(true);
-    fetch(`https://api.github.com/repos/${repo.fullName}/git/trees/${selectedBranch}?recursive=1`)
+    fetch(`https://api.github.com/repos/${repo.fullName}/git/trees/${selectedBranch}?recursive=1`, { headers: authHeaders() })
       .then((r) => {
+        if (r.status === 401) throw new Error("GitHub token expired — reconnect in Repositories.");
         if (r.status === 403) throw new Error("GitHub API rate limit reached. Wait a minute and try again.");
         if (r.status === 404) throw new Error("Branch not found.");
         return r.json();
       })
       .then((data: { tree?: Array<{ type: string; path: string; size?: number }> }) => {
-        const files = (data.tree || [])
-          .filter(
-            (f) =>
-              f.type === "blob" &&
-              /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|rb|php|kt|swift)$/.test(f.path) &&
-              (f.size ?? 0) < 100_000 &&
-              !SCAN_SKIP.some((skip) => f.path.includes(skip))
-          )
+        const eligible = (data.tree || []).filter(
+          (f) =>
+            f.type === "blob" &&
+            /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|rb|php|kt|swift|ipynb)$/.test(f.path) &&
+            !SCAN_SKIP.some((skip) => f.path.includes(skip))
+        );
+        // Notebooks can be large (outputs embedded) but we extract code cells only — allow up to 500KB
+        const sizeLimit = (f: { path: string }) => f.path.endsWith(".ipynb") ? 500_000 : 100_000;
+        const tooLarge = eligible.filter((f) => (f.size ?? 0) >= sizeLimit(f));
+        const files = eligible
+          .filter((f) => (f.size ?? 0) < sizeLimit(f))
           .slice(0, 30)
           .map((f) => ({ path: f.path, size: f.size ?? 0 }));
         setGhFiles(files);
         if (files.length > 0) setSelectedFile(files[0].path);
         if (files.length === 0) toast.info("No analyzable files found in this branch.");
+        else if (tooLarge.length > 0) toast.info(`${tooLarge.length} file${tooLarge.length !== 1 ? "s" : ""} excluded (>100 KB)`, { description: tooLarge.slice(0, 3).map(f => f.path).join(", ") + (tooLarge.length > 3 ? ` +${tooLarge.length - 3} more` : "") });
       })
       .catch((e: Error) => {
         setGhFiles([]);
@@ -286,7 +318,7 @@ const Submit = () => {
     startProgress();
     try {
       const result = await analyzeCodeStream(
-        code, filename, detectLanguage(filename), onStepDone
+        code, filename, detectLanguage(filename), onStepDone, undefined, undefined
       );
       stopProgress();
       toast.success("Analysis complete!", { description: result.summary });
@@ -294,7 +326,7 @@ const Submit = () => {
     } catch (err) {
       stopProgress();
       const msg = err instanceof Error ? err.message : "Unknown error";
-      setError(`Backend error: ${msg}. Make sure the Python backend is running on localhost:8000.`);
+      setError(`Analysis failed: ${msg}. The backend may be starting up — wait 30s and try again.`);
       toast.error("Analysis failed", { description: msg });
     } finally {
       setIsAnalyzing(false);
@@ -317,12 +349,13 @@ const Submit = () => {
         `https://raw.githubusercontent.com/${repo.fullName}/${selectedBranch}/${selectedFile}`
       );
       if (!rawRes.ok) throw new Error(`Could not fetch file (${rawRes.status})`);
-      const fileCode = await rawRes.text();
-      if (fileCode.trim().length < 10) throw new Error("File appears to be empty");
+      const rawCode = await rawRes.text();
+      const fileCode = selectedFile.endsWith(".ipynb") ? extractNotebookCode(rawCode) : rawCode;
+      if (fileCode.trim().length < 10) throw new Error("File appears to be empty or has no code cells");
 
       startProgress();
       const result = await analyzeCodeStream(
-        fileCode, selectedFile, detectLanguage(selectedFile), onStepDone
+        fileCode, selectedFile, detectLanguage(selectedFile), onStepDone, undefined, repo.fullName
       );
       stopProgress();
       toast.success("Analysis complete!", { description: result.summary });
@@ -349,19 +382,21 @@ const Submit = () => {
     setScanProgress({ done: 0, total: ghFiles.length });
 
     const results: Awaited<ReturnType<typeof analyzeCode>>[] = [];
+    const failedFiles: string[] = [];
     for (let i = 0; i < ghFiles.length; i++) {
       const file = ghFiles[i];
       try {
         const rawRes = await fetch(
           `https://raw.githubusercontent.com/${repo.fullName}/${selectedBranch}/${file.path}`
         );
-        if (!rawRes.ok) continue;
-        const fileCode = await rawRes.text();
-        if (fileCode.trim().length < 20) continue;
-        const result = await analyzeCode(fileCode, file.path, detectLanguage(file.path));
+        if (!rawRes.ok) { failedFiles.push(file.path); continue; }
+        const rawCode = await rawRes.text();
+        const fileCode = file.path.endsWith(".ipynb") ? extractNotebookCode(rawCode) : rawCode;
+        if (fileCode.trim().length < 20) { failedFiles.push(file.path); continue; }
+        const result = await analyzeCode(fileCode, file.path, detectLanguage(file.path), undefined, repo.fullName);
         results.push(result);
       } catch {
-        // skip individual failures
+        failedFiles.push(file.path);
       }
       setScanProgress({ done: i + 1, total: ghFiles.length });
     }
@@ -370,15 +405,19 @@ const Submit = () => {
     setScanProgress(null);
 
     if (results.length === 0) {
-      toast.error("No files could be analyzed");
+      toast.error("No files could be analyzed", {
+        description: failedFiles.length > 0 ? `Failed: ${failedFiles.slice(0, 3).join(", ")}${failedFiles.length > 3 ? ` +${failedFiles.length - 3} more` : ""}` : undefined,
+      });
       return;
     }
 
     // Navigate to Reviews list so all scanned files are visible
-    toast.success(`Scanned ${results.length} file${results.length !== 1 ? "s" : ""}`, {
-      description: "All results saved to review history",
+    toast.success(`Scanned ${results.length} of ${ghFiles.length} file${ghFiles.length !== 1 ? "s" : ""}`, {
+      description: failedFiles.length > 0
+        ? `${failedFiles.length} skipped: ${failedFiles.slice(0, 2).join(", ")}${failedFiles.length > 2 ? ` +${failedFiles.length - 2} more` : ""}`
+        : "All results saved to review history",
     });
-    navigate("/reviews");
+    navigate(repo ? `/reviews?repo=${encodeURIComponent(repo.fullName)}` : "/reviews");
   };
 
   const repoObj = connectedRepos.find((r) => r.id === selectedRepo);
@@ -407,7 +446,7 @@ const Submit = () => {
             <div>
               <h1 className="text-xl font-bold text-foreground">New Code Analysis</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                12 ML models run in parallel — security, bugs, complexity, docs, performance &amp; more.
+                ML models run in parallel — security, bugs, complexity, docs, performance &amp; more.
               </p>
             </div>
           </div>
@@ -554,7 +593,7 @@ const Submit = () => {
                 <Button
                   size="sm"
                   className="bg-gradient-primary gap-2"
-                  onClick={() => navigate("/repositories")}
+                  onClick={() => navigate("/repositories", { state: { from: "submit" } })}
                 >
                   <Github className="w-4 h-4" />
                   Connect a Repository
@@ -738,7 +777,7 @@ const Submit = () => {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                All 12 ML models always run — clones, debt, docs, performance & readability
+                All ML models always run — clones, debt, docs, performance & readability
                 included.
               </p>
             </div>

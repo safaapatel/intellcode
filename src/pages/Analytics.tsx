@@ -1,7 +1,11 @@
 import { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { StatCard } from "@/components/app/StatCard";
 import { Button } from "@/components/ui/button";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { Download, Lightbulb, TrendingUp, BarChart3, PieChart as PieIcon } from "lucide-react";
 import {
   LineChart,
@@ -30,8 +34,13 @@ import { toast } from "sonner";
 
 // ─── Derive real analytics from localStorage history ─────────────────────────
 
-function buildAnalytics(range: number) {
-  const all = getEntries();
+function buildAnalytics(range: number, repoFilter = "") {
+  const allEntries = getEntries();
+  if (allEntries.length === 0) return null;
+
+  const all = repoFilter
+    ? allEntries.filter((e) => (e.repoName ?? "__manual__") === repoFilter)
+    : allEntries;
   if (all.length === 0) return null;
 
   const cutoff = Date.now() - range * 24 * 60 * 60 * 1000;
@@ -133,7 +142,9 @@ function buildAnalytics(range: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const Analytics = () => {
+  const navigate = useNavigate();
   const [timeRange, setTimeRange] = useState<7 | 30 | 90>(30);
+  const [repoFilter, setRepoFilter] = useState("__all__");
   const [historyVersion, setHistoryVersion] = useState(0);
 
   // Recompute when timeRange changes OR when new analyses are added (storage changes)
@@ -145,7 +156,23 @@ const Analytics = () => {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  const real = useMemo(() => buildAnalytics(timeRange), [timeRange, historyVersion]);
+  // Unique repo names for the dropdown
+  const repoOptions = useMemo(() => {
+    const all = getEntries();
+    const repos = new Set<string>();
+    all.forEach((e) => repos.add(e.repoName ?? "__manual__"));
+    return [...repos].sort((a, b) => {
+      if (a === "__manual__") return 1;
+      if (b === "__manual__") return -1;
+      return a.localeCompare(b);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyVersion]);
+
+  const real = useMemo(
+    () => buildAnalytics(timeRange, repoFilter === "__all__" ? "" : repoFilter),
+    [timeRange, repoFilter, historyVersion]
+  );
 
   const qualityTrend   = real?.qualityTrend   ?? mockQualityTrend;
   const issueDist      = real ? real.issueDistribution : mockIssueDistribution;
@@ -185,7 +212,11 @@ const Analytics = () => {
             <h1 className="text-2xl font-bold text-foreground">Analytics & Insights</h1>
             {!usingReal && (
               <p className="text-xs text-muted-foreground mt-1">
-                Showing sample data — run an analysis to see real metrics
+                Showing sample data —{" "}
+                <span className="text-primary cursor-pointer underline" onClick={() => navigate("/submit")}>
+                  submit code
+                </span>{" "}
+                to see real metrics
               </p>
             )}
             {usingReal && usedFallback && (
@@ -194,7 +225,22 @@ const Analytics = () => {
               </p>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {repoOptions.length > 1 && (
+              <Select value={repoFilter} onValueChange={setRepoFilter}>
+                <SelectTrigger className="w-48 bg-input border-border text-sm h-9">
+                  <SelectValue placeholder="All repositories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All repositories</SelectItem>
+                  {repoOptions.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r === "__manual__" ? "Manual Submissions" : r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {([7, 30, 90] as const).map((r) => (
               <Button key={r} variant={timeRange === r ? "default" : "outline"} size="sm" onClick={() => setTimeRange(r)}>
                 {r} Days
@@ -280,7 +326,7 @@ const Analytics = () => {
                   <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} />
                   <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} width={90} />
                   <Tooltip {...TOOLTIP_STYLE} />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]} background={{ fill: "transparent" }}>
                     {commonIssues.map((entry) => (
                       <Cell key={entry.name} fill={entry.color} />
                     ))}
@@ -309,7 +355,7 @@ const Analytics = () => {
                     {...TOOLTIP_STYLE}
                     formatter={(value: number) => [`${value} file${value !== 1 ? "s" : ""}`, "Count"]}
                   />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]} background={{ fill: "transparent" }}>
                     {scoreBuckets.map((b) => (
                       <Cell key={b.range} fill={b.color} />
                     ))}

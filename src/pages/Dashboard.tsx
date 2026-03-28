@@ -84,40 +84,46 @@ const Dashboard = () => {
       if (e.key === "intellcode_settings") setFirstName(savedFirstName());
       if (e.key === "intellcode_review_history") setHistoryVersion((v) => v + 1);
     };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setHistoryVersion((v) => v + 1);
+    };
     window.addEventListener("storage", onStorage);
-    const id = setInterval(() => {
-      setFirstName(savedFirstName());
-      setHistoryVersion((v) => v + 1);
-    }, 5000);
-    return () => { window.removeEventListener("storage", onStorage); clearInterval(id); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
-  const realStats = historyVersion >= 0 ? getDashboardStats() : null;
-  const allEntries = historyVersion >= 0 ? getEntries() : [];
+  const realStats = useMemo(() => getDashboardStats(), [historyVersion]);
+  const allEntries = useMemo(() => getEntries(), [historyVersion]);
   const recentEntries = allEntries.slice(0, 5);
-  // Dedup by filename — keep the latest score per file
+  // Dedup by repo+filename — keep the latest score per unique file
   const latestByFile = useMemo(() => {
     const seen = new Map<string, typeof allEntries[number]>();
-    allEntries.forEach((e) => { if (!seen.has(e.filename)) seen.set(e.filename, e); });
+    allEntries.forEach((e) => {
+      const key = `${e.repoName ?? ""}::${e.filename}`;
+      if (!seen.has(key)) seen.set(key, e);
+    });
     return [...seen.values()];
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyVersion]);
+  }, [allEntries]);
   const topFiles  = [...latestByFile].sort((a, b) => b.overallScore - a.overallScore).slice(0, 5);
   const worstFiles = [...latestByFile].sort((a, b) => a.overallScore - b.overallScore).filter(f => f.overallScore < 80).slice(0, 5);
   const trendData = useMemo(
     () =>
-      [...getEntries()]
+      [...allEntries]
         .reverse()
         .slice(-20)
         .map((e) => ({
           date: new Date(e.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
           score: e.overallScore,
         })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [historyVersion]
+    [allEntries]
   );
 
-  const [urgentDismissed, setUrgentDismissed] = useState(false);
+  const [urgentDismissed, setUrgentDismissed] = useState(
+    () => localStorage.getItem("intellcode_urgent_dismissed") === "1"
+  );
   const urgentItems = useMemo(() => {
     const items: { label: string; entryId: string; detail: string }[] = [];
     allEntries.forEach((e) => {
@@ -127,19 +133,22 @@ const Dashboard = () => {
         items.push({ label: e.filename, entryId: e.id, detail: `High severity · score ${e.overallScore}` });
     });
     return items.slice(0, 5);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyVersion]);
+  }, [allEntries]);
 
-  const pendingReviewEntries = isReviewer
-    ? getEntries().filter((e) => {
-        const findings = e.result?.security?.findings ?? [];
-        if (findings.length === 0) return false;
-        const fbKeys = loadFeedbackKeys();
-        return findings.some(
-          (f: { title: string; lineno: number }) => !fbKeys.has(`${f.title}-${f.lineno}`)
-        );
-      })
-    : [];
+  const reviewerFbKeys = useMemo(
+    () => (isReviewer ? loadFeedbackKeys() : new Set<string>()),
+    [historyVersion, isReviewer]
+  );
+  const pendingReviewEntries = useMemo(() => {
+    if (!isReviewer) return [];
+    return allEntries.filter((e) => {
+      const findings = e.result?.security?.findings ?? [];
+      if (findings.length === 0) return false;
+      return findings.some(
+        (f: { title: string; lineno: number }) => !reviewerFbKeys.has(`${f.title}-${f.lineno}`)
+      );
+    });
+  }, [allEntries, isReviewer, reviewerFbKeys]);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -163,7 +172,7 @@ const Dashboard = () => {
                   ? `${pendingReviewEntries.length} submission${pendingReviewEntries.length !== 1 ? "s" : ""} awaiting your review`
                   : recentEntries.length > 0
                   ? `${recentEntries.length} review${recentEntries.length !== 1 ? "s" : ""} in history · keep shipping clean code`
-                  : "Run your first analysis to see ML insights across 12 models"}
+                  : "Run your first analysis to see ML insights"}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
@@ -196,13 +205,14 @@ const Dashboard = () => {
                   {pendingReviewEntries.length}
                 </span>
               </div>
-              <Button variant="outline" size="sm" onClick={() => navigate("/reviews")}>View All</Button>
+              <Button variant="outline" size="sm" onClick={() => navigate("/reviews")}>
+                View All{pendingReviewEntries.length > 3 ? ` (${pendingReviewEntries.length - 3} more)` : ""}
+              </Button>
             </div>
             <div className="divide-y divide-border">
               {pendingReviewEntries.slice(0, 3).map((entry) => {
-                const fbKeys = loadFeedbackKeys();
                 const unreviewedCount = (entry.result?.security?.findings ?? []).filter(
-                  (f: { title: string; lineno: number }) => !fbKeys.has(`${f.title}-${f.lineno}`)
+                  (f: { title: string; lineno: number }) => !reviewerFbKeys.has(`${f.title}-${f.lineno}`)
                 ).length;
                 return (
                   <div key={entry.id} className="flex items-center gap-4 px-6 py-3.5 hover:bg-secondary/10 transition-colors">
@@ -273,7 +283,7 @@ const Dashboard = () => {
                 <h2 className="font-semibold text-foreground text-sm">Urgent Actions</h2>
                 <span className="bg-red-500/20 text-red-400 text-xs font-bold px-2 py-0.5 rounded-full">{urgentItems.length}</span>
               </div>
-              <button onClick={() => setUrgentDismissed(true)} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => { setUrgentDismissed(true); localStorage.setItem("intellcode_urgent_dismissed", "1"); }} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -350,7 +360,10 @@ const Dashboard = () => {
                 {topFiles.map((entry, i) => (
                   <div key={entry.id} className="flex items-center gap-3 px-5 py-3 hover:bg-secondary/10 cursor-pointer transition-colors" onClick={() => navigate(`/reviews/${entry.id}`)}>
                     <span className="text-xs font-bold text-muted-foreground w-4 shrink-0">{i + 1}</span>
-                    <span className="flex-1 text-sm text-foreground font-mono truncate">{entry.filename}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-foreground font-mono truncate block">{entry.filename}</span>
+                      {entry.repoName && <span className="text-[10px] text-muted-foreground truncate block">{entry.repoName}</span>}
+                    </div>
                     <ScoreMini score={entry.overallScore} />
                   </div>
                 ))}
@@ -367,7 +380,10 @@ const Dashboard = () => {
                   {worstFiles.map((entry, i) => (
                     <div key={entry.id} className="flex items-center gap-3 px-5 py-3 hover:bg-secondary/10 cursor-pointer transition-colors" onClick={() => navigate(`/reviews/${entry.id}`)}>
                       <span className="text-xs font-bold text-muted-foreground w-4 shrink-0">{i + 1}</span>
-                      <span className="flex-1 text-sm text-foreground font-mono truncate">{entry.filename}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-foreground font-mono truncate block">{entry.filename}</span>
+                        {entry.repoName && <span className="text-[10px] text-muted-foreground truncate block">{entry.repoName}</span>}
+                      </div>
                       <ScoreMini score={entry.overallScore} />
                     </div>
                   ))}
@@ -398,7 +414,7 @@ const Dashboard = () => {
                 <FileCode2 className="w-8 h-8 text-primary/40" />
               </div>
               <p className="text-sm font-medium text-foreground mb-1">No analyses yet</p>
-              <p className="text-xs text-muted-foreground mb-5">Submit a code snippet and all 12 ML models will analyze it instantly.</p>
+              <p className="text-xs text-muted-foreground mb-5">Submit a code snippet and our ML models will analyze it instantly.</p>
               <Button size="sm" className="gap-2" onClick={() => navigate("/submit")}>
                 <Plus className="w-3.5 h-3.5" /> New Analysis
               </Button>

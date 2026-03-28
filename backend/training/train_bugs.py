@@ -16,14 +16,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import pickle
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Global seed for reproducibility
+random.seed(42)
+np.random.seed(42)
 
 GIT_FEATURE_NAMES = [
     "code_churn",
@@ -152,6 +156,8 @@ def train_mlp(
         print(f"WARNING: {e}. Skipping MLP training.")
         return {}
 
+    torch.manual_seed(42)
+
     print("\n-- MLP (Neural Network) --------------------------------------")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -160,8 +166,12 @@ def train_mlp(
     scaler = StandardScaler()
     X_norm = scaler.fit_transform(X).astype(np.float32)
 
-    Xt = torch.tensor(X_norm, dtype=torch.float32)
-    yt = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
+    # Hold out a validation set for honest evaluation (not seen during training)
+    from sklearn.model_selection import train_test_split as _tts
+    X_tr, X_val, y_tr, y_val = _tts(X_norm, y, test_size=0.15, stratify=y, random_state=42)
+
+    Xt = torch.tensor(X_tr, dtype=torch.float32)
+    yt = torch.tensor(y_tr, dtype=torch.float32).unsqueeze(1)
     loader = DataLoader(TensorDataset(Xt, yt), batch_size=batch_size, shuffle=True)
 
     input_dim = X.shape[1]
@@ -172,7 +182,11 @@ def train_mlp(
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.BCELoss()
+    # Class-imbalance: weight positive samples by neg/pos ratio
+    n_pos = max(int(y_tr.sum()), 1)
+    n_neg = len(y_tr) - n_pos
+    pos_w = torch.tensor([n_neg / n_pos], dtype=torch.float32).to(device)
+    criterion = nn.BCELoss(reduction="none")
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 
     best_loss = float("inf")
@@ -182,8 +196,12 @@ def train_mlp(
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(xb), yb)
+            out = model(xb)
+            # Apply pos_weight manually (BCELoss doesn't have pos_weight, BCEWithLogitsLoss does)
+            weight = torch.where(yb == 1, pos_w.expand_as(yb), torch.ones_like(yb))
+            loss = (criterion(out, yb) * weight).mean()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             total_loss += loss.item()
         scheduler.step()
@@ -194,16 +212,17 @@ def train_mlp(
         if (epoch + 1) % 10 == 0:
             print(f"  Epoch {epoch+1:3d}/{epochs}  loss={avg_loss:.4f}")
 
-    # Evaluate
+    # Evaluate on held-out validation set (not the training data)
     model.eval()
+    Xv = torch.tensor(X_val, dtype=torch.float32).to(device)
     with torch.no_grad():
-        probs = model(Xt.to(device)).cpu().numpy().flatten()
+        probs = model(Xv).cpu().numpy().flatten()
 
     y_pred = (probs >= 0.5).astype(int)
-    auc = roc_auc_score(y, probs)
-    acc = accuracy_score(y, y_pred)
-    print(f"Train AUC: {auc:.4f}")
-    print(f"Train Acc: {acc:.4f}")
+    auc = roc_auc_score(y_val, probs)
+    acc = accuracy_score(y_val, y_pred)
+    print(f"Val AUC: {auc:.4f}")
+    print(f"Val Acc: {acc:.4f}")
     print(f"Best loss: {best_loss:.4f}")
 
     # Save model + scaler together
@@ -221,8 +240,8 @@ def train_mlp(
         json.dump({"input_dim": input_dim, "epochs": epochs}, f)
 
     return {
-        "train_auc": float(auc),
-        "train_acc": float(acc),
+        "val_auc": float(auc),
+        "val_acc": float(acc),
         "best_loss": float(best_loss),
         "input_dim": input_dim,
     }

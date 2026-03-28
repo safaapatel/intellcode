@@ -397,8 +397,12 @@ def compute_all_metrics(source: str) -> CodeMetricsResult:
 
 def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
     """
-    Flatten a CodeMetricsResult into a numeric feature vector for XGBoost.
+    Flatten a CodeMetricsResult into a 16-element numeric feature vector.
     Order must stay consistent with training.
+
+    NOTE: maintainability_index is intentionally EXCLUDED — it is used as the
+    training target for the complexity model, so including it here would cause
+    direct target leakage (previously caused R²=1.000 on training data).
     """
     return [
         float(m.cyclomatic_complexity),
@@ -412,7 +416,6 @@ def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
         float(m.halstead.difficulty),
         float(m.halstead.effort),
         float(m.halstead.bugs_delivered),
-        float(m.maintainability_index),
         float(m.n_long_functions),
         float(m.n_complex_functions),
         float(m.max_line_length),

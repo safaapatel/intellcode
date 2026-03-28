@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Code2, ChevronDown, ShieldCheck, Menu, X, Bell } from "lucide-react";
+import { Code2, ChevronDown, ShieldCheck, Menu, X, Bell, Sun, Moon } from "lucide-react";
+import { getTheme, applyTheme, type Theme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -41,13 +42,12 @@ function loadProfileSettings() {
 
 const baseNavLinks = [
   { name: "Dashboard",     path: "/dashboard" },
+  { name: "Submit",        path: "/submit" },
   { name: "Repositories",  path: "/repositories" },
   { name: "Reviews",       path: "/reviews" },
   { name: "Compare",       path: "/compare" },
-  { name: "Diff",          path: "/diff" },
   { name: "Analytics",     path: "/analytics" },
   { name: "Rules",         path: "/rules" },
-  { name: "CI / Integrations", path: "/ci" },
   { name: "Settings",      path: "/settings" },
 ];
 
@@ -92,21 +92,32 @@ export const AppNavigation = () => {
       if (e.key === "intellcode_settings") setProfile(loadProfileSettings());
     };
     window.addEventListener("storage", onStorage);
-    // Also poll within same tab (storage events don't fire in the same window)
-    const id = setInterval(() => setProfile(loadProfileSettings()), 2000);
-    return () => { window.removeEventListener("storage", onStorage); clearInterval(id); };
+    return () => { window.removeEventListener("storage", onStorage); };
   }, []);
 
-  // Backend health indicator — poll every 15s
+  // Theme toggle
+  const [theme, setTheme] = useState<Theme>(getTheme);
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    setTheme(next);
+  };
+
+  // Backend health indicator — only show "offline" after 2 consecutive failures
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
+  const failCount = useRef(0);
   useEffect(() => {
+    let inflight = false;
     const check = () => {
-      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(8000) })
-        .then((r) => setBackendUp(r.ok))
-        .catch(() => setBackendUp(false));
+      if (inflight) return;
+      inflight = true;
+      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(20000) })
+        .then((r) => { failCount.current = 0; setBackendUp(r.ok); })
+        .catch(() => { failCount.current++; if (failCount.current >= 2) setBackendUp(false); })
+        .finally(() => { inflight = false; });
     };
     check();
-    const id = setInterval(check, 15_000);
+    const id = setInterval(check, 30_000);
     return () => clearInterval(id);
   }, []);
 
@@ -169,6 +180,15 @@ export const AppNavigation = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+
           {/* Notification bell */}
           {session && (
             <div className="relative" ref={notifRef}>
@@ -233,17 +253,25 @@ export const AppNavigation = () => {
           )}
 
           {/* Backend status dot */}
-          {session && backendUp !== null && (
+          {session && (
             <div
-              className={`hidden sm:flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded-full border ${
-                backendUp
+              className={`hidden sm:flex items-center gap-1.5 text-[11px] font-medium px-2 py-1 rounded-full border transition-all ${
+                backendUp === true
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                  : "bg-red-500/10 text-red-400 border-red-500/20"
+                  : backendUp === false
+                  ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+                  : "bg-secondary text-muted-foreground border-border"
               }`}
-              title={backendUp ? "ML backend online" : "ML backend offline — start uvicorn on port 8000"}
+              title={
+                backendUp === true
+                  ? "ML backend online"
+                  : backendUp === false
+                  ? "Backend may be warming up (Render free tier — retry in ~30s)"
+                  : "Checking backend…"
+              }
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${backendUp ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
-              {backendUp ? "API Online" : "API Offline"}
+              <span className={`w-1.5 h-1.5 rounded-full ${backendUp === true ? "bg-emerald-400 animate-pulse" : backendUp === false ? "bg-yellow-400" : "bg-muted-foreground"}`} />
+              {backendUp === true ? "API Online" : backendUp === false ? "Warming Up" : "Checking…"}
             </div>
           )}
 

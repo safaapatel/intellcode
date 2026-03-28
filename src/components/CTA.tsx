@@ -51,7 +51,7 @@ export const CTA = () => {
             </div>
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-success" />
-              12 ML models included
+              ML models included
             </div>
           </div>
         </div>

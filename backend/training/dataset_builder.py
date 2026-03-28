@@ -157,7 +157,7 @@ def build_security_dataset(
 
     count = 0
     with open(output_path, "w") as out:
-        for label, repo_list in [(1, positive_repos), (0, negative_repos)]:
+        for base_label, repo_list in [(1, positive_repos), (0, negative_repos)]:
             for file_info in iter_python_files(repo_list, github_token, max_per_repo):
                 source = file_info["content"]
                 try:
@@ -165,15 +165,16 @@ def build_security_dataset(
                     tokens = tokenize_code(source)[:512]
 
                     # Override label with scanner for conservative repos
-                    if label == 0:
+                    actual_label = base_label
+                    if base_label == 0:
                         scan = scan_security_patterns(source)
                         if scan.critical:
-                            label = 1
+                            actual_label = 1
 
                     record = {
                         "repo": file_info["repo"],
                         "path": file_info["path"],
-                        "label": label,
+                        "label": actual_label,
                         "tokens": tokens[:512],
                         "n_calls": ast_feats.get("n_calls", 0),
                         "n_imports": ast_feats.get("n_imports", 0),

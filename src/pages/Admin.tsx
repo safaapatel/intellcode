@@ -93,6 +93,7 @@ const Admin = () => {
   };
 
   const handleClearCache = async () => {
+    if (!window.confirm("Clear the backend analysis cache? All cached results will be removed and next analyses will re-run all models fresh.")) return;
     setClearingCache(true);
     try {
       await clearCache();
@@ -332,9 +333,30 @@ const Admin = () => {
           )}
 
           {healthLoading && (
-            <div className="bg-card border border-border rounded-xl p-6 flex items-center gap-3 text-muted-foreground">
-              <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-              <p className="text-sm">Fetching model status…</p>
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-secondary/30 text-left">
+                      <th className="py-3 px-4 text-muted-foreground font-medium">Model</th>
+                      <th className="py-3 px-4 text-muted-foreground font-medium">Architecture</th>
+                      <th className="py-3 px-4 text-muted-foreground font-medium">Loaded</th>
+                      <th className="py-3 px-4 text-muted-foreground font-medium">Registry Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        {Array.from({ length: 4 }).map((__, j) => (
+                          <td key={j} className="py-3 px-4">
+                            <div className="h-4 bg-secondary/60 rounded animate-pulse" style={{ width: j === 0 ? "140px" : j === 1 ? "100px" : "60px" }} />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

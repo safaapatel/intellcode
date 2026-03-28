@@ -192,21 +192,23 @@ const SEV_BORDER: Record<string, string> = {
   info:     "border-l-border",
 };
 
-function ScoreCircle({ score, label, size = 128 }: { score: number; label: string; size?: number }) {
+function ScoreCircle({ score, label, size = 128, danger = false }: { score: number; label: string; size?: number; danger?: boolean }) {
   const r = size / 2 - 8;
   const circ = 2 * Math.PI * r;
   const clamped = Math.max(0, Math.min(100, score));
+  // danger=true inverts colour logic: high value = bad = red (used for bug probability)
+  const colorScore = danger ? 100 - clamped : clamped;
   return (
     <div className="flex flex-col items-center gap-1">
       <div className="relative" style={{ width: size, height: size }}>
         <svg className="w-full h-full -rotate-90">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="hsl(var(--border))" strokeWidth="8" />
           <circle cx={size / 2} cy={size / 2} r={r} fill="none"
-            className={scoreStroke(clamped)} strokeWidth="8"
+            className={scoreStroke(colorScore)} strokeWidth="8"
             strokeDasharray={`${(clamped / 100) * circ} ${circ}`} strokeLinecap="round" />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`font-bold ${size >= 100 ? "text-3xl" : "text-xl"} ${scoreText(clamped)}`}>
+          <span className={`font-bold ${size >= 100 ? "text-3xl" : "text-xl"} ${scoreText(colorScore)}`}>
             {Math.round(clamped)}
           </span>
           <span className="text-[10px] text-muted-foreground">/100</span>
@@ -256,31 +258,31 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
         {[
           {
             label: "Security Issues",
-            value: r.security.summary.total,
-            sub: `${r.security.summary.critical} critical`,
-            cls: r.security.summary.critical > 0 ? "text-destructive" : "text-foreground",
-            border: r.security.summary.critical > 0 ? "border-l-destructive" : r.security.summary.total > 0 ? "border-l-orange-500" : "border-l-green-500",
+            value: r.security?.summary?.total ?? 0,
+            sub: `${r.security?.summary?.critical ?? 0} critical`,
+            cls: (r.security?.summary?.critical ?? 0) > 0 ? "text-destructive" : "text-foreground",
+            border: (r.security?.summary?.critical ?? 0) > 0 ? "border-l-destructive" : (r.security?.summary?.total ?? 0) > 0 ? "border-l-orange-500" : "border-l-green-500",
           },
           {
             label: "Bug Risk",
-            value: r.bug_prediction.risk_level.toUpperCase(),
-            sub: `${Math.round(r.bug_prediction.bug_probability * 100)}% probability`,
-            cls: ({ low: "text-green-500", medium: "text-yellow-500", high: "text-orange-500", critical: "text-destructive" } as Record<string, string>)[r.bug_prediction.risk_level] ?? "text-foreground",
-            border: ({ low: "border-l-green-500", medium: "border-l-yellow-500", high: "border-l-orange-500", critical: "border-l-destructive" } as Record<string, string>)[r.bug_prediction.risk_level] ?? "border-l-primary",
+            value: (r.bug_prediction?.risk_level ?? "unknown").toUpperCase(),
+            sub: `${Math.round((r.bug_prediction?.bug_probability ?? 0) * 100)}% probability`,
+            cls: ({ low: "text-green-500", medium: "text-yellow-500", high: "text-orange-500", critical: "text-destructive" } as Record<string, string>)[r.bug_prediction?.risk_level ?? ""] ?? "text-foreground",
+            border: ({ low: "border-l-green-500", medium: "border-l-yellow-500", high: "border-l-orange-500", critical: "border-l-destructive" } as Record<string, string>)[r.bug_prediction?.risk_level ?? ""] ?? "border-l-primary",
           },
           {
             label: "Clones Found",
-            value: r.clones.clones.length,
-            sub: `${(r.clones.clone_rate * 100).toFixed(0)}% duplication`,
+            value: r.clones?.clones?.length ?? 0,
+            sub: `${((r.clones?.clone_rate ?? 0) * 100).toFixed(0)}% duplication`,
             cls: "text-foreground",
-            border: r.clones.clones.length > 0 ? "border-l-yellow-500" : "border-l-green-500",
+            border: (r.clones?.clones?.length ?? 0) > 0 ? "border-l-yellow-500" : "border-l-green-500",
           },
           {
             label: "Dead Code",
-            value: `${r.dead_code.dead_line_count} lines`,
-            sub: `${(r.dead_code.dead_ratio * 100).toFixed(1)}% of file`,
+            value: `${r.dead_code?.dead_line_count ?? 0} lines`,
+            sub: `${((r.dead_code?.dead_ratio ?? 0) * 100).toFixed(1)}% of file`,
             cls: "text-foreground",
-            border: r.dead_code.dead_line_count > 0 ? "border-l-primary" : "border-l-green-500",
+            border: (r.dead_code?.dead_line_count ?? 0) > 0 ? "border-l-primary" : "border-l-green-500",
           },
         ].map((card) => (
           <div key={card.label} className={`bg-secondary/40 rounded-xl p-4 text-center border-l-4 ${card.border}`}>
@@ -441,7 +443,7 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-6">
-        <ScoreCircle score={pct} label="Bug Probability %" />
+        <ScoreCircle score={pct} label="Bug Probability %" danger />
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-sm">Risk level:</span>
@@ -918,17 +920,17 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
   });
 
   // Dead code
-  if ((r.dead_code?.total_dead_lines ?? 0) > 0) {
+  if ((r.dead_code?.dead_line_count ?? 0) > 0) {
     fixes.push({
       priority: "low",
       category: "Dead Code",
-      title: `Remove ${r.dead_code!.total_dead_lines} dead code lines`,
-      explanation: `${r.dead_code!.total_dead_lines} unused lines detected. Remove them to reduce maintenance burden and improve clarity.`,
+      title: `Remove ${r.dead_code!.dead_line_count} dead code lines`,
+      explanation: `${r.dead_code!.dead_line_count} unused lines detected. Remove them to reduce maintenance burden and improve clarity.`,
     });
   }
 
   // Debt
-  const rating = r.technical_debt?.debt_rating;
+  const rating = r.technical_debt?.overall_rating;
   if (rating && rating !== "A" && rating !== "B") {
     fixes.push({
       priority: rating === "F" || rating === "D" ? "high" : "medium",
@@ -1111,7 +1113,7 @@ const ReviewDetail = () => {
   <div class="score-ring">${result.overall_score}</div>
   <div>
     <h1 style="margin:0">${result.filename}</h1>
-    <div class="meta">${result.language} · ${result.duration_seconds}s · 12 models · ${new Date().toLocaleString()}</div>
+    <div class="meta">${result.language} · ${result.duration_seconds}s · ${new Date().toLocaleString()}</div>
     <div style="margin-top:8px">
       <span class="badge" style="background:${{ critical:"#7f1d1d",action_required:"#78350f",clean:"#14532d" }[result.status] ?? "#1e2330"};color:${{ critical:"#fca5a5",action_required:"#fcd34d",clean:"#86efac" }[result.status] ?? "#e2e8f0"}">${result.status.replace("_"," ").toUpperCase()}</span>
     </div>
@@ -1122,17 +1124,17 @@ const ReviewDetail = () => {
 <h2>Overview</h2>
 <table>
   ${row("Overall Score", `${result.overall_score}/100`)}
-  ${row("Security Issues", `${result.security.summary.total} (${result.security.summary.critical} critical, ${result.security.summary.high} high)`)}
-  ${row("Complexity", `${Math.round(result.complexity.score)}/100 — Grade ${result.complexity.grade}`)}
-  ${row("Bug Risk", `${result.bug_prediction.risk_level.toUpperCase()} (${Math.round(result.bug_prediction.bug_probability * 100)}% probability)`)}
-  ${row("Code Clones", `${result.clones.clones.length} blocks (${(result.clones.clone_rate * 100).toFixed(0)}% rate)`)}
-  ${row("Dead Lines", `${result.dead_code.dead_line_count} (${(result.dead_code.dead_ratio * 100).toFixed(1)}%)`)}
-  ${row("Technical Debt", `${result.technical_debt.total_debt_minutes} min — Rating ${result.technical_debt.overall_rating}`)}
+  ${row("Security Issues", result.security?.summary ? `${result.security.summary.total ?? 0} (${result.security.summary.critical ?? 0} critical, ${result.security.summary.high ?? 0} high)` : "N/A")}
+  ${row("Complexity", result.complexity ? `${Math.round(result.complexity.score ?? 0)}/100 — Grade ${result.complexity.grade ?? "N/A"}` : "N/A")}
+  ${row("Bug Risk", result.bug_prediction ? `${(result.bug_prediction.risk_level ?? "unknown").toUpperCase()} (${Math.round((result.bug_prediction.bug_probability ?? 0) * 100)}% probability)` : "N/A")}
+  ${row("Code Clones", result.clones ? `${result.clones.clones?.length ?? 0} blocks (${((result.clones.clone_rate ?? 0) * 100).toFixed(0)}% rate)` : "N/A")}
+  ${row("Dead Lines", result.dead_code ? `${result.dead_code.dead_line_count ?? 0} (${((result.dead_code.dead_ratio ?? 0) * 100).toFixed(1)}%)` : "N/A")}
+  ${row("Technical Debt", result.technical_debt ? `${result.technical_debt.total_debt_minutes ?? 0} min — Rating ${result.technical_debt.overall_rating ?? "N/A"}` : "N/A")}
 </table>
 
-${result.security.findings.length > 0 ? `
+${(result.security?.findings?.length ?? 0) > 0 ? `
 <h2>Security Findings</h2>
-${result.security.findings.map((f: { severity: string; title: string; description: string; lineno: number; cwe: string; snippet?: string }) => `
+${result.security!.findings.map((f: { severity: string; title: string; description: string; lineno: number; cwe: string; snippet?: string }) => `
 <div class="finding" style="border-color:${sev(f.severity)}">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
     <span class="badge" style="background:${sev(f.severity)}20;color:${sev(f.severity)}">${f.severity.toUpperCase()}</span>
@@ -1143,9 +1145,9 @@ ${result.security.findings.map((f: { severity: string; title: string; descriptio
   ${f.snippet ? `<pre>${f.snippet.replace(/</g, "&lt;")}</pre>` : ""}
 </div>`).join("")}` : ""}
 
-${result.bug_prediction.risk_factors.length > 0 ? `
+${(result.bug_prediction?.risk_factors?.length ?? 0) > 0 ? `
 <h2>Bug Risk Factors</h2>
-<ul style="color:#94a3b8;font-size:13px;padding-left:20px">${result.bug_prediction.risk_factors.map((f: string) => `<li>${f}</li>`).join("")}</ul>` : ""}
+<ul style="color:#94a3b8;font-size:13px;padding-left:20px">${result.bug_prediction!.risk_factors.map((f: string) => `<li>${f}</li>`).join("")}</ul>` : ""}
 
 <div class="meta" style="margin-top:32px;text-align:center">Generated by IntelliCode Review · ${new Date().toLocaleString()}</div>
 </body></html>`;
@@ -1172,7 +1174,7 @@ ${result.bug_prediction.risk_factors.length > 0 ? `
     lines.push(`\n**File:** \`${result.filename}\`  `);
     lines.push(`**Language:** ${result.language}  `);
     lines.push(`**Analyzed:** ${new Date().toLocaleString()}  `);
-    lines.push(`**Duration:** ${result.duration_seconds}s (12 models)\n`);
+    lines.push(`**Duration:** ${result.duration_seconds}s\n`);
     lines.push(`## Overall Quality Score\n\n${bar(pct)}\n`);
     lines.push(`## Metrics\n`);
     lines.push(`| Metric | Value |`);
@@ -1180,12 +1182,12 @@ ${result.bug_prediction.risk_factors.length > 0 ? `
     lines.push(`| Complexity | ${result.complexity?.score ?? "N/A"} |`);
     lines.push(`| Bug Probability | ${result.bug_prediction ? Math.round((result.bug_prediction.bug_probability ?? 0) * 100) + "%" : "N/A"} |`);
     lines.push(`| Bug Risk Level | ${result.bug_prediction?.risk_level ?? "N/A"} |`);
-    lines.push(`| Security Findings | ${result.security?.total_findings ?? 0} |`);
+    lines.push(`| Security Findings | ${result.security?.summary?.total ?? 0} |`);
     lines.push(`| Critical | ${result.security?.summary?.critical ?? 0} |`);
-    lines.push(`| Tech Debt | ${result.technical_debt?.total_minutes ?? 0} min |`);
-    lines.push(`| Debt Rating | ${result.technical_debt?.debt_rating ?? "N/A"} |`);
-    lines.push(`| Clone Rate | ${result.code_clones?.clone_percentage ?? 0}% |`);
-    lines.push(`| Dead Code Lines | ${result.dead_code?.total_dead_lines ?? 0} |`);
+    lines.push(`| Tech Debt | ${result.technical_debt?.total_debt_minutes ?? 0} min |`);
+    lines.push(`| Debt Rating | ${result.technical_debt?.overall_rating ?? "N/A"} |`);
+    lines.push(`| Clone Rate | ${result.clones?.clone_rate != null ? (result.clones.clone_rate * 100).toFixed(1) : 0}% |`);
+    lines.push(`| Dead Code Lines | ${result.dead_code?.dead_line_count ?? 0} |`);
     if (result.readability?.overall_score != null) lines.push(`| Readability | ${result.readability.overall_score}/100 |`);
     if (result.docs?.average_quality != null) lines.push(`| Doc Quality | ${result.docs.average_quality}/100 |`);
     lines.push(``);
@@ -1248,11 +1250,11 @@ th{background:#1e293b;color:#94a3b8;font-weight:500}@media print{body{-webkit-pr
 <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>
 <tr><td>Complexity Score</td><td>${result.complexity?.score ?? "N/A"}</td></tr>
 <tr><td>Bug Probability</td><td>${result.bug_prediction ? Math.round((result.bug_prediction.bug_probability ?? 0) * 100) + "%" : "N/A"}</td></tr>
-<tr><td>Security Findings</td><td>${result.security?.total_findings ?? 0}</td></tr>
+<tr><td>Security Findings</td><td>${result.security?.summary?.total ?? 0}</td></tr>
 <tr><td>Critical Issues</td><td>${result.security?.summary?.critical ?? 0}</td></tr>
-<tr><td>Tech Debt</td><td>${result.technical_debt?.total_minutes ?? 0} min (${result.technical_debt?.debt_rating ?? "N/A"})</td></tr>
-<tr><td>Clone Rate</td><td>${result.code_clones?.clone_percentage ?? 0}%</td></tr>
-<tr><td>Dead Code Lines</td><td>${result.dead_code?.total_dead_lines ?? 0}</td></tr>
+<tr><td>Tech Debt</td><td>${result.technical_debt?.total_debt_minutes ?? 0} min (${result.technical_debt?.overall_rating ?? "N/A"})</td></tr>
+<tr><td>Clone Rate</td><td>${result.clones?.clone_rate != null ? (result.clones.clone_rate * 100).toFixed(1) : 0}%</td></tr>
+<tr><td>Dead Code Lines</td><td>${result.dead_code?.dead_line_count ?? 0}</td></tr>
 ${result.readability ? `<tr><td>Readability</td><td>${result.readability.overall_score}/100</td></tr>` : ""}
 ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100</td></tr>` : ""}
 </tbody></table>
@@ -1275,40 +1277,18 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
       <div className="min-h-screen bg-background">
         <AppNavigation />
         <main className="container mx-auto px-4 py-8 max-w-5xl">
-          <div className="bg-card border border-border rounded-xl p-8 mb-6">
-            <div className="flex flex-col items-center mb-6">
-              <div className="relative w-32 h-32 mb-4">
-                <svg className="w-full h-full -rotate-90">
-                  <circle cx="64" cy="64" r="56" fill="none" stroke="hsl(var(--border))" strokeWidth="8" />
-                  <circle cx="64" cy="64" r="56" fill="none" className="stroke-primary" strokeWidth="8"
-                    strokeDasharray={`${(mockReviewResult.overallScore / 100) * 352} 352`} strokeLinecap="round" />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-3xl font-bold text-foreground">{mockReviewResult.overallScore}</span>
-                  <span className="text-xs text-muted-foreground">Code Quality</span>
-                </div>
-              </div>
-              <p className="text-sm text-muted-foreground text-center">
-                This is sample data.{" "}
-                <span className="text-primary cursor-pointer underline" onClick={() => navigate("/submit")}>
-                  Submit real code
-                </span>{" "}
-                to see live ML results across 12 models.
-              </p>
-            </div>
-            <div className="space-y-3">
-              {mockIssues.map((issue) => (
-                <div key={issue.id} className="bg-secondary/30 rounded-xl p-4 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <SevBadge sev={issue.severity} />
-                    <span className="font-semibold text-sm text-foreground">{issue.title}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{issue.description}</p>
-                </div>
-              ))}
-            </div>
+          <div className="bg-card border border-border rounded-xl p-8 mb-6 flex flex-col items-center gap-4 text-center">
+            <div className="text-4xl">🔍</div>
+            <h2 className="text-xl font-semibold text-foreground">Review not found</h2>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              This review no longer exists or was never saved.{" "}
+              <span className="text-primary cursor-pointer underline" onClick={() => navigate("/submit")}>
+                Submit code
+              </span>{" "}
+              to generate a new analysis.
+            </p>
           </div>
-          <Button variant="outline" onClick={() => navigate("/dashboard")}>← Back</Button>
+          <Button variant="outline" onClick={() => navigate("/reviews")}>← Back to Reviews</Button>
         </main>
       </div>
     );
@@ -1334,7 +1314,7 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
               </div>
               <h1 className="text-2xl font-bold text-foreground">Analysis Report</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                {result.language} · {result.duration_seconds}s · 12 models
+                {result.language} · {result.duration_seconds}s
               </p>
             </div>
           </div>

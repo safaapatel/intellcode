@@ -249,8 +249,8 @@ const Rules = () => {
       setPreviewResults(unique);
       toast.success(`Preview completed — ${unique.length} issue(s) found`);
     } catch {
-      toast.error("Backend offline. Start the server at localhost:8000 first.");
-      setPreviewResults([{ text: "Error: Could not connect to backend. Run: uvicorn main:app --reload --port 8000", sev: "critical" }]);
+      toast.error("Backend unreachable — it may be warming up. Try again in 30s.");
+      setPreviewResults([{ text: "Error: Backend offline or warming up. Wait 30 seconds and try again.", sev: "critical" }]);
     } finally {
       setIsPreviewing(false);
     }

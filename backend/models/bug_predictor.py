@@ -73,12 +73,11 @@ STATIC_FEATURE_NAMES = [
     "avg_function_complexity",
     "sloc",
     "comments",
-    "blank",
+    "blank_lines",
     "halstead_volume",
     "halstead_difficulty",
     "halstead_effort",
     "halstead_bugs",
-    "maintainability_index",
     "n_long_functions",
     "n_complex_functions",
     "max_line_length",
@@ -104,7 +103,7 @@ ALL_FEATURE_NAMES = STATIC_FEATURE_NAMES + GIT_FEATURE_NAMES
 def _extract_static_features(source: str) -> np.ndarray:
     from features.code_metrics import metrics_to_feature_vector
     metrics = compute_all_metrics(source)
-    # Use metrics_to_feature_vector to match the 17-feature vector used during training
+    # Use metrics_to_feature_vector to match the 16-feature vector used during training
     return np.array(metrics_to_feature_vector(metrics), dtype=np.float32)
 
 
@@ -233,6 +232,7 @@ class MLPBugPredictor:
         self._input_dim = input_dim
         self._model = None
         self._device = None
+        self._scaler = None
 
     def build(self):
         import torch
@@ -244,7 +244,10 @@ class MLPBugPredictor:
         if self._model is None:
             raise RuntimeError("Not built. Call build() then train().")
         self._model.eval()
-        xt = torch.tensor(x, dtype=torch.float32).unsqueeze(0).to(self._device)
+        x_in = x.copy()
+        if self._scaler is not None:
+            x_in = self._scaler.transform(x_in.reshape(1, -1)).flatten()
+        xt = torch.tensor(x_in, dtype=torch.float32).unsqueeze(0).to(self._device)
         with torch.no_grad():
             return float(self._model(xt).cpu().item())
 
@@ -299,8 +302,15 @@ class MLPBugPredictor:
                 meta = json.load(f)
             self._input_dim = meta.get("input_dim", self._input_dim)
         self.build()
-        self._model.load_state_dict(torch.load(path, map_location=self._device))
+        self._model.load_state_dict(torch.load(path, map_location=self._device, weights_only=True))
         self._model.eval()
+        # Load the StandardScaler saved during training (required for correct inference)
+        scaler_path = Path(path).parent / "mlp_scaler.pkl"
+        if scaler_path.exists():
+            with open(scaler_path, "rb") as f:
+                self._scaler = pickle.load(f)
+        else:
+            self._scaler = None
 
 
 # ---------------------------------------------------------------------------
@@ -496,18 +506,17 @@ class BugPredictionModel:
     @staticmethod
     def _heuristic_proba(static_feats: np.ndarray) -> tuple[float, float]:
         """
-        Rule-based probability estimate from static features (17-feature vector).
+        Rule-based probability estimate from static features (16-feature vector).
         Returns (probability, static_score).
         """
         f = static_feats.tolist()
-        # indices match STATIC_FEATURE_NAMES / metrics_to_feature_vector order
-        cc      = f[0]   # cyclomatic_complexity
-        cog     = f[1]   # cognitive_complexity
-        hb      = f[10]  # halstead_bugs
-        mi      = f[11]  # maintainability_index
-        n_long  = f[12]  # n_long_functions
-        n_complex = f[13] # n_complex_functions
-        over_80 = f[16]  # n_lines_over_80
+        # indices match STATIC_FEATURE_NAMES / metrics_to_feature_vector order (16 features)
+        cc        = f[0]   # cyclomatic_complexity
+        cog       = f[1]   # cognitive_complexity
+        hb        = f[10]  # halstead_bugs
+        n_long    = f[11]  # n_long_functions
+        n_complex = f[12]  # n_complex_functions
+        over_80   = f[15]  # n_lines_over_80
 
         score = 0.0
         score += min(0.3, (cc - 5) * 0.02) if cc > 5 else 0
@@ -515,7 +524,6 @@ class BugPredictionModel:
         score += min(0.15, hb * 0.05)
         score += min(0.15, n_complex * 0.05)
         score += min(0.10, n_long * 0.03)
-        score += min(0.05, max(0.0, (50.0 - mi) / 50.0) * 0.10)  # low MI = risky
         score += min(0.05, over_80 * 0.001)
 
         return min(0.95, max(0.02, score)), min(0.95, max(0.02, score))

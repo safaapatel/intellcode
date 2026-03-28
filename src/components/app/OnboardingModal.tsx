@@ -11,7 +11,7 @@ const STEPS = [
     icon: Code2,
     title: "Submit Code for Analysis",
     description:
-      "Paste any Python snippet or file into the Submit page and run it through all 12 ML models at once. Results appear in under 2 seconds.",
+      "Paste any Python snippet or file into the Submit page and run it through all ML models at once. Results appear in under 2 seconds.",
     action: "Go to Submit",
     path: "/submit",
   },
