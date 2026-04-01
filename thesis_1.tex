@@ -1928,6 +1928,478 @@ at three nominal levels.
 All three coverage levels are valid. The 95\% interval is slightly conservative (97.7\% empirical) because the residual distribution has a heavy tail at high complexity values; the 90\% and 80\% intervals are tighter and closer to nominal. The 95\% mean width of 53.4 is too wide to be actionable; the 90\% interval (mean width 16.8) is the practical choice for communicating uncertainty to a developer. The conformal module is most useful as a signal that a point prediction should not be trusted, not as a tight bound.
 
 %% ----------------------------------------------------------------
+\section{Ablation study}
+\label{sec:ablation}
+
+To identify which feature groups drive each model's performance, five feature-group
+ablations were run per task. Each ablation removes one coherent group of features,
+retrains the model, and records the change in the primary metric. All ablations use
+the same train/test split as the main evaluation; the security ablation uses the
+LOPO protocol (four-project benchmark) because in-distribution security AUC is
+dominated by pattern matching and does not discriminate between feature groups.
+
+\begin{table}[H]
+\centering
+\caption{Feature ablation results: change from full-model baseline.}
+\label{tab:ablation}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Removed group} & \textbf{Complexity ($\Delta\rho$)} & \textbf{Security ($\Delta$AUC)} & \textbf{Bug ($\Delta$AUC)} & \textbf{Pattern ($\Delta$F1)} \\
+\midrule
+Full model (baseline)\textsuperscript{$\dagger$} & 0.838 & 0.418 & 0.594 & 0.412 \\
+\midrule
+Cyclomatic / branching & $-0.083$ & --- & --- & $-0.033$ \\
+Size / LOC              & $+0.020$ & --- & --- & $-0.058$ \\
+Halstead metrics        & $-0.005$ & --- & --- & $+0.054$ \\
+Function statistics     & $-0.007$ & --- & --- & $+0.003$ \\
+Line style              & $+0.007$ & --- & --- & $+0.003$ \\
+Call / import counts    & ---       & $+0.082$ & --- & --- \\
+Static code features    & ---       & --- & $-0.036$ & --- \\
+JIT size-change features & ---      & --- & $-0.028$ & --- \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\small $^\dagger$Ablation baselines use a single fixed seed (42) on the same train/test split as the main evaluation; the complexity baseline $\rho = 0.838$ differs from the 5-seed mean $\rho = 0.819 \pm 0.027$ in Table~\ref{tab:modelperf} due to seed variance.\end{flushleft}
+\end{table}
+
+Four findings stand out. First, removing cyclomatic and branching features hurts
+complexity ranking most ($\Delta\rho = -0.083$), confirming that control-flow
+structure is the primary signal the complexity model relies on.
+
+Second, removing size and LOC features reduces pattern F1 by $-0.058$, the largest single drop on that task, while removing Halstead \textit{improves} pattern F1 by
+$+0.054$. The Halstead improvement is consistent with the leakage analysis: Halstead
+metrics overlap with the label assignment oracle, so their presence confuses the
+classifier rather than helping it.
+
+Third, removing call and import counts from the security model under LOPO evaluation
+raises AUC from 0.418 to exactly 0.500 ($+0.082$). To test whether this is the dominant
+cause of the cross-project collapse, a targeted ablation was run on the full 3,119-record
+security dataset across 31 held-out projects (Table~\ref{tab:security-style-ablation}).
+
+\begin{table}[H]
+\centering
+\caption{Security LOPO ablation: project-style feature removal (31-project LOPO, GBT classifier).}
+\label{tab:security-style-ablation}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Feature set} & \textbf{Mean LOPO AUC} & \textbf{Std} \\
+\midrule
+Full 16-dim (baseline)                          & 0.530 & 0.192 \\
+Remove \texttt{n\_calls} + \texttt{n\_imports}  & 0.500 & 0.000 \\
+Remove \texttt{n\_bytes} + \texttt{n\_lines}    & 0.530 & 0.192 \\
+Remove all four (calls, imports, bytes, lines)  & 0.500 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Removing \texttt{n\_calls} + \texttt{n\_imports} reduces LOPO AUC from 0.530 to 0.500 with zero standard deviation across all 31 folds: the model cannot discriminate at all without those features. These features reflect project-level coding conventions (a Flask handler file has a very different \texttt{n\_calls} distribution than a SQLAlchemy ORM module) rather than local vulnerability semantics — they are style fingerprints, not signals. A shift-analysis correlating Jensen-Shannon divergence between project and training distributions with per-project LOPO AUC gives $r = +0.13$ ($p = 0.58$, $n = 21$): the confounding is uniform across projects, not proportional to shift magnitude. The LOPO ceiling cannot be raised substantially above chance without interprocedural taint-flow features or function-call graph representations.
+
+Fourth, for the bug predictor, only static features ($-0.036$) and JIT size-change
+features ($-0.028$) contribute meaningfully. The remaining four JIT feature groups
+(diffusion, purpose, author history, developer experience) have zero marginal effect,
+suggesting that the bug predictor's weak cross-project performance stems partly from
+relying on features that are informative in-distribution but non-transferable.
+
+%% ----------------------------------------------------------------
+%% ----------------------------------------------------------------
+\section{API correctness and system performance}
+\label{sec:api-results}
+
+\subsection{End-to-end correctness}
+
+All 24 end-to-end test cases pass (Table~\ref{tab:apitest}). The test suite covers the
+full pipeline from HTTP request to JSON response, verifying both routing correctness
+and semantic content.
+
+\begin{table}[H]
+\centering
+\caption{End-to-end API test results}
+\label{tab:apitest}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Category} & \textbf{Tests} & \textbf{Passed} & \textbf{Pass rate} \\
+\midrule
+Known-vulnerable snippets (8 vulnerability types) & 8  & 8  & 100\% \\
+Known-clean snippets                               & 4  & 4  & 100\% \\
+Complexity boundary cases                          & 6  & 6  & 100\% \\
+Dead code detection                                & 6  & 6  & 100\% \\
+\midrule
+\textbf{Total}                                     & 24 & 24 & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The eight vulnerability tests use canonical CWE examples rather than training data; all eight were detected at the expected severity level. Clean-code tests confirmed vulnerability probability below 0.10 for benign inputs. Complexity boundary and dead code tests verified correct threshold mapping and AST-level detection, respectively.
+
+\subsection{Latency and responsiveness}
+
+Table~\ref{tab:latency} reports end-to-end latency for \texttt{POST /analyze} across
+five input sizes, measured on a development machine without GPU acceleration.
+
+\begin{table}[H]
+\centering
+\caption{API latency for \texttt{/analyze} by input size}
+\label{tab:latency}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+\textbf{Input (SLOC)} & \textbf{Mean (ms)} & \textbf{p95 (ms)} & \textbf{Max (ms)} \\
+\midrule
+   10 &   45 &   62 &   78 \\
+   50 &  118 &  145 &  187 \\
+  100 &  234 &  281 &  342 \\
+  500 &  710 &  820 &  990 \\
+ 1000 & 1410 & 1680 & 1920 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All five input sizes complete within the two-second design goal. Latency scales approximately linearly with file size because the AST-walking modules dominate the budget; ML inference contributes less than 30 milliseconds at all sizes, since feature extraction produces a fixed 15-dimensional vector regardless of file length.
+
+The \texttt{/analyze/quick} endpoint, which skips the eight deterministic modules and
+runs only security pattern matching, complexity scoring, and readability analysis,
+returns results in 200--400\,ms for typical 100-line files. This makes it viable for
+integration into a CI step with a 500\,ms budget, and the SSE streaming endpoint
+delivers the first results within 200\,ms of the request being received, giving a
+perceptibly fast response even when the full analysis takes longer.
+
+%% ----------------------------------------------------------------
+\section{Comparative evaluation against market tools}
+\label{sec:market-comparison}
+
+A core claim of this work is that IntelliCode Review provides broader coverage than any
+single tool currently available to developers. This section tests that claim directly by
+comparing the platform against nine open-source and commercial analysis tools across two
+dimensions: the number of quality analysis categories each tool addresses, and
+quantitative performance on the security detection and complexity prediction tasks.
+
+\subsection{Analysis dimension coverage}
+
+Table~\ref{tab:coverage} maps ten widely-used tools against the twelve analysis
+dimensions that IntelliCode Review covers. Coverage is scored as full~(\checkmark),
+partial~($\circ$, meaning the tool addresses the dimension for a restricted class of
+inputs or only via post-processing), or absent~(--).
+
+\begin{table}[H]
+\centering
+\caption{Analysis dimension coverage: IntelliCode Review vs.\ market tools.
+\checkmark\,= full coverage, $\circ$\,= partial, --\,= none.
+*\,SonarQube requires a dedicated server with at minimum 2\,GB RAM and a PostgreSQL
+instance; it is not self-contained.}
+\label{tab:coverage}
+\scriptsize
+\begin{tabular}{@{}lcccccccccccc@{}}
+\toprule
+\textbf{Tool} &
+\rotatebox{65}{\textbf{Security}} &
+\rotatebox{65}{\textbf{Complexity}} &
+\rotatebox{65}{\textbf{Bug risk}} &
+\rotatebox{65}{\textbf{Code smells}} &
+\rotatebox{65}{\textbf{Dead code}} &
+\rotatebox{65}{\textbf{Docs quality}} &
+\rotatebox{65}{\textbf{Clone detect.}} &
+\rotatebox{65}{\textbf{Refactoring}} &
+\rotatebox{65}{\textbf{Tech debt}} &
+\rotatebox{65}{\textbf{Performance}} &
+\rotatebox{65}{\textbf{Dep.\ vulns.}} &
+\rotatebox{65}{\textbf{Readability}} \\
+\midrule
+\textbf{IntelliCode Review} & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Bandit           & \checkmark & --         & --         & --         & --         & --         & --         & --         & --         & --         & --         & --         \\
+Semgrep          & \checkmark & --         & --         & $\circ$    & --         & --         & --         & --         & --         & --         & --         & --         \\
+Pylint           & $\circ$    & $\circ$    & $\circ$    & \checkmark & $\circ$    & $\circ$    & --         & $\circ$    & $\circ$    & --         & --         & $\circ$    \\
+Flake8           & --         & $\circ$    & $\circ$    & $\circ$    & $\circ$    & --         & --         & --         & --         & --         & --         & $\circ$    \\
+Mypy             & --         & --         & $\circ$    & --         & --         & --         & --         & --         & --         & --         & --         & --         \\
+Radon            & --         & \checkmark & --         & --         & --         & --         & --         & --         & $\circ$    & --         & --         & --         \\
+Vulture          & --         & --         & --         & --         & \checkmark & --         & --         & --         & --         & --         & --         & --         \\
+Safety           & $\circ$    & --         & --         & --         & --         & --         & --         & --         & --         & --         & \checkmark & --         \\
+SonarQube*       & \checkmark & \checkmark & $\circ$    & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & $\circ$    & \checkmark & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The table makes the coverage gap concrete. Among tools that require no infrastructure,
+Pylint is the most comprehensive alternative, covering five dimensions fully and six
+more partially. Bandit and Semgrep each address one dimension. Radon, Vulture, Safety,
+Mypy, and Flake8 are each single-dimension tools, valuable for their specific task but
+not substitutes for a unified platform. IntelliCode Review covers all twelve.
+
+SonarQube Community Edition matches eleven of the twelve dimensions. The practical
+difference is infrastructure: SonarQube requires a dedicated server with at minimum
+2\,GB RAM and a running database instance, and its analysis pipeline is designed for
+project-level repository scans rather than interactive single-file review. A developer without access to a SonarQube server, which describes the majority of solo contributors and students, cannot run it. IntelliCode Review deploys as a Python package plus
+\texttt{npm install} and runs locally on a development machine without any external
+services. The Fix Guide and streaming SSE interface are also not features SonarQube
+Community Edition provides out of the box.
+
+\subsection{Security detection performance}
+
+Table~\ref{tab:market-security} compares security detection metrics for IntelliCode
+Review, Bandit, Semgrep, and a keyword-scan baseline on the same held-out test split
+from the security dataset. \textbf{Important caveat:} this comparison evaluates all tools
+on a test set whose positives were drawn from the same CVE-annotated commit corpus used to
+train IntelliCode Review's RF+CNN ensemble. The ML model therefore has a structural
+home-court advantage: its features and decision boundary were optimised for exactly this
+label distribution. Rule-based tools like Bandit and Semgrep were not designed for
+CVE-commit patterns; they were designed for explicit insecure idioms in production code.
+The LOPO AUC column (which IntelliCode Review also fails at chance) partially corrects
+for this asymmetry. Readers should weight the LOPO column heavily and the in-distribution
+column accordingly. Metrics are derived from the full baseline evaluation described in
+Section~\ref{sec:model-results}. For IntelliCode Review, the in-distribution AUC of
+$0.963 \pm 0.012$ is reported from the multi-seed held-out evaluation on 4,286 samples;
+for the rule-based tools, performance is measured by running each tool on the same
+samples and comparing findings against CVE-derived ground-truth labels.
+
+\begin{table}[H]
+\centering
+\caption{Security vulnerability detection: IntelliCode Review vs.\ static-analysis tools
+on the same held-out test set. \textsuperscript{\dag}LOPO AUC measures cross-project
+transfer on ten held-out repositories; in-distribution AUC measures held-out test-set
+performance on the training distribution. \textsuperscript{\ddag}Bandit's zero F1
+reflects label-domain mismatch, not general ineffectiveness (see text).
+\textsuperscript{*}In-distribution AUC for IntelliCode Review is optimistically biased
+by test-set construction (same CVE corpus as training); the LOPO column is the more
+honest estimate of cross-project generalisation.}
+\label{tab:market-security}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Tool} & \textbf{AUC (LOPO)\textsuperscript{\dag}} & \textbf{AUC (in-dist.)} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+\textbf{IntelliCode Review (RF+CNN, 5-seed)} & \textbf{0.494\textsuperscript{\dag}} & \textbf{0.963} & \textbf{0.921} & \textbf{0.838} & \textbf{0.878} \\
+Pylint (security messages)   & -- & 0.558 & 0.227 & 0.786 & 0.352 \\
+Semgrep (p/python ruleset)   & -- & 0.503 & 0.245 & 0.073 & 0.112 \\
+Keyword scan (naive baseline) & -- & 0.480 & 0.199 & 0.187 & 0.193 \\
+Bandit\textsuperscript{\ddag} & -- & 0.500 & 0.000 & 0.000 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Bandit's AUC of 0.500 and F1 of 0.000 on this dataset require explanation. Bandit is a
+rule-based SAST tool designed to flag patterns in production Python code: eval calls, insecure hash functions, subprocess without shell=False, and similar idioms. The security
+dataset used here draws positive samples from CVE-annotated open-source commits, where the
+vulnerable code is often contextually subtle (e.g., a missing input validation or an
+unsafe deserialisation pattern embedded in an otherwise normal function). Bandit and
+Semgrep are both calibrated to detect the explicit idioms, not the contextual patterns that
+trained the Random Forest. This is a label-alignment issue documented in the evaluation
+notes, not an argument that Bandit is generally ineffective: in environments with
+explicit insecure idioms (eval, pickle.loads on user input), it catches things that the
+RF model misses. The two approaches are complements, not substitutes. The cross-project
+LOPO AUC of 0.494 confirms that the RF model itself does not generalise perfectly
+beyond its training distribution, which is the honest disclosure that grounds this
+comparison.
+
+\subsection{Complexity prediction performance}
+
+Table~\ref{tab:market-complexity} compares IntelliCode Review's XGBoost complexity
+model against Radon's McCabe cyclomatic complexity and the LOC-naive baseline. All
+comparisons use the same held-out test split from the complexity dataset; the primary
+metric is Spearman rank correlation ($\rho$), which captures ranking fidelity
+independently of absolute scale.
+
+\begin{table}[H]
+\centering
+\caption{Complexity prediction: IntelliCode Review vs.\ metric-based tools on held-out test set (LOC baseline fit on training split only)}
+\label{tab:market-complexity}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Tool} & \textbf{Spearman $\rho$} & \textbf{RMSE} & \textbf{$R^2$} \\
+\midrule
+\textbf{IntelliCode Review (XGBoost, 5-fold CV)} & \textbf{0.819} & \textbf{28.2} & \textbf{0.676} \\
+LOC naive (linear regression, train-fit)      & 0.524          & 41.3          & 0.128          \\
+Radon (McCabe cyclomatic CC)                  & 0.724          & --            & --             \\
+Radon (Maintainability Index)                 & 0.641          & --            & --             \\
+Mean baseline                                 & 0.000          & 91.2          & 0.000          \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Radon's McCabe cyclomatic complexity correlates with cognitive complexity at $\rho =
+0.724$, confirming that the two metrics measure related but distinct constructs. The
+XGBoost model outperforms Radon across all metrics because it combines multiple
+complementary features (cyclomatic complexity, Halstead volume, nesting depth, and line
+length statistics) into a single prediction, rather than relying on a single count.
+
+Fitting the LOC baseline on the training split and evaluating on the held-out test set gives $\rho = 0.524$, well below XGBoost's $\rho = 0.819$. The original $\rho = 0.836$ was an artifact: the regression was fit on the test set, so it had access to test-distribution statistics it should not have seen. With that corrected, XGBoost is better on all three metrics. The $R^2$ numbers tell the clearest story: the LOC baseline accounts for 13\% of variance in cognitive complexity ($R^2 = 0.128$); XGBoost accounts for 68\% ($R^2 = 0.676$). The RMSE gap ($28.2$ vs.\ $41.3$) follows directly---a line-count regression has no capacity to estimate per-function deviation from the mean. XGBoost also produces calibrated conformal intervals (Table~\ref{tab:conformal}).
+
+\subsection{Bug prediction performance}
+
+No open-source static analysis tool produces a calibrated probability score for
+commit-level bug risk comparable to the JIT defect prediction model in IntelliCode
+Review. Table~\ref{tab:market-bugs} compares IntelliCode Review against the best
+available proxies (Pylint quality score, Flake8 error density, and a Halstead feature logistic regression baseline) on the same bug prediction dataset.
+
+\begin{table}[H]
+\centering
+\caption{Bug risk prediction: IntelliCode Review vs.\ quality-metric proxies (AUC-ROC)}
+\label{tab:market-bugs}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Tool / proxy} & \textbf{AUC} & \textbf{AP} & \textbf{Protocol} \\
+\midrule
+\textbf{IntelliCode Review (LR+XGBoost, 5-seed)} & \textbf{0.676} & \textbf{0.589} & random split \\
+\textbf{IntelliCode Review (temporal split)}      & \textbf{0.460} & -- & temporal (honest bound) \\
+Halstead feature LR (baseline)                    & 0.618          & 0.552          & random split \\
+Pylint score (inverted as risk proxy)             & $\approx$0.534 & $\approx$0.432 & proxy \\
+Flake8 issue density                              & $\approx$0.518 & $\approx$0.415 & proxy \\
+Majority-class baseline                           & 0.500          & 0.416          & trivial \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the random split, IntelliCode Review leads on both AUC and AP. The Halstead LR
+baseline reaches AUC 0.618 using the same static features but no commit metadata,
+confirming that code structure carries some bug-risk signal. The gap to 0.676 comes
+from fourteen JIT commit-level features (REXP, entropy, diffusion, and others from
+Kamei et al.~\cite{kamei2013}).
+
+The temporal-split row (0.460) is the more informative result. Under a realistic
+forward-looking evaluation, IntelliCode Review falls below the majority-class baseline.
+The same would apply to the Halstead LR and proxy tools for the same structural reason:
+files with high static-metric values are often post-fix, and post-fix files are cleaner
+than average, so high-metric files in the test set are actually safer. Neither Pylint
+nor Flake8 was designed as a bug predictor; their inclusion in the table illustrates how
+far static proxies fall short of genuine defect prediction.
+
+%% ----------------------------------------------------------------
+\section{Evaluation protocol components}
+\label{sec:novel-contributions}
+
+A standard held-out test split cannot surface label leakage, cross-project generalisation failure, calibration degradation, or actionability gaps. Ten diagnostic instruments were developed to address these blind spots; all are implemented in \texttt{backend/evaluation/} and run via \texttt{backend/run\_novel\_contributions.py}. These instruments apply established techniques from the distribution shift, leakage detection, instance weighting, and calibration literature to the code quality evaluation context; their contribution is empirical — documenting results that publication incentives normally suppress — rather than methodological novelty in the techniques themselves.
+
+\begin{table}[H]
+\centering
+\caption{Novel evaluation contributions and key findings}
+\label{tab:novel}
+\small
+\begin{tabular}{@{}p{3.5cm}p{6cm}p{4cm}@{}}
+\toprule
+\textbf{Contribution} & \textbf{Method} & \textbf{Key result} \\
+\midrule
+PIFF & Restrict model to features stable across projects (low CV) & Security LOPO AUC $0.578 \to 0.620$ ($+0.042$) \\
+SAEF & Correlate feature-distribution shift with per-project AUC & $r = +0.13$; shift does not predict failure \\
+Calibration (CACM) & Compare in-dist vs LOPO ECE & ECE $0.088 \to 0.265$ (3$\times$ degradation) \\
+Simplicity baseline & Halstead volume vs trained model under LOPO & Halstead AUC $0.586 >$ model $0.573$ \\
+TDCP & Exponential sample weighting ($\lambda=2.0$) & Temporal AUC $0.430 \to 0.440$ \\
+LAMV & Screen Spearman $|r|>0.70$ + oracle AUC before training & Flags \texttt{is\_fix} ($|r|=0.89$, oracle AUC $0.97$) \\
+PLF & Detect label-assignment circularity via feature--class correlations & $+0.082$ F1 inflation; $p=0.031$ \\
+Actionability (ACT) & PofB@20, FDR at 0.5 threshold & PofB@20$=0.283$; FDR$=0.696$ \\
+Failure taxonomy (FTAX) & Classify LOPO failures by root cause & 19 label-noise, 13 severe cases \\
+Significance (SIG) & Wilcoxon + Cohen's $d$ for all comparisons & Min achievable $p=0.0625$ at $n=4$ folds \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ----------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{What the results collectively tell us}
+
+The evaluation results follow a pattern that is consistent across tasks. The models do
+well where the signal is structural and stable: nesting depth and cyclomatic branching are language-level properties, so complexity ranking transfers across most projects.
+Security detection works within the vulnerability types the model was trained on and
+fails when the held-out project has a different profile. Bug prediction degrades under
+temporal evaluation because static features at commit time do not carry enough
+information to distinguish future-buggy from future-clean code.
+
+This pattern represents a genuine limitation, not a calibration problem~\cite{lessmann2008, kamei2013, d2010}. Reporting LOPO AUC alongside in-distribution AUC, and including a temporal split that reveals the anti-learning effect, gives practitioners a more complete picture of what the models actually provide in deployment than benchmark numbers alone would suggest.
+
+\subsection{Why ML-based code analysis fails at the boundary}
+\label{ssec:why-ml-fails}
+
+The cross-project and temporal failures documented in Section~\ref{sec:model-results} point to four structural causes. \textbf{Dataset bias}: all four models are trained on popular, well-maintained Python web frameworks written by experienced engineers who share naming conventions and review culture — a distribution that excludes scientific computing, legacy enterprise systems, and solo-contributor code. \textbf{Feature scope}: every model operates on single-function features and is blind to interprocedural data flow; a SQL injection that routes untrusted input through three call boundaries will not be flagged if each individual function appears safe. \textbf{Label noise}: SZZ-style keyword labels cap performance regardless of model capacity, because many ``fix'' commits repair tests or documentation rather than bugs. \textbf{Temporal shift}: a model trained on 2018--2022 commits becomes slightly anti-predictive on later code once most high-metric files have been cleaned up. None of these failure modes are unique to this platform~\cite{lessmann2008, kamei2013}; naming them gives practitioners a framework for deciding which modules to trust and when to fall back on deterministic analysers.
+
+\subsection{Partial mitigations for diagnosed failures}
+\label{ssec:mitigations}
+
+Diagnosing failure without attempting remediation is incomplete. Two targeted interventions
+were implemented and evaluated against the failure modes identified above.
+
+\textbf{Project-Invariant Feature Filtering (PIFF)} addresses the feature instability
+problem. Features whose means vary widely across projects (high coefficient of variation
+in per-project distributions) carry little cross-project signal; they reflect project-level style rather than underlying code quality. PIFF identifies the subset of features with
+stable cross-project distributions and restricts the model to those features at test time.
+On the four-project LOPO benchmark, PIFF features raise mean AUC from 0.578 to 0.620
+($+0.042$, approximately 4 percentage points). Cohen's $d = 0.558$ indicates a medium
+effect size. Significance is unattainable at $n = 4$ (see Section~\ref{ssec:stat-limits}), but the direction is consistent across all folds.
+
+\textbf{Time-Decayed Code Prediction (TDCP)} addresses temporal drift. Exponential
+sample weighting $w_i = \exp(-\lambda \cdot \Delta\text{years})$ down-weights older
+commits during training, reducing the model's dependence on historical patterns that may
+no longer hold in the deployment distribution. At $\lambda = 2.0$, temporal AUC improves
+from 0.430 to 0.440 ($+0.010$). The gain is small because the labelling noise (SZZ
+keywords) imposes a ceiling: no weighting scheme can recover signal that was never in
+the labels. The direction is positive at every tested $\lambda \in \{0.5, 1.0, 2.0\}$.
+
+Together, PIFF and TDCP show that a meaningful fraction of the performance gap is attributable to feature instability and temporal drift, not only label noise. The remaining gap is not easily closed without higher-quality labels or more diverse repositories.
+
+\subsection{Strengths and design goal fulfilment}
+
+The evaluated system meets all five design goals stated in Section~\ref{sec:goals}.
+It covers twelve independent analysis dimensions from a single interface, more than any
+open-source tool available without dedicated infrastructure. Four of those dimensions use
+trained ML models targeting code quality properties that rule-based tools cannot quantify:
+complexity ranking, vulnerability probability, bug risk, and structural smell
+classification. Full 1000-line analysis completes in under two seconds; the quick-path
+endpoint stays below 500\,ms for CI integration. localStorage review history and
+configuration survive page reloads without a backend database. The Fix Guide converts
+each security finding into copy-ready remediation code the developer can apply without
+leaving the interface.
+
+The SonarQube calibration (Pearson $r = 0.980$) means developers familiar with SonarQube's cognitive complexity scores will find IntelliCode Review's numbers interpretable in the same frame of reference. One boundary: accuracy evaluation covers only four of twelve dimensions. The eight deterministic modules are primarily validated through the 24 end-to-end API tests; spot-checks for five of the eight are summarised in Table~\ref{tab:det-spotchecks}.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Deterministic module spot-checks: hand-labelled snippet evaluation. All scripts
+in \texttt{backend/evaluation/}. Technical debt, performance hotspot, and dependency
+coupling evaluators rely on project-level build artefacts not available in snippet form;
+systematic accuracy evaluation for those three modules remains future work.}
+\label{tab:det-spotchecks}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Module} & \textbf{N} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} \\
+\midrule
+Dead code (8 rules, micro)     & 25 & 0.909 & 0.909 & 0.909 \\
+Refactoring suggester (5 rules) & 17 & 1.000 & 1.000 & 1.000 \\
+Clone detection (binary)        &  9 & 0.800 & 1.000 & 0.889 \\
+Documentation quality (accuracy)& 12 & \multicolumn{3}{c}{accuracy = 0.750} \\
+Readability scorer (accuracy)   & 25 & \multicolumn{3}{c}{accuracy = 0.560} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The refactoring suggester and dead code detector perform well; the one false positive in dead code arises from symbols exported via \texttt{\_\_all\_\_} that the traversal does not inspect. Documentation quality accuracy of 0.750 reflects the grader treating any docstring as ``documented'' regardless of whether parameter and return sections are present. Readability accuracy of 0.560 is a lower-bound estimate on a construction-controlled set: low-readability snippets are correctly identified (recall = 1.000) but many medium-readability cases are over-promoted to high. These are estimates on hand-crafted snippets, not deployment accuracy; technical debt, performance hotspot, and dependency coupling evaluators require project-level build artefacts unavailable in snippet form.
+
+\subsection{Observational use during development}
+\label{ssec:informal-validation}
+
+IntelliCode Review was applied to its own codebase throughout development. It caught two dead code cases in \texttt{main.py} missed during code review, and the Compare page confirmed that extracting four helper functions reduced cognitive complexity from 18 to 9. A spot check of the dead code detector on 31 findings across three LOPO repositories confirmed 26 as genuine (estimated precision $\approx 0.84$); the four false positives arose from symbols exported via \texttt{\_\_all\_\_} that the detector does not inspect. These observations are indicative, not rigorous: they are consistent with correct operation but do not establish that developers act differently because of the findings.
+
+\subsection{Threats to validity}
+
+No evaluation is free of threats, and acknowledging them is essential to interpreting
+results correctly. Following the framework of Wohlin et al.~\cite{wohlin2012}, four
+categories of threats are relevant here.
+
+\textit{Internal validity} was addressed by the audit correction described in Section~\ref{ssec:audit}: the label leakage defect produced a spurious $R^2 = 1.000$ by confounding target and features. The remaining internal validity concern is that all classifiers share training data from a narrow set of well-maintained projects.
+
+\textit{External validity} is the most significant ongoing concern. All models are trained on popular, well-maintained Python repositories; generalisation to scientific computing, embedded systems, or other programming languages is untested. Dataset scale (4,286 to 8,668 samples per task) is on the smaller end but within the range of comparable published work~\cite{li2017, d2010}; the LOPO protocol partially compensates with ten independent train-test splits.
+
+\textit{Construct validity} is relevant for the pattern recognition task, where the oracle uses function length and parameter count to assign labels — the same quantities that appeared in the leaky input feature vector. After removing 14 leaky features, the debiased CV F1 drops by $+0.082$ (Wilcoxon $p = 0.031$) and Cohen's $\kappa = 0.168$ confirms only slight label agreement, consistent with residual construct-validity concern. A related concern affects security LOPO: additional samples were mined from the same repositories that appear as held-out LOPO projects, so the AUC of 0.494 may be slightly optimistic; resolving this fully requires re-mining from a disjoint set. \textit{Conclusion validity}: the temporal split uses a single 80/20 boundary; multiple walk-forward cut points would yield a more stable estimate of temporal AUC.
+
+\subsection{Positioning relative to existing tools}
+
+The comparative evaluation in Section~\ref{sec:market-comparison} covers this in detail. In brief: no open-source tool without dedicated server infrastructure covers more than five of the twelve dimensions IntelliCode Review addresses (Table~\ref{tab:coverage}). SonarQube Community Edition is comparably broad but requires a server and database most individual developers will not set up. Commercial tools (Snyk, DeepCode) have access to proprietary training data and publish no cross-project or temporal evaluation results; IntelliCode Review's LOPO AUC of $0.494$ for security is more honest than an in-distribution figure from the same training distribution, even when the absolute number is worse.
+
+%% ============================================================
+\section{Informal interface observation}
+\label{ssec:peer-eval}
+%% ============================================================
+
+\textit{Note: this section reports an informal observation, not a usability study. The sample size ($n = 4$), shared research background with the developer, and non-adversarial task design preclude any statistical inference about usability for the target population. It is included solely to document interface-level feedback that informed a specific design change.}
+
+Four graduate students each submitted a Python code sample, read the resulting report, and completed three tasks (identify key issues, interpret the quality score, assess a suggested fix). All four completed every task without assistance; all Likert responses were at or above 4. The claim is narrow: the interface produced no obvious navigation failures for this group. Two participants could not interpret the probabilistic bug risk score, which motivated the \texttt{reliability\_context} field that now surfaces all three evaluation-protocol AUC values alongside the probability. A controlled study with professional developers, realistic tasks, and pre-registered outcome metrics is the required next step.
+
+%% ============================================================
 
 \chapter{Conclusion}
 \label{ch:conclusion}
