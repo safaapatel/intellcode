@@ -14,7 +14,7 @@ Detected issues:
     circular_import     — A imports B which imports A (multi-file detection)
     god_import          — a single imported module is used everywhere in the code
     unused_stdlib       — standard library module imported but not referenced
-    deep_relative       — relative imports more than 2 levels deep (..\..)
+    deep_relative       — relative imports more than 2 levels deep (../..)
     import_inside_func  — import statement inside a function body
 
 Coupling categories:
