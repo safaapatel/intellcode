@@ -475,3 +475,13 @@ def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
         float(m.avg_line_length),              # 13
         float(m.n_lines_over_80),              # 14
     ]
+
+
+def compute_metrics_for_language(source: str, language: str = "python") -> "CodeMetricsResult":
+    """
+    Dispatch metric computation to the correct language backend.
+    Returns CodeMetricsResult regardless of language so all downstream
+    ML models receive the same 15-dim feature vector.
+    """
+    from features.multi_lang.adapter import compute_metrics_for_language as _dispatch
+    return _dispatch(source, language)
