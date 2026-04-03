@@ -1,10 +1,4 @@
-import type {
-  FullAnalysisResult,
-  DocQualityResult,
-  PerformanceResult,
-  DependencyResult,
-  ReadabilityResult,
-} from "@/types/analysis";
+import type { FullAnalysisResult } from "@/types/analysis";
 import { addEntry } from "@/services/reviewHistory";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
@@ -32,11 +26,15 @@ interface AnalyzeRequest {
   git_metadata?: Record<string, number>;
 }
 
-async function post<T>(path: string, body: AnalyzeRequest): Promise<T> {
+// Tracks any in-flight analysis request so rapid resubmits cancel the previous one
+let _currentAnalysisController: AbortController | null = null;
+
+async function post<T>(path: string, body: AnalyzeRequest, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -45,7 +43,12 @@ async function post<T>(path: string, body: AnalyzeRequest): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Run all ML models on the given code. Calls /analyze + 4 specialist endpoints in parallel. */
+/**
+ * Run all ML models on the given code via a single /analyze call.
+ * The backend now returns docs/performance/dependencies/readability
+ * in wave 2 of the same request — no extra round trips needed.
+ * Rapid resubmits automatically cancel the previous in-flight request.
+ */
 export async function analyzeCode(
   code: string,
   filename = "snippet.py",
@@ -53,42 +56,18 @@ export async function analyzeCode(
   gitMetadata?: Record<string, number>,
   repoName?: string
 ): Promise<FullAnalysisResult & { _entryId?: string }> {
-  const req: AnalyzeRequest = {
-    code,
-    filename,
-    language,
-    git_metadata: gitMetadata,
-  };
-
-  // Core analysis (8 models) + 4 specialist models — all in parallel
-  const [core, docs, performance, dependencies, readability] = await Promise.all([
-    post<FullAnalysisResult>("/analyze", req),
-    post<DocQualityResult>("/analyze/docs", req).catch(() => undefined),
-    post<PerformanceResult>("/analyze/performance", req).catch(() => undefined),
-    post<DependencyResult>("/analyze/dependencies", req).catch(() => undefined),
-    post<ReadabilityResult>("/analyze/readability", req).catch(() => undefined),
-  ]);
-
-  const result: FullAnalysisResult = {
-    ...core,
-    docs,
-    performance,
-    dependencies,
-    readability,
-  };
-
-  // Recompute overall score to incorporate all model signals (specialists included)
-  const specialistScores: number[] = [];
-  if (readability?.overall_score != null) specialistScores.push(readability.overall_score);
-  if (docs?.average_quality != null) specialistScores.push(docs.average_quality);
-  if (performance?.hotspot_score != null) specialistScores.push(Math.max(0, 100 - performance.hotspot_score));
-  if (dependencies?.coupling_score != null) specialistScores.push(Math.max(0, 100 - dependencies.coupling_score));
-  if (specialistScores.length > 0) {
-    const specialistAvg = specialistScores.reduce((a, b) => a + b, 0) / specialistScores.length;
-    // Weight: 70% backend score (security/complexity/bugs/debt/clones), 30% specialist avg
-    result.overall_score = Math.round((result.overall_score ?? 50) * 0.7 + specialistAvg * 0.3);
-    result.overall_score = Math.max(0, Math.min(100, result.overall_score));
+  // Cancel any previous in-flight request
+  if (_currentAnalysisController) {
+    _currentAnalysisController.abort();
   }
+  _currentAnalysisController = new AbortController();
+  const { signal } = _currentAnalysisController;
+
+  const req: AnalyzeRequest = { code, filename, language, git_metadata: gitMetadata };
+
+  const result = await post<FullAnalysisResult>("/analyze", req, signal);
+
+  _currentAnalysisController = null;
 
   // Persist to localStorage so Reviews + Dashboard show real data
   const entry = addEntry(result, filename, language, repoName);

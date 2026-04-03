@@ -119,10 +119,14 @@ def _function_cyclomatic(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> i
 class _CognitiveComplexityVisitor(ast.NodeVisitor):
     """
     Approximates SonarSource's Cognitive Complexity metric.
-    Rules:
-      B1 — control flow structures increment by 1 + current nesting level
-      B2 — sequences of logical operators increment by 1 each
-      B3 — recursion increments by 1
+
+    Rules (per SonarSource specification v1.2):
+      B1 — control flow structures (if/for/while/except/match) add 1 + nesting level
+      B2 — logical operator sequences (and/or) add 1 per distinct run
+      B3 — recursion adds 1 per recursive call site
+      NOTE: `with` does NOT increment (it is a resource manager, not a branch).
+            `else` on for/while loops adds +1 (it is a surprising flow branch).
+            Nested functions/lambdas increase nesting depth but do not self-increment.
     """
 
     def __init__(self):
@@ -133,17 +137,33 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
     def _increment(self, n: int = 1):
         self.score += n
 
+    # ── Functions and lambdas raise nesting depth, no self-increment ──────────
+
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self._func_names.add(node.name)
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        self._func_names.add(node.name)
+        self._nesting += 1
+        self.generic_visit(node)
+        self._nesting -= 1
+
+    def visit_Lambda(self, node: ast.Lambda):
+        # Lambda is a nested callable — raises nesting depth only
+        self._nesting += 1
+        self.generic_visit(node)
+        self._nesting -= 1
+
+    # ── Control flow (B1) ─────────────────────────────────────────────────────
 
     def visit_If(self, node: ast.If):
         self._increment(1 + self._nesting)
         self._nesting += 1
+        # Visit body manually to avoid double-counting elif chains.
+        # ast represents elif as a nested ast.If in node.orelse — visit normally.
         self.generic_visit(node)
         self._nesting -= 1
 
@@ -152,14 +172,25 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
+        # `else` clause on a for loop is a structural surprise — +1 (no nesting bonus)
+        if node.orelse:
+            self._increment(1)
 
-    visit_AsyncFor = visit_For  # type: ignore
+    def visit_AsyncFor(self, node: ast.AsyncFor):  # type: ignore[override]
+        self._increment(1 + self._nesting)
+        self._nesting += 1
+        self.generic_visit(node)
+        self._nesting -= 1
+        if node.orelse:
+            self._increment(1)
 
     def visit_While(self, node: ast.While):
         self._increment(1 + self._nesting)
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
+        if node.orelse:
+            self._increment(1)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler):
         self._increment(1 + self._nesting)
@@ -168,18 +199,28 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
         self._nesting -= 1
 
     def visit_With(self, node: ast.With):
-        self._increment(self._nesting)   # no structural increment, only nesting
+        # `with` is a resource manager — no structural increment, no nesting penalty
+        self.generic_visit(node)
+
+    visit_AsyncWith = visit_With  # type: ignore[assignment]
+
+    # Python 3.10+ structural pattern matching
+    def visit_Match(self, node: ast.Match):  # type: ignore[override]
+        self._increment(1 + self._nesting)
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
 
+    # ── Logical operators (B2) ────────────────────────────────────────────────
+
     def visit_BoolOp(self, node: ast.BoolOp):
-        # Each operator token (and/or) adds 1
+        # Each `and`/`or` token between values adds 1 (len(values) - 1 operators)
         self._increment(len(node.values) - 1)
         self.generic_visit(node)
 
+    # ── Recursion (B3) ────────────────────────────────────────────────────────
+
     def visit_Call(self, node: ast.Call):
-        # Recursion
         if isinstance(node.func, ast.Name) and node.func.id in self._func_names:
             self._increment(1)
         self.generic_visit(node)
@@ -397,28 +438,28 @@ def compute_all_metrics(source: str) -> CodeMetricsResult:
 
 def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
     """
-    Flatten a CodeMetricsResult into a 16-element numeric feature vector.
-    Order must stay consistent with training.
+    Flatten a CodeMetricsResult into a 15-element numeric feature vector.
+    Order must stay consistent with FEATURE_NAMES in complexity_prediction.py.
 
-    NOTE: maintainability_index is intentionally EXCLUDED — it is used as the
-    training target for the complexity model, so including it here would cause
-    direct target leakage (previously caused R²=1.000 on training data).
+    EXCLUDED:
+      - cognitive_complexity : this is the prediction TARGET (leakage fix Mar 2026)
+      - maintainability_index: closed-form formula of halstead_volume * cyclomatic
+                               * sloc — all already in the vector, causing R²≈1.0
     """
     return [
-        float(m.cyclomatic_complexity),
-        float(m.cognitive_complexity),
-        float(m.max_function_complexity),
-        float(m.avg_function_complexity),
-        float(m.lines.sloc),
-        float(m.lines.comments),
-        float(m.lines.blank),
-        float(m.halstead.volume),
-        float(m.halstead.difficulty),
-        float(m.halstead.effort),
-        float(m.halstead.bugs_delivered),
-        float(m.n_long_functions),
-        float(m.n_complex_functions),
-        float(m.max_line_length),
-        float(m.avg_line_length),
-        float(m.n_lines_over_80),
+        float(m.cyclomatic_complexity),        # 0
+        float(m.max_function_complexity),      # 1
+        float(m.avg_function_complexity),      # 2
+        float(m.lines.sloc),                   # 3
+        float(m.lines.comments),               # 4
+        float(m.lines.blank),                  # 5
+        float(m.halstead.volume),              # 6
+        float(m.halstead.difficulty),          # 7
+        float(m.halstead.effort),              # 8
+        float(m.halstead.bugs_delivered),      # 9
+        float(m.n_long_functions),             # 10
+        float(m.n_complex_functions),          # 11
+        float(m.max_line_length),              # 12
+        float(m.avg_line_length),              # 13
+        float(m.n_lines_over_80),              # 14
     ]

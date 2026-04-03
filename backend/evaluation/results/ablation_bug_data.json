@@ -1,0 +1,81 @@
+{
+  "task": "bug",
+  "metric": "auc",
+  "baseline": {
+    "config_name": "full_data_100%",
+    "ablated": "none",
+    "auc": 0.5937,
+    "ap": 0.4274,
+    "f1": 0.3039,
+    "rmse": null,
+    "spearman": null,
+    "n_train": 960,
+    "n_test": 240,
+    "delta_auc": null,
+    "pvalue": null,
+    "cohens_d": null,
+    "cliffs_delta": null
+  },
+  "ablations": [
+    {
+      "config_name": "data_10%",
+      "ablated": "data_frac=0.1",
+      "auc": 0.5032,
+      "ap": 0.4055,
+      "f1": 0.3001,
+      "rmse": null,
+      "spearman": null,
+      "n_train": 96,
+      "n_test": 24,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_25%",
+      "ablated": "data_frac=0.25",
+      "auc": 0.4632,
+      "ap": 0.3868,
+      "f1": 0.2322,
+      "rmse": null,
+      "spearman": null,
+      "n_train": 240,
+      "n_test": 60,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_50%",
+      "ablated": "data_frac=0.5",
+      "auc": 0.6271,
+      "ap": 0.4514,
+      "f1": 0.3073,
+      "rmse": null,
+      "spearman": null,
+      "n_train": 480,
+      "n_test": 120,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_75%",
+      "ablated": "data_frac=0.75",
+      "auc": 0.6075,
+      "ap": 0.4521,
+      "f1": 0.3028,
+      "rmse": null,
+      "spearman": null,
+      "n_train": 720,
+      "n_test": 180,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    }
+  ]
+}

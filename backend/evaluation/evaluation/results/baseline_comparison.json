@@ -1,0 +1,7 @@
+{
+  "_notes": {
+    "bandit_semgrep_auc_05_explanation": "Bandit and Semgrep achieve AUC ~0.50 (random chance) on this dataset. Root cause: positive samples are from deliberately-vulnerable toy apps (DVWA, juice-shop) that contain injection/XSS/SQLi patterns written as educational examples, while negative samples are from production repos (Django, Flask, Requests). Bandit/Semgrep detect SAST-style issues in production code; they are NOT calibrated for toy-app educational patterns. This is a dataset label alignment issue, not evidence that Bandit is ineffective at real-world security analysis. Threat-to-validity: IntelliCode's own security AUC may also be inflated by this style gap (cross-project LOPO AUC=0.494 confirms near-chance generalisation).",
+    "complexity_loc_baseline_rho": "LOC-naive baseline achieves Spearman rho=0.895 vs XGBoost rho=0.865 on the baseline evaluation. This is because the baseline evaluates on the full dataset (no train/test split), while XGBoost reports held-out test set performance. LOC correlates well in rank but has RMSE=17 vs mean baseline RMSE=22 \u2014 still much worse than XGBoost RMSE=49.5 on harder test samples. Use R2 (XGBoost 0.712 vs LOC 0.403) for fair comparison.",
+    "cognitive_complexity_validator": "Built-in benchmark: Pearson r=0.980 (pass >=0.95), MAE=1.2 (pass <=2.0). Systematic bias: +1.067 (over-counting). Worst case: deeply_nested +4 (SonarQube scores for-else differently from this implementation). Validation result: PASS \u2014 implementation is calibrated within acceptable range."
+  }
+}

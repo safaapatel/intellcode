@@ -1,0 +1,109 @@
+{
+  "conformal_coverage": [
+    {
+      "claimed_coverage": 0.95,
+      "empirical_coverage": 0.9773,
+      "n_samples": 88,
+      "mean_interval_width": 53.3725,
+      "valid": true
+    },
+    {
+      "claimed_coverage": 0.9,
+      "empirical_coverage": 0.9091,
+      "n_samples": 88,
+      "mean_interval_width": 16.7925,
+      "valid": true
+    },
+    {
+      "claimed_coverage": 0.8,
+      "empirical_coverage": 0.8068,
+      "n_samples": 88,
+      "mean_interval_width": 10.5485,
+      "valid": true
+    }
+  ],
+  "effort_metrics": {
+    "n_files": 1200,
+    "n_buggy": 499,
+    "popt": 0.0,
+    "pofb20": 0.1363,
+    "pofb30": 0.2244,
+    "pofb40": 0.3387,
+    "auc": 0.4419,
+    "notes": "Effort computed using LOC as inspection cost proxy (Mende & Koschke 2010)."
+  },
+  "extended_conformal": {
+    "n_total": 875,
+    "n_cal": 612,
+    "n_test": 263,
+    "cal_fraction": 0.7,
+    "jackknife_plus": {
+      "alpha_05": {
+        "method": "jackknife_plus",
+        "alpha": 0.05,
+        "target_coverage": 0.95,
+        "coverage": 0.9333,
+        "mean_width": 217.37,
+        "quantile_q": 108.685,
+        "n_samples": 300,
+        "n_test": 60,
+        "pass": true
+      },
+      "alpha_10": {
+        "method": "jackknife_plus",
+        "alpha": 0.1,
+        "target_coverage": 0.9,
+        "coverage": 0.9,
+        "mean_width": 150.9553,
+        "quantile_q": 75.4777,
+        "n_samples": 300,
+        "n_test": 60,
+        "pass": true
+      },
+      "alpha_20": {
+        "method": "jackknife_plus",
+        "alpha": 0.2,
+        "target_coverage": 0.8,
+        "coverage": 0.8,
+        "mean_width": 62.1196,
+        "quantile_q": 31.0598,
+        "n_samples": 300,
+        "n_test": 60,
+        "pass": true
+      }
+    },
+    "mondrian": {
+      "method": "mondrian_conformal",
+      "alpha": 0.1,
+      "target_coverage": 0.9,
+      "bins": {
+        "low": {
+          "coverage": 0.7389,
+          "target_coverage": 0.9,
+          "interval_halfwidth": 5.5481,
+          "n_cal": 400,
+          "n_test": 180,
+          "pass": false
+        },
+        "medium": {
+          "coverage": 0.3333,
+          "target_coverage": 0.9,
+          "interval_halfwidth": 7.1783,
+          "n_cal": 103,
+          "n_test": 36,
+          "pass": false
+        },
+        "high": {
+          "coverage": 0.1277,
+          "target_coverage": 0.9,
+          "interval_halfwidth": 9.2662,
+          "n_cal": 109,
+          "n_test": 47,
+          "pass": false
+        }
+      },
+      "overall_coverage": 0.5741,
+      "overall_pass": false
+    }
+  }
+}

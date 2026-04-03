@@ -1,0 +1,16 @@
+{
+  "backbone": "shallow",
+  "tasks": [
+    "security",
+    "complexity",
+    "bug",
+    "pattern"
+  ],
+  "mode": "shallow",
+  "patterns": [
+    "clean",
+    "code_smell",
+    "anti_pattern",
+    "style_violation"
+  ]
+}

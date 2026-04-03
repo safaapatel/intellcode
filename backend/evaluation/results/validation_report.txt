@@ -1,0 +1,245 @@
+
+========================================================================
+  1. Cognitive Complexity — Built-in Benchmark
+========================================================================
+
+============================================================
+Cognitive Complexity Validation Results
+============================================================
+  Functions evaluated: 30
+  Pearson r:           0.9803  (target: ≥ 0.95)
+  Spearman rho:        0.9573
+  MAE:                 1.200  (target: ≤ 2.0)
+  RMSE:                1.633
+  Bias:                +1.067  (+ = over-counting)
+  Status:              PASS
+
+  Largest errors:
+    deeply_nested: predicted=14 sonarqube=10 error=+4
+    deeply_nested: predicted=14 sonarqube=10 error=+4
+    for_else: predicted=6 sonarqube=3 error=+3
+============================================================
+
+
+========================================================================
+  2. LOPO Benchmark — Task: bug  (1200 records)
+========================================================================
+
+========================================================================
+Cross-Project Benchmark — Task: bug | Protocol: LOPO
+3 held-out projects
+========================================================================
+  Project                                       AUC       AP       F1     RMSE
+  --------------------------------------------------------------------
+  django                                     0.5450   0.6170   0.2269      N/A
+  flask                                      0.6059   0.3916   0.4731      N/A
+  requests                                   0.5503   0.2284   0.2333      N/A
+  --------------------------------------------------------------------
+  MEAN ± STD                               0.5671±0.0275
+========================================================================
+
+  Random-split AUC: 0.6501 +/- 0.0366
+  Cross-project degradation: +0.0830 AUC points
+  [INFO] LOPO unavailable (Invalid format specifier '.4f  if r.auc  else '--'' for object of type 'float'). Running 5-fold CV instead.
+  5-fold CV AUC: 0.6501 +/- 0.0366
+
+========================================================================
+  2. LOPO Benchmark — Task: security  (15 records)
+========================================================================
+
+========================================================================
+Cross-Project Benchmark — Task: security | Protocol: LOPO
+1 held-out projects
+========================================================================
+  Project                                       AUC       AP       F1     RMSE
+  --------------------------------------------------------------------
+  bandit                                        N/A      N/A      N/A      N/A
+  --------------------------------------------------------------------
+  MEAN ± STD                                    N/A
+========================================================================
+
+
+========================================================================
+  2. LOPO Benchmark — Task: complexity  (875 records)
+========================================================================
+
+========================================================================
+Cross-Project Benchmark — Task: complexity | Protocol: LOPO
+9 held-out projects
+========================================================================
+  Project                                       AUC       AP       F1     RMSE
+  --------------------------------------------------------------------
+  bottlepy                                      N/A      N/A      N/A    0.111
+  encode                                        N/A      N/A      N/A    0.901
+  pallets                                       N/A      N/A      N/A    0.146
+  psf                                           N/A      N/A      N/A    0.103
+  pydantic                                      N/A      N/A      N/A    0.112
+  pypa                                          N/A      N/A      N/A    0.458
+  sqlalchemy                                    N/A      N/A      N/A    0.968
+  tiangolo                                      N/A      N/A      N/A    0.408
+  tqdm                                          N/A      N/A      N/A    0.146
+  --------------------------------------------------------------------
+  MEAN ± STD                                    N/A
+========================================================================
+
+
+========================================================================
+  2. LOPO Benchmark — Task: pattern  (1153 records)
+========================================================================
+
+========================================================================
+Cross-Project Benchmark — Task: pattern | Protocol: LOPO
+7 held-out projects
+========================================================================
+  Project                                       AUC       AP       F1     RMSE
+  --------------------------------------------------------------------
+  bottlepy                                      N/A      N/A   0.3469      N/A
+  encode                                        N/A      N/A   0.4685      N/A
+  pallets                                       N/A      N/A   0.4505      N/A
+  psf                                           N/A      N/A   0.3274      N/A
+  pypa                                          N/A      N/A   0.3899      N/A
+  tiangolo                                      N/A      N/A   0.4890      N/A
+  tqdm                                          N/A      N/A   0.2660      N/A
+  --------------------------------------------------------------------
+  MEAN ± STD                                    N/A
+========================================================================
+
+
+========================================================================
+  3. Baseline Comparison
+========================================================================
+
+  Security baselines (15 records) ...
+  [OK] Loaded IntelliCode security model
+Running Bandit on all samples (this may take a moment)...
+Bandit  — F1: 0.0000  AUC: 0.5000
+IntelliCode — F1: 0.0000  AUC: 0.5000
+  Bandit      — F1: 0.0000  AUC: 0.5000
+  IntelliCode — F1: 0.0000  AUC: 0.5000
+
+  Complexity baselines (875 records) ...
+  [OK] Loaded IntelliCode complexity model
+Mean baseline        — RMSE: 22.228  MAE: 18.370  R²: 0.0000  ρ: nan
+Running radon MI on all samples...
+radon MI             — RMSE: 70.950  MAE: 67.379  R²: -9.1887  ρ: nan
+IntelliCode          — RMSE: 28.215  MAE: 23.457  R²: -0.6113  ρ: nan
+
+Wilcoxon (IC < radon): stat=4790.0  p=1.5223e-147  ✓ significant
+  mean_baseline   — Spearman r: nan  MAE: 18.37
+  radon_mi        — Spearman r: nan  MAE: 67.38
+  intellicode     — Spearman r: nan  MAE: 23.46
+  LaTeX -> evaluation\results\tables\baseline_comparison.tex
+
+========================================================================
+  4. Ablation Study — Task: bug  (1200 records)
+========================================================================
+
+==========================================================================================
+Ablation Study — Task: bug  |  Primary metric: auc
+==========================================================================================
+  Configuration                       AUC    Delta    p-value        d        δ
+  ------------------------------------------------------------------------------
+  [BASELINE] full_model            0.5937        —          —        —        —
+  ablate_size                      0.6089  +0.0152          —        —        —
+  ablate_line_style                0.6057  +0.0120          —        —        —
+  ablate_halstead                  0.5996  +0.0059          —        —        —
+  ablate_functions                 0.5963  +0.0026          —        —        —
+  ablate_diffusion                 0.5937  +0.0000          —        —        —
+  ablate_purpose                   0.5937  +0.0000          —        —        —
+  ablate_history                   0.5937  +0.0000          —        —        —
+  ablate_experience                0.5937  +0.0000          —        —        —
+  ablate_complexity                0.5842  -0.0095          —        —        —
+  ablate_size_change               0.5657  -0.0280          —        —        —
+  ——————————————————————————————————————————————————————————————————————————————
+  d = Cohen's d (standardised effect size)  |  δ = Cliff's delta (non-parametric)
+  * p < 0.05 (Wilcoxon signed-rank test, one-sided)
+==========================================================================================
+
+
+========================================================================
+  4. Ablation Study — Task: security  (15 records)
+========================================================================
+  [SKIP] Insufficient data (15 samples)
+
+========================================================================
+  4. Ablation Study — Task: complexity  (875 records)
+========================================================================
+
+==========================================================================================
+Ablation Study — Task: complexity  |  Primary metric: rmse
+==========================================================================================
+  Configuration                      RMSE    Delta    p-value        d        δ
+  ------------------------------------------------------------------------------
+  [BASELINE] full_model            0.1864        —          —        —        —
+  ablate_complexity                0.9140        —          —        —        —
+  ablate_functions                 0.7012        —          —        —        —
+  ablate_halstead                  0.2138        —          —        —        —
+  ablate_line_style                0.1928        —          —        —        —
+  ablate_size                      0.1888        —          —        —        —
+  ——————————————————————————————————————————————————————————————————————————————
+  d = Cohen's d (standardised effect size)  |  δ = Cliff's delta (non-parametric)
+  * p < 0.05 (Wilcoxon signed-rank test, one-sided)
+==========================================================================================
+
+
+========================================================================
+  4. Ablation Study — Task: pattern  (1153 records)
+========================================================================
+
+==========================================================================================
+Ablation Study — Task: pattern  |  Primary metric: rmse
+==========================================================================================
+  Configuration                      RMSE    Delta    p-value        d        δ
+  ------------------------------------------------------------------------------
+  [BASELINE] full_model            0.0000        —          —        —        —
+  ablate_size                         N/A        —          —        —        —
+  ablate_complexity                   N/A        —          —        —        —
+  ablate_halstead                     N/A        —          —        —        —
+  ablate_functions                    N/A        —          —        —        —
+  ablate_line_style                   N/A        —          —        —        —
+  ——————————————————————————————————————————————————————————————————————————————
+  d = Cohen's d (standardised effect size)  |  δ = Cliff's delta (non-parametric)
+  * p < 0.05 (Wilcoxon signed-rank test, one-sided)
+==========================================================================================
+
+
+========================================================================
+  5. Conformal Prediction Coverage
+========================================================================
+
+============================================================
+Conformal Prediction Coverage Validation
+============================================================
+     Claimed   Empirical       Width   Valid
+  ----------------------------------------------
+         95%       97.7%        0.57      OK
+         90%       96.6%        0.43      OK
+         80%       79.5%        0.27      OK
+
+  Overall: PASS — all coverage claims valid
+
+========================================================================
+  6. Effort-Aware Bug Prediction (Popt, PofB20)
+========================================================================
+  [OK] Bug predictor loaded
+
+============================================================
+Effort-Aware Bug Prediction Metrics
+============================================================
+  Files:   1200  (499 buggy, 701 clean)
+  AUC:     0.5
+  Popt:    0.0000  (1.0 = perfect)
+  PofB20:  0.1022  (fraction of bugs in top-20% LOC)
+  Notes:   Effort computed using LOC as inspection cost proxy (Mende & Koschke 2010).
+
+================================================================================
+  VALIDATION SUMMARY
+================================================================================
+  CC Validation                       Pearson r=0.9803  MAE=1.200  [PASS]
+  Baseline security/bandit             AUC=0.5000
+  Baseline security/intellicode        AUC=0.5000
+  Conformal 95%                       empirical=97.7%  [PASS]
+  Conformal 90%                       empirical=96.6%  [PASS]
+  Conformal 80%                       empirical=79.5%  [PASS]
+  Effort (Popt / PofB20)              Popt=0.0000  PofB20=0.1022
+================================================================================

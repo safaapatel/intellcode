@@ -1,0 +1,46 @@
+{
+  "n_functions": 15,
+  "pearson_r": 0.9803,
+  "spearman_rho": 0.9573,
+  "mae": 1.2,
+  "rmse": 1.633,
+  "bias": 1.067,
+  "max_error": 4.0,
+  "worst_cases": [
+    {
+      "function": "deeply_nested",
+      "predicted": 14,
+      "sonarqube": 10,
+      "error": 4,
+      "category": "nesting"
+    },
+    {
+      "function": "for_else",
+      "predicted": 6,
+      "sonarqube": 3,
+      "error": 3,
+      "category": "loop_else"
+    },
+    {
+      "function": "nested_if",
+      "predicted": 5,
+      "sonarqube": 3,
+      "error": 2,
+      "category": "nesting"
+    },
+    {
+      "function": "nested_function",
+      "predicted": 4,
+      "sonarqube": 2,
+      "error": 2,
+      "category": "nested_function"
+    },
+    {
+      "function": "single_if",
+      "predicted": 2,
+      "sonarqube": 1,
+      "error": 1,
+      "category": "conditional"
+    }
+  ]
+}

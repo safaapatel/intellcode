@@ -1,0 +1,22 @@
+{
+  "mode": "shallow",
+  "tasks": {
+    "complexity": {
+      "rmse": 54.405,
+      "spearman": 0.7384
+    },
+    "security": {
+      "auc": 0.8001,
+      "ap": 0.5155
+    },
+    "bug": {
+      "auc": 0.6364,
+      "ap": 0.5323
+    },
+    "pattern": {
+      "accuracy": 0.8095,
+      "f1_macro": 0.7982
+    }
+  },
+  "loss_strategy": "kendall"
+}

@@ -1,0 +1,129 @@
+{
+  "task": "complexity",
+  "protocol": "lopo",
+  "n_projects": 10,
+  "mean_auc": null,
+  "std_auc": null,
+  "mean_ap": null,
+  "std_ap": null,
+  "mean_f1": null,
+  "std_f1": null,
+  "mean_rmse": 45.5903,
+  "std_rmse": 26.1828,
+  "mean_spearman": 0.7954,
+  "std_spearman": 0.1864,
+  "random_split_auc": null,
+  "degradation_auc": null,
+  "project_results": [
+    {
+      "held_out_repo": "bottlepy/bottle",
+      "n_train": 847,
+      "n_test": 28,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 10.387257383545386,
+      "spearman": 0.8877880468017941
+    },
+    {
+      "held_out_repo": "encode/httpx",
+      "n_train": 818,
+      "n_test": 57,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 50.666792760969535,
+      "spearman": 0.830061539007107
+    },
+    {
+      "held_out_repo": "pallets/click",
+      "n_train": 816,
+      "n_test": 59,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 42.082336045214234,
+      "spearman": 0.874498278002275
+    },
+    {
+      "held_out_repo": "pallets/flask",
+      "n_train": 798,
+      "n_test": 77,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 57.855352805388,
+      "spearman": 0.8730597114639216
+    },
+    {
+      "held_out_repo": "psf/requests",
+      "n_train": 841,
+      "n_test": 34,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 27.76807393395124,
+      "spearman": 0.7272820657220613
+    },
+    {
+      "held_out_repo": "pydantic/pydantic",
+      "n_train": 737,
+      "n_test": 138,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 107.62213900383713,
+      "spearman": 0.8320365081205275
+    },
+    {
+      "held_out_repo": "pypa/pip",
+      "n_train": 737,
+      "n_test": 138,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 48.732027885511144,
+      "spearman": 0.8868144464785997
+    },
+    {
+      "held_out_repo": "sqlalchemy/sqlalchemy",
+      "n_train": 735,
+      "n_test": 140,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 57.42198730041808,
+      "spearman": 0.9041688275027618
+    },
+    {
+      "held_out_repo": "tiangolo/fastapi",
+      "n_train": 735,
+      "n_test": 140,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 12.589854268350122,
+      "spearman": 0.2552544751591135
+    },
+    {
+      "held_out_repo": "tqdm/tqdm",
+      "n_train": 811,
+      "n_test": 64,
+      "n_train_repos": 9,
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 40.77715752821782,
+      "spearman": 0.8825505540794547
+    }
+  ]
+}

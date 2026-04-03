@@ -27,6 +27,8 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import collections
+import functools
 import hashlib
 import hmac
 import json as _json
@@ -36,6 +38,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
@@ -61,6 +64,7 @@ from models.doc_quality_analyzer import DocQualityAnalyzer
 from models.performance_analyzer import PerformanceAnalyzer
 from models.dependency_analyzer import DependencyAnalyzer
 from models.readability_scorer import ReadabilityScorer
+from models.multi_task_model import MultiTaskCodeModel, MultiTaskPrediction
 
 
 # ---------------------------------------------------------------------------
@@ -80,17 +84,40 @@ class ModelRegistry:
     performance_analyzer: PerformanceAnalyzer | None = None
     dependency_analyzer: DependencyAnalyzer | None = None
     readability_scorer: ReadabilityScorer | None = None
+    multi_task: MultiTaskCodeModel | None = None
     load_errors: dict[str, str] = {}
 
 
 registry = ModelRegistry()
 logger = logging.getLogger(__name__)
 
+# Thread-pool for parallel CPU-bound model inference (one worker per logical CPU,
+# capped at 8 to avoid excessive context-switching on smaller machines)
+_EXECUTOR = ThreadPoolExecutor(max_workers=min(8, (os.cpu_count() or 4)))
+
 # ---------------------------------------------------------------------------
 # Simple in-memory response cache (hash of code+filename → response dict)
 # ---------------------------------------------------------------------------
 _analysis_cache: dict[str, dict] = {}
 _specialist_cache: dict[str, dict] = {}
+
+# Simple in-memory rate limiter: IP → deque of request timestamps
+_rate_limit_store: dict[str, collections.deque] = {}
+_RATE_LIMIT_REQUESTS = 20
+_RATE_LIMIT_WINDOW_S = 60
+
+
+def _check_rate_limit(request: Request) -> None:
+    """Raise HTTP 429 if the client exceeds _RATE_LIMIT_REQUESTS per minute."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    window = _rate_limit_store.setdefault(client_ip, collections.deque())
+    # Evict timestamps outside the sliding window
+    while window and now - window[0] > _RATE_LIMIT_WINDOW_S:
+        window.popleft()
+    if len(window) >= _RATE_LIMIT_REQUESTS:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: 20 requests/minute")
+    window.append(now)
 
 
 def _cache_key(code: str, filename: str, git_metadata: Optional[dict] = None) -> str:
@@ -111,78 +138,88 @@ def _cache_put(store: dict, key: str, value: dict, max_size: int = 200) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models on startup."""
-    print("Loading ML models...")
+    logger.info("Loading ML models...")
 
     try:
         registry.security = EnsembleSecurityModel(
             checkpoint_dir="checkpoints/security"
         )
-        print("  [OK] Security detection model")
+        logger.info("  [OK] Security detection model")
     except Exception as e:
         registry.load_errors["security"] = str(e)
-        print(f"  [WARN] Security model: {e}")
+        logger.warning("  [WARN] Security model: %s", e)
 
     try:
         registry.complexity = ComplexityPredictionModel(
             checkpoint_path="checkpoints/complexity/model.pkl"
         )
-        print("  [OK] Complexity prediction model")
+        logger.info("  [OK] Complexity prediction model")
     except Exception as e:
         registry.load_errors["complexity"] = str(e)
-        print(f"  [WARN] Complexity model: {e}")
+        logger.warning("  [WARN] Complexity model: %s", e)
 
     try:
         registry.bug_predictor = BugPredictionModel(
             checkpoint_dir="checkpoints/bug_predictor"
         )
-        print("  [OK] Bug prediction model")
+        logger.info("  [OK] Bug prediction model")
     except Exception as e:
         registry.load_errors["bug_predictor"] = str(e)
-        print(f"  [WARN] Bug predictor: {e}")
+        logger.warning("  [WARN] Bug predictor: %s", e)
 
     try:
         registry.pattern_model = PatternRFModel(
             checkpoint_path="checkpoints/pattern/rf_model.pkl"
         )
         if registry.pattern_model.ready:
-            print("  [OK] Pattern recognition model (RF)")
+            logger.info("  [OK] Pattern recognition model (RF)")
         else:
-            print("  [WARN] Pattern model checkpoint not found — will return null")
+            logger.warning("  [WARN] Pattern model checkpoint not found — will return null")
     except Exception as e:
         registry.load_errors["pattern"] = str(e)
-        print(f"  [WARN] Pattern model: {e}")
+        logger.warning("  [WARN] Pattern model: %s", e)
 
     # Lightweight models — always load
     registry.clone_detector = CodeCloneDetector()
-    print("  [OK] Code clone detector")
+    logger.info("  [OK] Code clone detector")
 
     registry.refactoring_suggester = RefactoringSuggester()
-    print("  [OK] Refactoring suggester")
+    logger.info("  [OK] Refactoring suggester")
 
     registry.dead_code_detector = DeadCodeDetector()
-    print("  [OK] Dead code detector")
+    logger.info("  [OK] Dead code detector")
 
     registry.debt_estimator = TechnicalDebtEstimator()
-    print("  [OK] Technical debt estimator")
+    logger.info("  [OK] Technical debt estimator")
 
     registry.doc_analyzer = DocQualityAnalyzer()
-    print("  [OK] Documentation quality analyzer")
+    logger.info("  [OK] Documentation quality analyzer")
 
     registry.performance_analyzer = PerformanceAnalyzer()
-    print("  [OK] Performance hotspot analyzer")
+    logger.info("  [OK] Performance hotspot analyzer")
 
     registry.dependency_analyzer = DependencyAnalyzer()
-    print("  [OK] Dependency & coupling analyzer")
+    logger.info("  [OK] Dependency & coupling analyzer")
 
     registry.readability_scorer = ReadabilityScorer()
-    print("  [OK] Code readability scorer")
+    logger.info("  [OK] Code readability scorer")
+
+    try:
+        registry.multi_task = MultiTaskCodeModel()
+        if registry.multi_task.ready:
+            logger.info("  [OK] Multi-task model (mode=%s)", registry.multi_task.mode)
+        else:
+            logger.info("  [OK] Multi-task model (no checkpoint — fallback mode)")
+    except Exception as e:
+        logger.warning("  [WARN] Multi-task model failed to load: %s", e)
+        registry.multi_task = None
 
     # Restore persisted feedback so stats survive restarts
     _feedback_store.extend(_load_feedback_from_disk())
 
-    print("Models ready.")
+    logger.info("All models ready.")
     yield
-    print("Shutting down.")
+    logger.info("Shutting down.")
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +320,11 @@ class FullAnalysisResponse(BaseModel):
     overall_score: int
     status: str            # "clean" | "action_required" | "critical"
     summary: str
+    # Specialist results — included in /analyze so the frontend needs only one call
+    docs: Optional[dict] = None
+    performance: Optional[dict] = None
+    dependencies: Optional[dict] = None
+    readability: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +359,18 @@ def health():
 
 
 def _require_internal_key(request: Request):
-    """Reject requests that don't supply the correct INTERNAL_API_KEY header."""
+    """Reject requests that don't supply the correct INTERNAL_API_KEY header.
+    If INTERNAL_API_KEY is not configured, the endpoint is disabled (returns 503)
+    to prevent unauthenticated cache-clearing in production.
+    """
     secret = os.environ.get("INTERNAL_API_KEY", "")
-    if secret and request.headers.get("X-Internal-Key", "") != secret:
+    if not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="INTERNAL_API_KEY is not configured — cache clear is disabled. "
+                   "Set the INTERNAL_API_KEY environment variable to enable this endpoint.",
+        )
+    if request.headers.get("X-Internal-Key", "") != secret:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -356,7 +407,15 @@ def get_stats():
 
 @app.get("/models", tags=["meta"])
 def list_models():
-    """Returns metadata about each available ML model."""
+    """Returns metadata about each available ML model.
+    Metrics are loaded from checkpoints/*/metrics.json when available,
+    falling back to last-known values.
+    """
+    m_pattern  = _load_checkpoint_metrics("pattern")
+    m_security = _load_checkpoint_metrics("security")
+    m_complexity = _load_checkpoint_metrics("complexity")
+    m_bug      = _load_checkpoint_metrics("bug_predictor")
+
     return {
         "models": [
             {
@@ -364,8 +423,9 @@ def list_models():
                 "name": "Pattern Recognition Model",
                 "architecture": "Random Forest (300 trees, CalibratedClassifierCV)",
                 "status": "production",
-                "accuracy": 0.809,
-                "auc": 0.960,
+                "accuracy": m_pattern.get("accuracy", 0.809),
+                "auc": m_pattern.get("auc", 0.960),
+                "cv_f1": m_pattern.get("cv_f1"),
                 "tech_stack": ["scikit-learn", "Python AST"],
                 "use_case": "Detects code smells, anti-patterns, style violations",
                 "loaded": registry.pattern_model is not None and registry.pattern_model.ready,
@@ -375,8 +435,9 @@ def list_models():
                 "name": "Security Vulnerability Detection",
                 "architecture": "Ensemble: Random Forest + 1D CNN",
                 "status": "production",
-                "precision": 0.92,
-                "recall": 0.85,
+                "auc": m_security.get("ensemble_auc", m_security.get("auc", 0.928)),
+                "recall": m_security.get("recall", 0.54),
+                "threshold": m_security.get("rf_threshold"),
                 "tech_stack": ["scikit-learn", "PyTorch"],
                 "use_case": "Detects SQL injection, XSS, hardcoded secrets, etc.",
                 "loaded": registry.security is not None,
@@ -386,7 +447,8 @@ def list_models():
                 "name": "Code Complexity Prediction",
                 "architecture": "XGBoost Regressor",
                 "status": "production",
-                "r2_score": 0.89,
+                "r2_score": m_complexity.get("r2", m_complexity.get("test_r2", 1.0)),
+                "rmse": m_complexity.get("rmse", m_complexity.get("test_rmse")),
                 "tech_stack": ["XGBoost", "NumPy"],
                 "use_case": "Predicts maintainability score (0–100)",
                 "loaded": registry.complexity is not None,
@@ -396,7 +458,7 @@ def list_models():
                 "name": "Bug Prediction Model",
                 "architecture": "LR + XGBoost ensemble",
                 "status": "production",
-                "auc": 0.641,
+                "auc": m_bug.get("ensemble_auc", m_bug.get("auc", 0.704)),
                 "tech_stack": ["scikit-learn", "XGBoost"],
                 "use_case": "Predicts bug likelihood from static + git features",
                 "loaded": registry.bug_predictor is not None,
@@ -473,8 +535,31 @@ def list_models():
                 "use_case": "Scores naming, comments, structure, cognitive load → A–F grade",
                 "loaded": registry.readability_scorer is not None,
             },
-        ]
+            {
+                "id": "multi_task",
+                "name": "Multi-Task Code Quality Model",
+                "architecture": "Shared transformer encoder with 4 task heads (security, complexity, bugs, patterns)",
+                "status": "experimental",
+                "tech_stack": ["PyTorch", "Transformers"],
+                "use_case": "Ablation study: unified MTL model vs 4 independent specialist models",
+                "loaded": registry.multi_task is not None,
+            },
+        ],
+        "multi_task": registry.multi_task is not None,
     }
+
+
+def _load_checkpoint_metrics(task: str) -> dict:
+    """Load metrics from checkpoints/<task>/metrics.json; return {} if missing."""
+    metrics_path = Path(f"checkpoints/{task}/metrics.json")
+    if not metrics_path.exists():
+        return {}
+    try:
+        with open(metrics_path) as f:
+            return _json.load(f)
+    except Exception as e:
+        logger.warning("Could not load metrics for %s: %s", task, e)
+        return {}
 
 
 def _count_ready() -> int:
@@ -528,86 +613,72 @@ def _compute_overall_score(
 
 
 @app.post("/analyze", response_model=FullAnalysisResponse, tags=["analysis"])
-def analyze_full(req: AnalyzeRequest):
+async def analyze_full(req: AnalyzeRequest, request: Request):
     """
     Full analysis: runs all ML models and returns a combined report.
+    Independent models execute in parallel via ThreadPoolExecutor.
     Results are cached by (code + filename + git_metadata) hash.
     """
+    _check_rate_limit(request)
     cache_key = _cache_key(req.code, req.filename, req.git_metadata)
     if cache_key in _analysis_cache:
         return _analysis_cache[cache_key]
 
     t_start = time.perf_counter()
     source = req.code
+    loop = asyncio.get_running_loop()
 
-    # --- Security ---
-    if registry.security:
-        sec_findings = registry.security.predict(source)
-        sec_score = registry.security.vulnerability_score(source)
-        security_out = {
-            "findings": [vars(f) for f in sec_findings],
-            "vulnerability_score": round(sec_score, 3),
-            "summary": {
-                "total": len(sec_findings),
-                "critical": sum(1 for f in sec_findings if f.severity == "critical"),
-                "high": sum(1 for f in sec_findings if f.severity == "high"),
-                "medium": sum(1 for f in sec_findings if f.severity == "medium"),
-                "low": sum(1 for f in sec_findings if f.severity == "low"),
-            },
-        }
-    else:
-        scan = scan_security_patterns(source)
-        security_out = scan.to_dict()
+    def _run(fn, *args):
+        return loop.run_in_executor(_EXECUTOR, fn, *args)
 
-    # --- Complexity ---
-    if not registry.complexity:
-        raise HTTPException(status_code=503, detail="Complexity model unavailable")
-    complexity_result = registry.complexity.predict(source)
-    complexity_out = ComplexityOut(**complexity_result.to_dict())
+    # --- Wave 1: all independent models run in parallel ---
+    try:
+        (
+            security_out,
+            (complexity_out, complexity_result),
+            (bug_out, bug_result),
+            pattern_out,
+            (clone_out, clone_result),
+            (refactor_out, refactor_result),
+            (dead_out, dead_result),
+        ) = await asyncio.gather(
+            _run(_step_security, source),
+            _run(_step_complexity, source),
+            _run(functools.partial(_step_bug, source, req.git_metadata)),
+            _run(_step_pattern, source),
+            _run(_step_clones, source),
+            _run(_step_refactoring, source),
+            _run(_step_dead_code, source),
+        )
+    except RuntimeError as exc:
+        # _step_complexity / _step_bug raise RuntimeError when model unavailable
+        if "unavailable" in str(exc):
+            raise HTTPException(status_code=503, detail=str(exc))
+        raise
 
-    # --- Bug Prediction ---
-    git_meta = _parse_git_meta(req.git_metadata)
-    if not registry.bug_predictor:
-        raise HTTPException(status_code=503, detail="Bug prediction model unavailable")
-    bug_result = registry.bug_predictor.predict(source, git_meta)
-    bug_out = BugPredictionOut(**bug_result.to_dict())
-
-    # --- Pattern Recognition ---
-    pattern_out = None
-    if registry.pattern_model is not None and registry.pattern_model.ready:
-        try:
-            pred = registry.pattern_model.predict(source)
-            pattern_out = PatternOut(
-                label=pred.label,
-                confidence=pred.confidence,
-                all_scores=pred.all_scores,
-            )
-        except Exception as e:
-            logger.warning("Pattern model prediction failed: %s", e)
-
-    # --- Code Clone Detection ---
-    clone_result = registry.clone_detector.detect(source)
-    clone_out = clone_result.to_dict()
-
-    # --- Refactoring Suggestions ---
-    refactor_result = registry.refactoring_suggester.analyze(source)
-    refactor_out = refactor_result.to_dict()
-
-    # --- Dead Code Detection ---
-    dead_result = registry.dead_code_detector.detect(source)
-    dead_out = dead_result.to_dict()
-
-    # --- Technical Debt ---
-    debt_result = registry.debt_estimator.estimate(
-        source=source,
-        security_result=security_out,
-        complexity_result=complexity_result.to_dict(),
-        bug_result=bug_result.to_dict(),
-        clone_result=clone_result,
-        dead_code_result=dead_result,
-        refactoring_result=refactor_result,
+    # --- Wave 2: debt (needs wave-1 results) + specialists (independent) in parallel ---
+    (
+        (debt_out, debt_result),
+        docs_out,
+        perf_out,
+        deps_out,
+        read_out,
+    ) = await asyncio.gather(
+        _run(functools.partial(
+            _step_debt, source, security_out,
+            complexity_result, bug_result, clone_result, dead_result, refactor_result,
+        )),
+        _run(_step_docs, source),
+        _run(_step_performance, source),
+        _run(_step_dependencies, source),
+        _run(_step_readability, source),
     )
-    debt_out = debt_result.to_dict()
+
+    # Cache specialist results too
+    for key_sfx, out in [("docs", docs_out), ("performance", perf_out),
+                          ("dependencies", deps_out), ("readability", read_out)]:
+        sk = _specialist_key(key_sfx, source)
+        _cache_put(_specialist_cache, sk, out)
 
     # --- Overall score (weighted across all available signals) ---
     overall_score = _compute_overall_score(
@@ -653,6 +724,10 @@ def analyze_full(req: AnalyzeRequest):
         overall_score=overall_score,
         status=status,
         summary=summary,
+        docs=docs_out or None,
+        performance=perf_out or None,
+        dependencies=deps_out or None,
+        readability=read_out or None,
     )
     _cache_put(_analysis_cache, cache_key, response.model_dump())
     return response
@@ -761,11 +836,22 @@ def analyze_dead_code(req: AnalyzeRequest):
 def analyze_debt(req: AnalyzeRequest):
     """
     Technical debt estimation.
-    Runs all lightweight analyses internally and returns a SQALE-style debt report.
+    Returns the cached debt result from a prior /analyze call when available,
+    otherwise runs just the lightweight analyses required by the debt estimator.
     """
     t_start = time.perf_counter()
 
-    # Run supporting analyses
+    # Fast path: reuse cached full analysis result
+    cache_key = _cache_key(req.code, req.filename, req.git_metadata)
+    if cache_key in _analysis_cache:
+        cached = _analysis_cache[cache_key]
+        if "technical_debt" in cached:
+            out = dict(cached["technical_debt"])
+            out["duration_seconds"] = round(time.perf_counter() - t_start, 4)
+            out["_cache_hit"] = True
+            return out
+
+    # Slow path: run only the models the debt estimator needs
     security_out = None
     if registry.security:
         findings = registry.security.predict(req.code)
@@ -778,14 +864,8 @@ def analyze_debt(req: AnalyzeRequest):
             }
         }
 
-    complexity_out = None
-    if registry.complexity:
-        complexity_out = registry.complexity.predict(req.code).to_dict()
-
-    bug_out = None
-    if registry.bug_predictor:
-        bug_out = registry.bug_predictor.predict(req.code).to_dict()
-
+    complexity_out = registry.complexity.predict(req.code).to_dict() if registry.complexity else None
+    bug_out = registry.bug_predictor.predict(req.code).to_dict() if registry.bug_predictor else None
     clone_result = registry.clone_detector.detect(req.code)
     dead_result = registry.dead_code_detector.detect(req.code)
     refactor_result = registry.refactoring_suggester.analyze(req.code)
@@ -1157,6 +1237,26 @@ def analyze_quick(req: AnalyzeRequest):
         result["readability"] = {"error": str(e)}
 
     return result
+
+
+@app.post("/analyze/multi-task", tags=["analysis"])
+async def analyze_multi_task(req: AnalyzeRequest):
+    """
+    Run all 4 quality tasks through the shared multi-task encoder.
+    Returns unified predictions for: security, complexity, bugs, patterns.
+    Useful for ablation study comparison against 4 independent models.
+    """
+    if not registry.multi_task:
+        raise HTTPException(503, "Multi-task model not loaded")
+    source = req.code
+    try:
+        loop = asyncio.get_running_loop()
+        pred = await loop.run_in_executor(
+            _EXECUTOR, registry.multi_task.predict, source
+        )
+        return pred.to_dict()
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 # ---------------------------------------------------------------------------
