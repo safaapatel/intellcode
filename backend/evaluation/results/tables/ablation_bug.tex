@@ -1,0 +1,14 @@
+\begin{tabular}{lrrrrl}
+\toprule
+Configuration & AUC & $\Delta$ & $p$-value & $d$ & $\delta$ \\
+\midrule
+Full model & 0.5937 & --- & --- & --- & --- \\
+\quad w/o ablate\_static\_features & 0.5577 & -0.0360 & -- & -- & -- \\
+\quad w/o ablate\_jit\_diffusion & 0.5937 & +0.0000 & -- & -- & -- \\
+\quad w/o ablate\_jit\_size\_change & 0.5657 & -0.0280 & -- & -- & -- \\
+\quad w/o ablate\_jit\_purpose & 0.5937 & +0.0000 & -- & -- & -- \\
+\quad w/o ablate\_jit\_history & 0.5937 & +0.0000 & -- & -- & -- \\
+\quad w/o ablate\_jit\_experience & 0.5937 & +0.0000 & -- & -- & -- \\
+\bottomrule
+\multicolumn{6}{l}{\footnotesize $d$ = Cohen's $d$;\; $\delta$ = Cliff's $\delta$ (non-parametric); $^{*}$ $p < 0.05$ (Wilcoxon signed-rank, one-sided)}
+\end{tabular}

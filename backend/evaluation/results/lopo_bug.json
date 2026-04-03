@@ -1,0 +1,52 @@
+{
+  "task": "bug",
+  "protocol": "lopo",
+  "n_projects": 3,
+  "mean_auc": 0.5671,
+  "std_auc": 0.0275,
+  "mean_ap": 0.4123,
+  "std_ap": 0.1593,
+  "mean_f1": 0.3111,
+  "std_f1": 0.1145,
+  "mean_rmse": null,
+  "std_rmse": null,
+  "mean_spearman": null,
+  "std_spearman": null,
+  "random_split_auc": null,
+  "degradation_auc": null,
+  "project_results": [
+    {
+      "held_out_repo": "django",
+      "n_train": 651,
+      "n_test": 549,
+      "n_train_repos": 2,
+      "auc": 0.5449789944436916,
+      "ap": 0.6170119517826038,
+      "f1": 0.22691292875989447,
+      "rmse": null,
+      "spearman": null
+    },
+    {
+      "held_out_repo": "flask",
+      "n_train": 759,
+      "n_test": 441,
+      "n_train_repos": 2,
+      "auc": 0.6058575533468369,
+      "ap": 0.3915817189067835,
+      "f1": 0.47305389221556887,
+      "rmse": null,
+      "spearman": null
+    },
+    {
+      "held_out_repo": "requests",
+      "n_train": 990,
+      "n_test": 210,
+      "n_train_repos": 2,
+      "auc": 0.5503411781088985,
+      "ap": 0.2284233368882973,
+      "f1": 0.23333333333333334,
+      "rmse": null,
+      "spearman": null
+    }
+  ]
+}

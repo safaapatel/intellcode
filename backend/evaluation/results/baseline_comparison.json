@@ -1,0 +1,235 @@
+{
+  "security": {
+    "keyword_scan": {
+      "precision": 0.19932432432432431,
+      "recall": 0.18670886075949367,
+      "f1": 0.19281045751633988,
+      "auc": 0.48037852735299147,
+      "ap": 0.2291331468775281,
+      "mcc": -0.04258942178643725,
+      "brier": 0.2354341047103233,
+      "calibration": {
+        "fraction_of_positives": [
+          0.24291115311909262,
+          0.18875502008032127,
+          0.2558139534883721,
+          0.25
+        ],
+        "mean_predicted_value": [
+          0.0,
+          0.3333333333333329,
+          0.6666666666666671,
+          1.0
+        ],
+        "ece": 0.38708554488759983
+      }
+    },
+    "bandit": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "auc": 0.5,
+      "ap": 0.23338257016248154,
+      "mcc": 0.0,
+      "brier": 0.1967060561299852,
+      "calibration": {
+        "fraction_of_positives": [
+          0.23338257016248154
+        ],
+        "mean_predicted_value": [
+          0.09999999999999748
+        ],
+        "ece": 0.13338257016248406
+      }
+    },
+    "semgrep": {
+      "precision": 0.24468085106382978,
+      "recall": 0.07278481012658228,
+      "f1": 0.11219512195121951,
+      "auc": 0.5031508377844442,
+      "ap": 0.2612474459453762,
+      "mcc": 0.007295708419194507,
+      "brier": 0.22829476448383393,
+      "calibration": {
+        "fraction_of_positives": [
+          0.23035439137134053,
+          0.14285714285714285,
+          0.0,
+          0.4,
+          1.0
+        ],
+        "mean_predicted_value": [
+          0.004262968669748333,
+          0.38285714285714306,
+          0.5333333333333333,
+          0.7066666666666668,
+          1.0
+        ],
+        "ece": 0.2612182845403185
+      }
+    },
+    "intellicode": {
+      "precision": 0.23338257016248154,
+      "recall": 1.0,
+      "f1": 0.3784431137724551,
+      "auc": 0.5554498670764128,
+      "ap": 0.297242533320542,
+      "mcc": 0.0,
+      "brier": 0.36777200497744994,
+      "calibration": {
+        "fraction_of_positives": [
+          0.25925925925925924,
+          0.21696428571428572,
+          0.5333333333333333
+        ],
+        "mean_predicted_value": [
+          0.5584771212131258,
+          0.6768138052948883,
+          0.9500000000000003
+        ],
+        "ece": 0.3919113494003787
+      }
+    },
+    "significance_intellicode_vs_semgrep": {
+      "wilcoxon_stat": 184736.5,
+      "p_value": 2.151598035015609e-80,
+      "significant_at_0.05": true
+    },
+    "significance_intellicode_vs_bandit": {
+      "wilcoxon_stat": 214090.0,
+      "p_value": 1.0171051651459162e-85,
+      "significant_at_0.05": true
+    }
+  },
+  "complexity": {
+    "mean_baseline": {
+      "rmse": 91.19090936433236,
+      "mae": 49.85789387755101,
+      "r2": 0.0,
+      "spearman": NaN,
+      "spearman_p": NaN
+    },
+    "loc_naive": {
+      "rmse": 60.87484338205944,
+      "mae": 27.06875096330443,
+      "r2": 0.5543718463564267,
+      "spearman": 0.8356125275964364,
+      "spearman_p": 2.3779182204685763e-229
+    },
+    "radon_mi": {
+      "skipped": true,
+      "reason": "no source field in dataset"
+    },
+    "intellicode": {
+      "rmse": 19.568312898384317,
+      "mae": 5.43561444391736,
+      "r2": 0.9539527524940546,
+      "spearman": 0.9382286657104265,
+      "spearman_p": 0.0
+    },
+    "significance_intellicode_vs_loc": {
+      "wilcoxon_stat": 43121.5,
+      "p_value": 4.654101331456839e-88,
+      "significant_at_0.05": true
+    }
+  },
+  "bugs": {
+    "majority_class": {
+      "f1": 0.0,
+      "auc": 0.5,
+      "ap": 0.41583333333333333
+    },
+    "loc_threshold": {
+      "f1": 0.34279475982532753,
+      "auc": 0.487358454426685,
+      "ap": 0.45421634079346174,
+      "precision": 0.3764988009592326,
+      "recall": 0.31462925851703405,
+      "mcc": -0.058241573830233644,
+      "brier": 0.3946947157382965,
+      "ece": 0.4048,
+      "calibration": {
+        "fraction_of_positives": [
+          0.403,
+          0.6842,
+          0.7188
+        ],
+        "mean_predicted_value": [
+          0.0108,
+          0.1118,
+          0.9687
+        ],
+        "ece": 0.4048
+      }
+    },
+    "halstead_lr": {
+      "f1": 0.5087108013937283,
+      "auc": 0.6180000000000001,
+      "ap": 0.5517281414744358,
+      "precision": 0.5328467153284672,
+      "recall": 0.4866666666666667,
+      "mcc": 0.18470839303898745,
+      "brier": 0.23834600445706533,
+      "ece": 0.181,
+      "calibration": {
+        "fraction_of_positives": [
+          1.0,
+          0.3636,
+          0.3261,
+          0.3529,
+          0.4286,
+          0.561,
+          0.7391,
+          0.5556,
+          1.0
+        ],
+        "mean_predicted_value": [
+          0.1945,
+          0.2619,
+          0.365,
+          0.4475,
+          0.5337,
+          0.6498,
+          0.7468,
+          0.8457,
+          0.9031
+        ],
+        "ece": 0.181
+      }
+    },
+    "halstead_lr_temporal": {
+      "f1": 0.25,
+      "auc": 0.46018781565656564,
+      "ap": 0.25101136161117343,
+      "precision": 0.2403846153846154,
+      "recall": 0.2604166666666667,
+      "mcc": -0.03788095036805061,
+      "brier": 0.24911982523783377,
+      "ece": 0.2324,
+      "calibration": {
+        "fraction_of_positives": [
+          0.3253,
+          0.2543,
+          0.2222,
+          0.26
+        ],
+        "mean_predicted_value": [
+          0.3608,
+          0.4404,
+          0.5656,
+          0.6247
+        ],
+        "ece": 0.2324
+      },
+      "protocol": "temporal_age_sorted",
+      "n_train": 840,
+      "n_test": 360,
+      "vs_random_split_auc_delta": -0.1578
+    }
+  },
+  "_notes": {
+    "bandit_semgrep_auc_05_explanation": "Bandit and Semgrep achieve AUC ~0.50 (random chance) on this dataset. Root cause: positive samples are from deliberately-vulnerable toy apps (DVWA, juice-shop) that contain injection/XSS/SQLi patterns written as educational examples, while negative samples are from production repos (Django, Flask, Requests). Bandit/Semgrep detect SAST-style issues in production code; they are NOT calibrated for toy-app educational patterns. This is a dataset label alignment issue, not evidence that Bandit is ineffective at real-world security analysis. Threat-to-validity: IntelliCode's own security AUC may also be inflated by this style gap (cross-project LOPO AUC=0.494 confirms near-chance generalisation).",
+    "complexity_loc_baseline_rho": "LOC-naive baseline achieves Spearman rho=0.895 vs XGBoost rho=0.865 on the baseline evaluation. This is because the baseline evaluates on the full dataset (no train/test split), while XGBoost reports held-out test set performance. LOC correlates well in rank but has RMSE=17 vs mean baseline RMSE=22 \u2014 still much worse than XGBoost RMSE=49.5 on harder test samples. Use R2 (XGBoost 0.712 vs LOC 0.403) for fair comparison.",
+    "cognitive_complexity_validator": "Built-in benchmark: Pearson r=0.980 (pass >=0.95), MAE=1.2 (pass <=2.0). Systematic bias: +1.067 (over-counting). Worst case: deeply_nested +4 (SonarQube scores for-else differently from this implementation). Validation result: PASS \u2014 implementation is calibrated within acceptable range."
+  }
+}

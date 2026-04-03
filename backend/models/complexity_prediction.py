@@ -1,22 +1,25 @@
 """
 Complexity Prediction Model — XGBoost
-Predicts a maintainability score (0–100) and flags problematic functions.
+Predicts the cognitive complexity of a Python file.
 
-Features (16-dim vector from code_metrics.py):
-  cyclomatic_complexity, cognitive_complexity, max_function_complexity,
-  avg_function_complexity, sloc, comments, blank_lines,
+Features (15-dim vector — cognitive_complexity EXCLUDED to prevent leakage):
+  cyclomatic_complexity, max_function_complexity, avg_function_complexity,
+  sloc, comments, blank_lines,
   halstead_volume, halstead_difficulty, halstead_effort, bugs_delivered,
   n_long_functions, n_complex_functions,
   max_line_length, avg_line_length, n_lines_over_80
 
-  NOTE: maintainability_index is intentionally excluded — it is the training
-  target, so including it as a feature would cause direct target leakage.
+  NOTE: cognitive_complexity is the training TARGET so it is excluded from
+  features.  maintainability_index is also excluded — it is a closed-form
+  formula of halstead_volume * cyclomatic * sloc (all already in features),
+  which previously caused trivial R²≈1.0 target leakage.
 
-Target: maintainability score in [0, 100] (100 = perfectly clean)
+Target: cognitive_complexity (non-negative integer; lower = simpler)
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import pickle
 from dataclasses import dataclass, asdict, field
@@ -29,13 +32,14 @@ from features.code_metrics import (
     compute_all_metrics,
     metrics_to_feature_vector,
     CodeMetricsResult,
+    _function_cyclomatic,
 )
 from features.ast_extractor import ASTExtractor
 
 
 FEATURE_NAMES = [
+    # cognitive_complexity is EXCLUDED — it is the prediction target
     "cyclomatic_complexity",
-    "cognitive_complexity",
     "max_function_complexity",
     "avg_function_complexity",
     "sloc",
@@ -50,7 +54,7 @@ FEATURE_NAMES = [
     "max_line_length",
     "avg_line_length",
     "n_lines_over_80",
-]
+]  # 15 features
 
 
 @dataclass
@@ -61,6 +65,22 @@ class FunctionIssue:
     body_lines: int
     n_params: int
     issue: str      # "high_complexity" | "too_long" | "too_many_params"
+
+
+@dataclass
+class FunctionComplexityResult:
+    """Per-function complexity prediction produced by predict_functions()."""
+    name: str
+    lineno: int
+    end_lineno: int
+    cognitive_complexity: float    # predicted by XGBoost (or rule-based fallback)
+    cyclomatic_complexity: float   # computed directly via McCabe
+    grade: str                     # A / B / C / D / F
+    is_problematic: bool           # predicted cognitive_complexity > 20
+    recommendation: str            # actionable guidance string
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 @dataclass
@@ -142,11 +162,35 @@ class ComplexityPredictionModel:
     def __init__(self, checkpoint_path: Optional[str] = "checkpoints/complexity/model.pkl"):
         self._regressor = None
         self._checkpoint = checkpoint_path
+        self._mapie = None            # MAPIE conformal wrapper (optional)
+        self._shap_explainer = None   # SHAP TreeExplainer (lazy-init)
         self._try_load()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def predict_cognitive_complexity(self, source: str) -> float:
+        """Return the XGBoost's direct prediction of cognitive_complexity (same scale as training target)."""
+        from features.code_metrics import compute_all_metrics, metrics_to_feature_vector
+        metrics = compute_all_metrics(source)
+        if self._regressor is not None:
+            feat_vec = np.array([metrics_to_feature_vector(metrics)], dtype=np.float32)
+            return float(self._regressor.predict(feat_vec)[0])
+        return float(metrics.cognitive_complexity)
+
+    def predict_from_features(self, feat: list) -> float:
+        """Predict cognitive_complexity from a raw dataset feature vector.
+
+        Mirrors train_complexity.py: COG_IDX=1 is excluded from X,
+        so the model input is [feat[i] for i in range(16) if i != 1].
+        """
+        if self._regressor is None:
+            raise RuntimeError("Model not loaded.")
+        COG_IDX = 1
+        x_vec = [feat[i] for i in range(16) if i != COG_IDX]  # 15-dim
+        feat_vec = np.array([x_vec], dtype=np.float32)
+        return float(self._regressor.predict(feat_vec)[0])
 
     def predict(self, source: str) -> ComplexityResult:
         """
@@ -185,6 +229,26 @@ class ComplexityPredictionModel:
                     issue=issue,
                 ))
 
+        # Build function-level complexity summary (top-3 most complex)
+        func_level_summary: list[dict] = []
+        try:
+            func_results = self.predict_functions(source)
+            func_level_summary = [
+                {
+                    "name": fr.name,
+                    "lineno": fr.lineno,
+                    "end_lineno": fr.end_lineno,
+                    "cognitive_complexity": fr.cognitive_complexity,
+                    "cyclomatic_complexity": fr.cyclomatic_complexity,
+                    "grade": fr.grade,
+                    "is_problematic": fr.is_problematic,
+                    "recommendation": fr.recommendation,
+                }
+                for fr in func_results[:3]
+            ]
+        except Exception:
+            func_level_summary = []
+
         result = ComplexityResult(
             score=round(score, 1),
             grade=_score_to_grade(score),
@@ -207,9 +271,113 @@ class ComplexityPredictionModel:
                 "lines_over_80": metrics.n_lines_over_80,
                 "long_functions": metrics.n_long_functions,
                 "complex_functions": metrics.n_complex_functions,
+                "function_level": func_level_summary,
             },
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Function-level complexity
+    # ------------------------------------------------------------------
+
+    def predict_functions(self, source: str) -> list[FunctionComplexityResult]:
+        """
+        Analyse each top-level and nested function in *source* individually.
+
+        For each function:
+          - Extracts the function's source text with ast.get_source_segment()
+          - Computes per-function metrics and runs the XGBoost regressor (or
+            rule-based fallback) on that function in isolation
+          - Returns a list sorted by predicted cognitive_complexity descending
+
+        Args:
+            source: Full Python source code string.
+
+        Returns:
+            List of FunctionComplexityResult, most complex first.
+        """
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return []
+
+        results: list[FunctionComplexityResult] = []
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+
+            lineno = node.lineno
+            end_lineno = node.end_lineno or node.lineno
+
+            # Extract this function's source text
+            func_src = ast.get_source_segment(source, node)
+            if not func_src:
+                # Fallback: extract by line numbers
+                lines = source.splitlines()
+                func_lines = lines[lineno - 1 : end_lineno]
+                func_src = "\n".join(func_lines)
+
+            # Cyclomatic complexity directly from AST node (no re-parse needed)
+            cc = float(_function_cyclomatic(node))
+
+            # Predicted cognitive complexity via model (on isolated function source)
+            if self._regressor is not None:
+                try:
+                    func_metrics = compute_all_metrics(func_src)
+                    feat_vec = np.array(
+                        [metrics_to_feature_vector(func_metrics)], dtype=np.float32
+                    )
+                    pred_cog = float(self._regressor.predict(feat_vec)[0])
+                    pred_cog = max(0.0, pred_cog)
+                except Exception:
+                    from features.code_metrics import cognitive_complexity as _cog
+                    pred_cog = float(_cog(func_src))
+            else:
+                from features.code_metrics import cognitive_complexity as _cog
+                pred_cog = float(_cog(func_src))
+
+            grade = _score_to_grade(max(0.0, min(100.0, 100.0 - pred_cog * 2.0)))
+            is_problematic = pred_cog > 20.0
+
+            # Build recommendation
+            if is_problematic:
+                if cc > 10:
+                    recommendation = (
+                        "Refactor '{name}': high cyclomatic ({cc:.0f}) and cognitive "
+                        "complexity ({cog:.1f}). Extract sub-functions to reduce nesting."
+                    ).format(name=node.name, cc=cc, cog=pred_cog)
+                else:
+                    recommendation = (
+                        "Simplify '{name}': cognitive complexity {cog:.1f} is high. "
+                        "Consider flattening nested conditionals or using early returns."
+                    ).format(name=node.name, cog=pred_cog)
+            elif pred_cog > 10:
+                recommendation = (
+                    "Review '{name}': moderate complexity ({cog:.1f}). "
+                    "Add docstrings and unit tests for all branches."
+                ).format(name=node.name, cog=pred_cog)
+            else:
+                recommendation = (
+                    "'{name}' is acceptably simple (cognitive complexity {cog:.1f})."
+                ).format(name=node.name, cog=pred_cog)
+
+            results.append(
+                FunctionComplexityResult(
+                    name=node.name,
+                    lineno=lineno,
+                    end_lineno=end_lineno,
+                    cognitive_complexity=round(pred_cog, 2),
+                    cyclomatic_complexity=round(cc, 2),
+                    grade=grade,
+                    is_problematic=is_problematic,
+                    recommendation=recommendation,
+                )
+            )
+
+        # Sort most complex first
+        results.sort(key=lambda r: r.cognitive_complexity, reverse=True)
+        return results
 
     def train(
         self,
@@ -270,6 +438,135 @@ class ComplexityPredictionModel:
         print(f"Training complete — RMSE: {rmse:.2f}, R²: {r2:.4f}")
         return {"rmse": rmse, "r2": r2}
 
+    def predict_with_interval(
+        self,
+        source: str,
+        alpha: float = 0.1,
+    ) -> dict:
+        """
+        Return prediction with a conformal prediction interval (90% CI by default).
+
+        Uses MAPIE (Model-Agnostic Prediction Interval Estimator) if available,
+        otherwise returns the point prediction with None intervals.
+
+        Args:
+            source: Python source code.
+            alpha:  Error rate — 0.1 gives a 90% prediction interval.
+
+        Returns:
+            {
+              "score": float,          # point prediction
+              "lower": float | None,   # lower bound of PI
+              "upper": float | None,   # upper bound of PI
+              "coverage": float,       # nominal coverage (1 - alpha)
+              "grade": str,
+            }
+        """
+        result = self.predict(source)
+        point = result.score
+
+        if self._mapie is not None:
+            try:
+                metrics = compute_all_metrics(source)
+                feat_vec = np.array([metrics_to_feature_vector(metrics)], dtype=np.float32)
+                _, pi = self._mapie.predict(feat_vec, alpha=alpha)
+                lower = float(max(0.0, pi[0, 0, 0]))
+                upper = float(min(100.0, pi[0, 1, 0]))
+            except Exception:
+                lower, upper = None, None
+        else:
+            lower, upper = None, None
+
+        return {
+            "score": point,
+            "lower": lower,
+            "upper": upper,
+            "coverage": 1.0 - alpha,
+            "grade": result.grade,
+        }
+
+    def explain(self, source: str) -> list[dict]:
+        """
+        Return SHAP-based feature contributions for a prediction.
+
+        Each entry:
+            {
+              "feature":   str,    # feature name
+              "value":     float,  # raw feature value
+              "shap":      float,  # SHAP contribution (+ve raises score, -ve lowers)
+              "direction": str,    # "positive" | "negative"
+            }
+
+        Returns [] if SHAP is unavailable or no model is loaded.
+        """
+        if self._regressor is None:
+            return []
+        try:
+            import shap
+        except ImportError:
+            return []
+
+        metrics = compute_all_metrics(source)
+        feat_vec = np.array([metrics_to_feature_vector(metrics)], dtype=np.float32)
+
+        if self._shap_explainer is None:
+            self._shap_explainer = shap.TreeExplainer(self._regressor)
+
+        shap_values = self._shap_explainer.shap_values(feat_vec)  # shape (1, 16)
+        contributions = shap_values[0]
+
+        results = []
+        for i, name in enumerate(FEATURE_NAMES):
+            sv = float(contributions[i])
+            results.append({
+                "feature": name,
+                "value": float(feat_vec[0][i]),
+                "shap": round(sv, 4),
+                "direction": "positive" if sv >= 0 else "negative",
+            })
+        # Sort by absolute contribution descending
+        results.sort(key=lambda x: abs(x["shap"]), reverse=True)
+        return results
+
+    def fit_conformal(
+        self,
+        X_cal: np.ndarray,
+        y_cal: np.ndarray,
+    ) -> None:
+        """
+        Fit a MAPIE conformal wrapper around the already-trained regressor.
+
+        Call this after train() with a held-out calibration set to enable
+        predict_with_interval(). Saves the fitted MAPIE wrapper alongside the
+        base model checkpoint.
+
+        Args:
+            X_cal: Calibration features (N, 16).
+            y_cal: Calibration targets in [0, 100].
+        """
+        try:
+            from mapie.regression import MapieRegressor
+        except ImportError:
+            print("[WARN] mapie not installed — conformal intervals unavailable. pip install mapie")
+            return
+
+        if self._regressor is None:
+            raise RuntimeError("Train the model before fitting conformal intervals.")
+
+        self._mapie = MapieRegressor(
+            self._regressor,
+            method="plus",
+            cv="prefit",   # regressor already fitted; use calibration set directly
+        )
+        self._mapie.fit(X_cal, y_cal)
+
+        # Persist alongside the base checkpoint
+        if self._checkpoint:
+            mapie_path = Path(self._checkpoint).parent / "mapie_wrapper.pkl"
+            with open(mapie_path, "wb") as f:
+                pickle.dump(self._mapie, f)
+            print(f"MAPIE conformal wrapper saved → {mapie_path}")
+
     def feature_importance(self) -> list[tuple[str, float]]:
         """Return (feature_name, importance) pairs sorted by importance."""
         if self._regressor is None:
@@ -293,3 +590,13 @@ class ComplexityPredictionModel:
                     self._regressor = pickle.load(f)
             except Exception:
                 self._regressor = None
+
+        # Load optional MAPIE conformal wrapper
+        if self._checkpoint:
+            mapie_path = Path(self._checkpoint).parent / "mapie_wrapper.pkl"
+            if mapie_path.exists():
+                try:
+                    with open(mapie_path, "rb") as f:
+                        self._mapie = pickle.load(f)
+                except Exception:
+                    self._mapie = None

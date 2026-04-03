@@ -1,0 +1,48 @@
+{
+  "before": {
+    "total": 1354,
+    "negative": 1038,
+    "positive": 316,
+    "prevalence": 0.2334
+  },
+  "after": {
+    "total": 1286,
+    "negative": 1033,
+    "positive": 253,
+    "prevalence": 0.1967
+  },
+  "removed_toy_app": {
+    "total": 68,
+    "negative": 5,
+    "positive": 63,
+    "prevalence": 0.9265
+  },
+  "removed_too_short": {
+    "total": 0,
+    "negative": 0,
+    "positive": 0,
+    "prevalence": 0.0
+  },
+  "origin_breakdown_before": {
+    "cve_mining": 881,
+    "pallets": 136,
+    "pypa": 86,
+    "bandit": 68,
+    "tqdm": 64,
+    "encode": 57,
+    "psf": 34,
+    "bottlepy": 28
+  },
+  "origin_breakdown_after": {
+    "cve_mining": 881,
+    "pallets": 136,
+    "pypa": 86,
+    "tqdm": 64,
+    "encode": 57,
+    "psf": 34,
+    "bottlepy": 28
+  },
+  "toy_origins_removed": [
+    "bandit"
+  ]
+}

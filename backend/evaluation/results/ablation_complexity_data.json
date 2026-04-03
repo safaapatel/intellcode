@@ -1,0 +1,81 @@
+{
+  "task": "complexity",
+  "metric": "auc",
+  "baseline": {
+    "config_name": "full_data_100%",
+    "ablated": "none",
+    "auc": null,
+    "ap": null,
+    "f1": null,
+    "rmse": 32.6871,
+    "spearman": 0.8391,
+    "n_train": 700,
+    "n_test": 175,
+    "delta_auc": null,
+    "pvalue": null,
+    "cohens_d": null,
+    "cliffs_delta": null
+  },
+  "ablations": [
+    {
+      "config_name": "data_10%",
+      "ablated": "data_frac=0.1",
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 51.9361,
+      "spearman": 0.7625,
+      "n_train": 69,
+      "n_test": 17,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_25%",
+      "ablated": "data_frac=0.25",
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 17.9383,
+      "spearman": 0.9326,
+      "n_train": 174,
+      "n_test": 43,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_50%",
+      "ablated": "data_frac=0.5",
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 42.347,
+      "spearman": 0.8525,
+      "n_train": 349,
+      "n_test": 87,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    },
+    {
+      "config_name": "data_75%",
+      "ablated": "data_frac=0.75",
+      "auc": null,
+      "ap": null,
+      "f1": null,
+      "rmse": 29.1395,
+      "spearman": 0.8052,
+      "n_train": 524,
+      "n_test": 131,
+      "delta_auc": null,
+      "pvalue": null,
+      "cohens_d": null,
+      "cliffs_delta": null
+    }
+  ]
+}

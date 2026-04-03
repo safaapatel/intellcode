@@ -1,0 +1,775 @@
+{
+  "cognitive_complexity": {
+    "builtin": {
+      "n_functions": 30,
+      "pearson_r": 0.9803,
+      "spearman_rho": 0.9573,
+      "mae": 1.2,
+      "rmse": 1.633,
+      "bias": 1.067,
+      "max_error": 4.0,
+      "worst_cases": [
+        {
+          "function": "deeply_nested",
+          "predicted": 14,
+          "sonarqube": 10,
+          "error": 4,
+          "category": "nesting"
+        },
+        {
+          "function": "deeply_nested",
+          "predicted": 14,
+          "sonarqube": 10,
+          "error": 4,
+          "category": "nesting"
+        },
+        {
+          "function": "for_else",
+          "predicted": 6,
+          "sonarqube": 3,
+          "error": 3,
+          "category": "loop_else"
+        },
+        {
+          "function": "for_else",
+          "predicted": 6,
+          "sonarqube": 3,
+          "error": 3,
+          "category": "loop_else"
+        },
+        {
+          "function": "nested_if",
+          "predicted": 5,
+          "sonarqube": 3,
+          "error": 2,
+          "category": "nesting"
+        }
+      ]
+    },
+    "pass": true
+  },
+  "lopo": {
+    "bug": {
+      "protocol": "5fold_cv_fallback",
+      "note": "Repo labels absent; LOPO requires >= 2 distinct repos in data",
+      "random_split_auc_mean": 0.6501,
+      "random_split_auc_std": 0.0366
+    },
+    "security": {
+      "error": "unsupported format string passed to NoneType.__format__"
+    },
+    "complexity": {
+      "error": "unsupported format string passed to NoneType.__format__"
+    },
+    "pattern": {
+      "error": "unsupported format string passed to NoneType.__format__"
+    }
+  },
+  "baselines": {
+    "security": {
+      "bandit": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "auc": 0.5,
+        "ap": 0.3333333333333333
+      },
+      "intellicode": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "auc": 0.5,
+        "ap": 0.3333333333333333
+      },
+      "significance_intellicode_vs_bandit": {
+        "wilcoxon_stat": 0.0,
+        "p_value": NaN,
+        "significant_at_0.05": false
+      }
+    },
+    "complexity": {
+      "mean_baseline": {
+        "rmse": 22.227776446080096,
+        "mae": 18.369857684114287,
+        "r2": 0.0,
+        "spearman": NaN,
+        "spearman_p": NaN
+      },
+      "radon_mi": {
+        "rmse": 70.95035524974128,
+        "mae": 67.37862319999999,
+        "r2": -9.188660897085441,
+        "spearman": NaN,
+        "spearman_p": NaN
+      },
+      "intellicode": {
+        "rmse": 28.215077353508914,
+        "mae": 23.456649942857144,
+        "r2": -0.6112778983909581,
+        "spearman": NaN,
+        "spearman_p": NaN
+      },
+      "significance_intellicode_vs_radon": {
+        "wilcoxon_stat": 4790.0,
+        "p_value": 1.5223384712960359e-147,
+        "significant_at_0.05": true
+      }
+    }
+  },
+  "ablation": {
+    "bug": {
+      "feature_ablation": {
+        "task": "bug",
+        "metric": "auc",
+        "baseline": {
+          "config_name": "full_model",
+          "ablated": "none",
+          "auc": 0.5937,
+          "ap": 0.4274,
+          "f1": 0.3039,
+          "rmse": null,
+          "spearman": null,
+          "n_train": 960,
+          "n_test": 240,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "ablate_size",
+            "ablated": "size",
+            "auc": 0.6089,
+            "ap": 0.4358,
+            "f1": 0.3331,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.015199999999999991,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_complexity",
+            "ablated": "complexity",
+            "auc": 0.5842,
+            "ap": 0.4268,
+            "f1": 0.2937,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": -0.009499999999999953,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_halstead",
+            "ablated": "halstead",
+            "auc": 0.5996,
+            "ap": 0.4407,
+            "f1": 0.2999,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.005900000000000016,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_functions",
+            "ablated": "functions",
+            "auc": 0.5963,
+            "ap": 0.4289,
+            "f1": 0.3131,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.0026000000000000467,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_line_style",
+            "ablated": "line_style",
+            "auc": 0.6057,
+            "ap": 0.4341,
+            "f1": 0.3831,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.01200000000000001,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_diffusion",
+            "ablated": "diffusion",
+            "auc": 0.5937,
+            "ap": 0.4274,
+            "f1": 0.3039,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.0,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_size_change",
+            "ablated": "size_change",
+            "auc": 0.5657,
+            "ap": 0.4189,
+            "f1": 0.261,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": -0.028000000000000025,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_purpose",
+            "ablated": "purpose",
+            "auc": 0.5937,
+            "ap": 0.4274,
+            "f1": 0.3039,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.0,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_history",
+            "ablated": "history",
+            "auc": 0.5937,
+            "ap": 0.4274,
+            "f1": 0.3039,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.0,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_experience",
+            "ablated": "experience",
+            "auc": 0.5937,
+            "ap": 0.4274,
+            "f1": 0.3039,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 960,
+            "n_test": 240,
+            "delta_auc": 0.0,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      },
+      "data_ablation": {
+        "task": "bug",
+        "metric": "auc",
+        "baseline": {
+          "config_name": "full_data_100%",
+          "ablated": "none",
+          "auc": 0.5937,
+          "ap": 0.4274,
+          "f1": 0.3039,
+          "rmse": null,
+          "spearman": null,
+          "n_train": 960,
+          "n_test": 240,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "data_10%",
+            "ablated": "data_frac=0.1",
+            "auc": 0.5832,
+            "ap": 0.4274,
+            "f1": 0.2328,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 96,
+            "n_test": 24,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_25%",
+            "ablated": "data_frac=0.25",
+            "auc": 0.5231,
+            "ap": 0.4206,
+            "f1": 0.245,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 240,
+            "n_test": 60,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_50%",
+            "ablated": "data_frac=0.5",
+            "auc": 0.5916,
+            "ap": 0.4257,
+            "f1": 0.2916,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 480,
+            "n_test": 120,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_75%",
+            "ablated": "data_frac=0.75",
+            "auc": 0.5885,
+            "ap": 0.4324,
+            "f1": 0.2716,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 720,
+            "n_test": 180,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      }
+    },
+    "complexity": {
+      "feature_ablation": {
+        "task": "complexity",
+        "metric": "rmse",
+        "baseline": {
+          "config_name": "full_model",
+          "ablated": "none",
+          "auc": null,
+          "ap": null,
+          "f1": null,
+          "rmse": 0.1864,
+          "spearman": 0.9979,
+          "n_train": 700,
+          "n_test": 175,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "ablate_size",
+            "ablated": "size",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.1888,
+            "spearman": 0.9983,
+            "n_train": 700,
+            "n_test": 175,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_complexity",
+            "ablated": "complexity",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.914,
+            "spearman": 0.9977,
+            "n_train": 700,
+            "n_test": 175,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_halstead",
+            "ablated": "halstead",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.2138,
+            "spearman": 0.9977,
+            "n_train": 700,
+            "n_test": 175,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_functions",
+            "ablated": "functions",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.7012,
+            "spearman": 0.9973,
+            "n_train": 700,
+            "n_test": 175,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_line_style",
+            "ablated": "line_style",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.1928,
+            "spearman": 0.9977,
+            "n_train": 700,
+            "n_test": 175,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      },
+      "data_ablation": {
+        "task": "complexity",
+        "metric": "auc",
+        "baseline": {
+          "config_name": "full_data_100%",
+          "ablated": "none",
+          "auc": null,
+          "ap": null,
+          "f1": null,
+          "rmse": 0.172,
+          "spearman": 0.9986,
+          "n_train": 700,
+          "n_test": 175,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "data_10%",
+            "ablated": "data_frac=0.1",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 1.3833,
+            "spearman": 0.9886,
+            "n_train": 69,
+            "n_test": 17,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_25%",
+            "ablated": "data_frac=0.25",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.5102,
+            "spearman": 0.9987,
+            "n_train": 174,
+            "n_test": 43,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_50%",
+            "ablated": "data_frac=0.5",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.3038,
+            "spearman": 0.9995,
+            "n_train": 349,
+            "n_test": 87,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_75%",
+            "ablated": "data_frac=0.75",
+            "auc": null,
+            "ap": null,
+            "f1": null,
+            "rmse": 0.2339,
+            "spearman": 0.999,
+            "n_train": 524,
+            "n_test": 131,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      }
+    },
+    "pattern": {
+      "feature_ablation": {
+        "task": "pattern",
+        "metric": "rmse",
+        "baseline": {
+          "config_name": "full_model",
+          "ablated": "none",
+          "auc": null,
+          "ap": null,
+          "f1": 0.4074,
+          "rmse": null,
+          "spearman": null,
+          "n_train": 922,
+          "n_test": 230,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "ablate_size",
+            "ablated": "size",
+            "auc": null,
+            "ap": null,
+            "f1": 0.3702,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 922,
+            "n_test": 230,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_complexity",
+            "ablated": "complexity",
+            "auc": null,
+            "ap": null,
+            "f1": 0.3351,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 922,
+            "n_test": 230,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_halstead",
+            "ablated": "halstead",
+            "auc": null,
+            "ap": null,
+            "f1": 0.4696,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 922,
+            "n_test": 230,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_functions",
+            "ablated": "functions",
+            "auc": null,
+            "ap": null,
+            "f1": 0.4097,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 922,
+            "n_test": 230,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "ablate_line_style",
+            "ablated": "line_style",
+            "auc": null,
+            "ap": null,
+            "f1": 0.3803,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 922,
+            "n_test": 230,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      },
+      "data_ablation": {
+        "task": "pattern",
+        "metric": "auc",
+        "baseline": {
+          "config_name": "full_data_100%",
+          "ablated": "none",
+          "auc": null,
+          "ap": null,
+          "f1": 0.4177,
+          "rmse": null,
+          "spearman": null,
+          "n_train": 922,
+          "n_test": 230,
+          "delta_auc": null,
+          "pvalue": null,
+          "cohens_d": null,
+          "cliffs_delta": null
+        },
+        "ablations": [
+          {
+            "config_name": "data_10%",
+            "ablated": "data_frac=0.1",
+            "auc": null,
+            "ap": null,
+            "f1": 0.3675,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 92,
+            "n_test": 23,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_25%",
+            "ablated": "data_frac=0.25",
+            "auc": null,
+            "ap": null,
+            "f1": 0.3425,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 230,
+            "n_test": 57,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_50%",
+            "ablated": "data_frac=0.5",
+            "auc": null,
+            "ap": null,
+            "f1": 0.4078,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 460,
+            "n_test": 115,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          },
+          {
+            "config_name": "data_75%",
+            "ablated": "data_frac=0.75",
+            "auc": null,
+            "ap": null,
+            "f1": 0.4293,
+            "rmse": null,
+            "spearman": null,
+            "n_train": 691,
+            "n_test": 172,
+            "delta_auc": null,
+            "pvalue": null,
+            "cohens_d": null,
+            "cliffs_delta": null
+          }
+        ]
+      }
+    }
+  },
+  "conformal": {
+    "coverage": [
+      {
+        "claimed_coverage": 0.95,
+        "empirical_coverage": 0.9773,
+        "n_samples": 88,
+        "mean_interval_width": 0.5656,
+        "valid": true
+      },
+      {
+        "claimed_coverage": 0.9,
+        "empirical_coverage": 0.9659,
+        "n_samples": 88,
+        "mean_interval_width": 0.4302,
+        "valid": true
+      },
+      {
+        "claimed_coverage": 0.8,
+        "empirical_coverage": 0.7955,
+        "n_samples": 88,
+        "mean_interval_width": 0.268,
+        "valid": true
+      }
+    ]
+  },
+  "effort": {
+    "n_files": 1200,
+    "n_buggy": 499,
+    "popt": 0.0,
+    "pofb20": 0.1022,
+    "auc": 0.5,
+    "notes": "Effort computed using LOC as inspection cost proxy (Mende & Koschke 2010)."
+  },
+  "_meta": {
+    "duration_seconds": 136.15,
+    "records_loaded": {
+      "security": 15,
+      "bug": 1200,
+      "complexity": 875,
+      "pattern": 1153
+    }
+  }
+}

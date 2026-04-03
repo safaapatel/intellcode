@@ -1,0 +1,217 @@
+{
+  "n_pairs": 12,
+  "complexity": {
+    "results": [
+      {
+        "name": "walrus_operator",
+        "description": "List comprehension with walrus vs explicit loop",
+        "old_pred": 10.2,
+        "new_pred": 10.01,
+        "diff": 0.19,
+        "stable": true
+      },
+      {
+        "name": "match_statement",
+        "description": "Structural pattern matching vs if/elif chain",
+        "old_pred": 16.21,
+        "new_pred": 9.33,
+        "diff": 6.88,
+        "stable": false
+      },
+      {
+        "name": "type_hints_modern",
+        "description": "PEP 604 union types vs typing.Optional/List/Dict",
+        "old_pred": 10.08,
+        "new_pred": 10.08,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "exception_groups",
+        "description": "ExceptionGroup (3.11+) vs multiple except clauses",
+        "old_pred": 16.21,
+        "new_pred": 14.66,
+        "diff": 1.55,
+        "stable": true
+      },
+      {
+        "name": "fstring_modern",
+        "description": "f-string debugging (= specifier) vs explicit format",
+        "old_pred": 9.33,
+        "new_pred": 9.33,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "dataclass_slots",
+        "description": "dataclass with __slots__ (3.10+) vs manual __slots__",
+        "old_pred": 9.33,
+        "new_pred": 9.33,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "parameter_spec",
+        "description": "ParamSpec (3.10+) vs Callable in typing",
+        "old_pred": 9.33,
+        "new_pred": 9.33,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "dict_merge",
+        "description": "Dict merge operator (3.9+) vs dict.update()",
+        "old_pred": 9.33,
+        "new_pred": 9.33,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "positional_only_params",
+        "description": "Positional-only parameters (3.8+) vs docstring convention",
+        "old_pred": 10.08,
+        "new_pred": 12.78,
+        "diff": 2.7,
+        "stable": true
+      },
+      {
+        "name": "generator_vs_list",
+        "description": "Generator expression vs list comprehension for sum",
+        "old_pred": 10.08,
+        "new_pred": 10.08,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "contextlib_suppress",
+        "description": "contextlib.suppress (idiomatic 3.x) vs try/except/pass",
+        "old_pred": 10.08,
+        "new_pred": 10.08,
+        "diff": 0.0,
+        "stable": true
+      },
+      {
+        "name": "star_unpacking",
+        "description": "Extended star unpacking vs slices",
+        "old_pred": 9.33,
+        "new_pred": 9.33,
+        "diff": 0.0,
+        "stable": true
+      }
+    ],
+    "summary": {
+      "n_pairs": 12,
+      "n_stable": 11,
+      "consistency_rate": 0.9167,
+      "mean_prediction_diff": 0.9433
+    },
+    "stable_threshold": 5.0
+  },
+  "security": {
+    "results": [
+      {
+        "name": "walrus_operator",
+        "description": "List comprehension with walrus vs explicit loop",
+        "old_prob": 0.5222,
+        "new_prob": 0.5351,
+        "diff": 0.0129,
+        "stable": true
+      },
+      {
+        "name": "match_statement",
+        "description": "Structural pattern matching vs if/elif chain",
+        "old_prob": 0.6216,
+        "new_prob": 0.6149,
+        "diff": 0.0067,
+        "stable": true
+      },
+      {
+        "name": "type_hints_modern",
+        "description": "PEP 604 union types vs typing.Optional/List/Dict",
+        "old_prob": 0.588,
+        "new_prob": 0.5808,
+        "diff": 0.0072,
+        "stable": true
+      },
+      {
+        "name": "exception_groups",
+        "description": "ExceptionGroup (3.11+) vs multiple except clauses",
+        "old_prob": 0.6048,
+        "new_prob": 0.566,
+        "diff": 0.0388,
+        "stable": true
+      },
+      {
+        "name": "fstring_modern",
+        "description": "f-string debugging (= specifier) vs explicit format",
+        "old_prob": 0.6713,
+        "new_prob": 0.6379,
+        "diff": 0.0334,
+        "stable": true
+      },
+      {
+        "name": "dataclass_slots",
+        "description": "dataclass with __slots__ (3.10+) vs manual __slots__",
+        "old_prob": 0.622,
+        "new_prob": 0.6248,
+        "diff": 0.0028,
+        "stable": true
+      },
+      {
+        "name": "parameter_spec",
+        "description": "ParamSpec (3.10+) vs Callable in typing",
+        "old_prob": 0.6317,
+        "new_prob": 0.6409,
+        "diff": 0.0092,
+        "stable": true
+      },
+      {
+        "name": "dict_merge",
+        "description": "Dict merge operator (3.9+) vs dict.update()",
+        "old_prob": 0.6547,
+        "new_prob": 0.6684,
+        "diff": 0.0136,
+        "stable": true
+      },
+      {
+        "name": "positional_only_params",
+        "description": "Positional-only parameters (3.8+) vs docstring convention",
+        "old_prob": 0.5998,
+        "new_prob": 0.5574,
+        "diff": 0.0424,
+        "stable": true
+      },
+      {
+        "name": "generator_vs_list",
+        "description": "Generator expression vs list comprehension for sum",
+        "old_prob": 0.5649,
+        "new_prob": 0.593,
+        "diff": 0.0281,
+        "stable": true
+      },
+      {
+        "name": "contextlib_suppress",
+        "description": "contextlib.suppress (idiomatic 3.x) vs try/except/pass",
+        "old_prob": 0.4884,
+        "new_prob": 0.492,
+        "diff": 0.0036,
+        "stable": true
+      },
+      {
+        "name": "star_unpacking",
+        "description": "Extended star unpacking vs slices",
+        "old_prob": 0.6361,
+        "new_prob": 0.6236,
+        "diff": 0.0125,
+        "stable": true
+      }
+    ],
+    "summary": {
+      "n_pairs": 12,
+      "n_stable": 12,
+      "consistency_rate": 1.0,
+      "mean_prediction_diff": 0.0176
+    },
+    "stable_threshold": 0.15
+  }
+}

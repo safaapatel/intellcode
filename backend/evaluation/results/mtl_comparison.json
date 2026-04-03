@@ -1,0 +1,77 @@
+{
+  "complexity": {
+    "single_task": {
+      "rmse": 46.6636,
+      "r2": 0.7332,
+      "spearman": 0.8836
+    },
+    "mtl_kendall": {
+      "rmse": 54.405,
+      "spearman": 0.7384
+    },
+    "mtl_mgda": {
+      "rmse": 54.405,
+      "spearman": 0.7384
+    },
+    "mtl_equal": {
+      "rmse": 54.405,
+      "spearman": 0.7384
+    }
+  },
+  "security": {
+    "single_task": {
+      "auc": 0.8378,
+      "f1": 0.5283,
+      "ap": 0.6383
+    },
+    "mtl_kendall": {
+      "auc": 0.8001,
+      "ap": 0.5155
+    },
+    "mtl_mgda": {
+      "auc": 0.8001,
+      "ap": 0.5155
+    },
+    "mtl_equal": {
+      "auc": 0.8001,
+      "ap": 0.5155
+    }
+  },
+  "bugs": {
+    "single_task": {
+      "auc": 0.6527,
+      "f1": 0.5359,
+      "ap": 0.5544
+    },
+    "mtl_kendall": {
+      "auc": 0.6364,
+      "ap": 0.5323
+    },
+    "mtl_mgda": {
+      "auc": 0.6364,
+      "ap": 0.5323
+    },
+    "mtl_equal": {
+      "auc": 0.6364,
+      "ap": 0.5323
+    }
+  },
+  "patterns": {
+    "single_task": {
+      "f1_macro": 0.7982,
+      "accuracy": 0.8095
+    },
+    "mtl_kendall": {
+      "accuracy": 0.8095,
+      "f1_macro": 0.7982
+    },
+    "mtl_mgda": {
+      "accuracy": 0.8095,
+      "f1_macro": 0.7982
+    },
+    "mtl_equal": {
+      "accuracy": 0.8095,
+      "f1_macro": 0.7982
+    }
+  }
+}

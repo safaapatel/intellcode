@@ -1,0 +1,32 @@
+\begin{table}[ht]
+\centering
+\caption{Single-task vs. MTL (Kendall / MGDA / Equal) comparison}
+\label{tab:mtl_comparison}
+\small
+\begin{tabular}{llrrrr}
+\toprule
+Task & Strategy & Metric 1 & Metric 2 & Metric 3 \\
+\midrule
+  Complexity & single\_task & 46.6636 & 0.7332 & 0.8836 \\
+   & mtl\_kendall & 54.4050 & - & 0.7384 \\
+   & mtl\_mgda & 54.4050 & - & 0.7384 \\
+   & mtl\_equal & 54.4050 & - & 0.7384 \\
+\midrule
+  Security & single\_task & 0.8378 & 0.5283 & 0.6383 \\
+   & mtl\_kendall & 0.8001 & - & 0.5155 \\
+   & mtl\_mgda & 0.8001 & - & 0.5155 \\
+   & mtl\_equal & 0.8001 & - & 0.5155 \\
+\midrule
+  Bugs & single\_task & 0.6527 & 0.5359 & 0.5544 \\
+   & mtl\_kendall & 0.6364 & - & 0.5323 \\
+   & mtl\_mgda & 0.6364 & - & 0.5323 \\
+   & mtl\_equal & 0.6364 & - & 0.5323 \\
+\midrule
+  Patterns & single\_task & 0.7982 & 0.8095 &  \\
+   & mtl\_kendall & 0.7982 & 0.8095 &  \\
+   & mtl\_mgda & 0.7982 & 0.8095 &  \\
+   & mtl\_equal & 0.7982 & 0.8095 &  \\
+\midrule
+\bottomrule
+\end{tabular}
+\end{table}

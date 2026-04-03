@@ -80,16 +80,98 @@ _DANGEROUS_CALLS = {
     "eval", "exec", "unsafe_load",
 }
 
+# Extended Python-specific security signals (v2 feature set)
+_INJECTION_APIS = {
+    # SQL
+    "execute", "executemany", "executescript", "raw", "extra", "RawSQL",
+    # OS command
+    "system", "popen", "Popen", "call", "run", "check_output", "check_call",
+    "spawn", "spawnl", "spawnle", "spawnlp", "spawnv", "spawnve",
+    # Code execution
+    "eval", "exec", "compile", "execfile", "__import__",
+    # Deserialization
+    "loads", "load", "unsafe_load", "Unpickler",
+    # Template injection
+    "render_string", "render", "Template",
+}
+
+_CRYPTO_WEAK = {"md5", "sha1", "des", "rc4", "blowfish", "arcfour"}
+
+_SECRET_PATTERNS = [
+    "password", "passwd", "secret", "api_key", "apikey", "token",
+    "private_key", "access_key", "auth_token", "credential",
+]
+
+_NETWORK_APIS = {"urllib", "requests", "httpx", "aiohttp", "socket", "ssl"}
+
+_TAINT_SOURCES = {
+    "input", "request", "environ", "argv", "stdin",
+    "GET", "POST", "FILES", "COOKIES", "META",
+}
+
+
+def _count_format_string_injections(source: str) -> int:
+    """Count f-strings and %-format patterns that may feed user input into queries."""
+    import re
+    # f-string with variable: f"... {var} ..."
+    fstring_count = len(re.findall(r'f["\'].*?\{[^}]+\}.*?["\']', source))
+    # % formatting: "..." % var
+    percent_count = len(re.findall(r'["\'].*?%[sd].*?["\'].*?%', source))
+    return fstring_count + percent_count
+
+
+def _count_taint_sources(ast_feats: dict) -> int:
+    """Count calls to known taint sources (user-controlled input)."""
+    calls = ast_feats.get("calls", [])
+    return sum(1 for c in calls if c.get("name") in _TAINT_SOURCES)
+
+
+def _count_weak_crypto(source: str) -> int:
+    import re
+    count = 0
+    src_lower = source.lower()
+    for weak in _CRYPTO_WEAK:
+        if weak in src_lower:
+            count += 1
+    return count
+
+
+def _count_hardcoded_secrets(ast_feats: dict) -> int:
+    """Count assignments where LHS name suggests a secret and RHS is a string literal."""
+    count = 0
+    for lit in ast_feats.get("string_literals", []):
+        val = lit.get("value", "")
+        if len(val) >= 8 and any(p in val.lower() for p in _SECRET_PATTERNS):
+            count += 1
+    return count
+
+
+def _count_network_usage(ast_feats: dict) -> int:
+    imports = [imp.split(".")[0] for imp in ast_feats.get("imports", [])]
+    return sum(1 for imp in imports if imp in _NETWORK_APIS)
+
 
 def _build_rf_feature_vector(source: str) -> np.ndarray:
     """
     Build a fixed-length numeric feature vector for the Random Forest.
-    Combines AST features, code metrics, and security-specific counters.
+    v2: Extended with Python-specific security signals.
+
+    Feature groups (24 total):
+      [0-14]  Static code metrics (15-dim from metrics_to_feature_vector)
+      [15-23] Security-specific features (9 original + 6 new = extended)
+
+    New features added in v2:
+      - format string injection count (f-strings / % format feeding queries)
+      - taint source count (calls to input/request/environ/etc.)
+      - weak crypto usage count
+      - hardcoded secret string count
+      - network API usage count
+      - injection API call density (injection_calls / total_calls)
     """
     ast_feats = ASTExtractor().extract(source)
     metric_vec = metrics_to_feature_vector(compute_all_metrics(source))
 
-    # Security-specific counts
+    # Original security features
     imports = [imp.split(".")[0] for imp in ast_feats.get("imports", [])]
     dangerous_import_count = sum(1 for imp in imports if imp in _DANGEROUS_IMPORTS)
 
@@ -99,11 +181,23 @@ def _build_rf_feature_vector(source: str) -> np.ndarray:
     string_literals = ast_feats.get("string_literals", [])
     long_string_count = sum(1 for s in string_literals if len(s.get("value", "")) > 20)
 
-    # Quick pattern scan result as features
     scan = scan_security_patterns(source)
     scan_critical = len(scan.critical)
     scan_high = len(scan.high)
     scan_total = len(scan.findings)
+
+    n_try_blocks = float(ast_feats.get("n_try_blocks", 0))
+    n_string_literals = float(ast_feats.get("n_string_literals", 0))
+    n_calls = float(ast_feats.get("n_calls", 0))
+
+    # New v2 features
+    injection_api_count = sum(1 for c in calls if c.get("name") in _INJECTION_APIS)
+    injection_density = injection_api_count / max(1.0, n_calls)
+    format_inject_count = float(_count_format_string_injections(source))
+    taint_source_count = float(_count_taint_sources(ast_feats))
+    weak_crypto_count = float(_count_weak_crypto(source))
+    hardcoded_secret_count = float(_count_hardcoded_secrets(ast_feats))
+    network_usage_count = float(_count_network_usage(ast_feats))
 
     security_feats = [
         float(dangerous_import_count),
@@ -112,12 +206,33 @@ def _build_rf_feature_vector(source: str) -> np.ndarray:
         float(scan_critical),
         float(scan_high),
         float(scan_total),
-        float(ast_feats.get("n_try_blocks", 0)),
-        float(ast_feats.get("n_string_literals", 0)),
-        float(ast_feats.get("n_calls", 0)),
+        n_try_blocks,
+        n_string_literals,
+        n_calls,
+        # v2 additions
+        float(injection_api_count),
+        injection_density,
+        format_inject_count,
+        taint_source_count,
+        weak_crypto_count,
+        hardcoded_secret_count,
+        network_usage_count,
     ]
 
     return np.array(metric_vec + security_feats, dtype=np.float32)
+
+
+# Feature names for interpretability (24-dim)
+RF_FEATURE_NAMES = [
+    "cc", "max_func_cc", "avg_func_cc", "sloc", "comments", "blank",
+    "halstead_vol", "halstead_diff", "halstead_effort", "halstead_bugs",
+    "n_long_funcs", "n_complex_funcs", "max_line", "avg_line", "n_over80",
+    "dangerous_imports", "dangerous_calls", "long_strings",
+    "scan_critical", "scan_high", "scan_total",
+    "n_try_blocks", "n_string_literals", "n_calls",
+    "injection_api_count", "injection_density", "format_inject",
+    "taint_sources", "weak_crypto", "hardcoded_secrets", "network_usage",
+]
 
 
 # ---------------------------------------------------------------------------
