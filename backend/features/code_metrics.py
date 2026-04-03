@@ -122,48 +122,51 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
 
     Rules (per SonarSource specification v1.2):
       B1 — control flow structures (if/for/while/except/match) add 1 + nesting level
-      B2 — logical operator sequences (and/or) add 1 per distinct run
+      B2 — logical operator sequences (and/or) add 1 per distinct run; ternary adds 1
       B3 — recursion adds 1 per recursive call site
       NOTE: `with` does NOT increment (it is a resource manager, not a branch).
-            `else` on for/while loops adds +1 (it is a surprising flow branch).
-            Nested functions/lambdas increase nesting depth but do not self-increment.
+            Top-level function defs do NOT increase nesting (only nested functions do).
+            `else` on while loops adds +1; `else` on for loops does NOT.
     """
 
     def __init__(self):
         self.score = 0
         self._nesting = 0
-        self._func_names: set[str] = set()
+        self._func_depth = 0      # 0 = not inside any function yet
+        self._current_func: str | None = None   # name of the immediately enclosing function
 
     def _increment(self, n: int = 1):
         self.score += n
 
-    # ── Functions and lambdas raise nesting depth, no self-increment ──────────
+    def _visit_func(self, node: ast.AST, name: str | None = None):
+        is_nested = self._func_depth > 0   # nested function raises nesting depth
+        if is_nested:
+            self._nesting += 1
+        self._func_depth += 1
+        prev_func = self._current_func
+        self._current_func = name
+        self.generic_visit(node)
+        self._current_func = prev_func
+        self._func_depth -= 1
+        if is_nested:
+            self._nesting -= 1
+
+    # ── Functions and lambdas ─────────────────────────────────────────────────
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        self._func_names.add(node.name)
-        self._nesting += 1
-        self.generic_visit(node)
-        self._nesting -= 1
+        self._visit_func(node, node.name)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-        self._func_names.add(node.name)
-        self._nesting += 1
-        self.generic_visit(node)
-        self._nesting -= 1
+        self._visit_func(node, node.name)
 
     def visit_Lambda(self, node: ast.Lambda):
-        # Lambda is a nested callable — raises nesting depth only
-        self._nesting += 1
-        self.generic_visit(node)
-        self._nesting -= 1
+        self._visit_func(node)
 
     # ── Control flow (B1) ─────────────────────────────────────────────────────
 
     def visit_If(self, node: ast.If):
         self._increment(1 + self._nesting)
         self._nesting += 1
-        # Visit body manually to avoid double-counting elif chains.
-        # ast represents elif as a nested ast.If in node.orelse — visit normally.
         self.generic_visit(node)
         self._nesting -= 1
 
@@ -172,17 +175,13 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
-        # `else` clause on a for loop is a structural surprise — +1 (no nesting bonus)
-        if node.orelse:
-            self._increment(1)
+        # for...else does NOT add +1 (SonarQube Python spec)
 
     def visit_AsyncFor(self, node: ast.AsyncFor):  # type: ignore[override]
         self._increment(1 + self._nesting)
         self._nesting += 1
         self.generic_visit(node)
         self._nesting -= 1
-        if node.orelse:
-            self._increment(1)
 
     def visit_While(self, node: ast.While):
         self._increment(1 + self._nesting)
@@ -190,7 +189,7 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._nesting -= 1
         if node.orelse:
-            self._increment(1)
+            self._increment(1)   # while...else is a surprising flow branch
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler):
         self._increment(1 + self._nesting)
@@ -211,6 +210,12 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._nesting -= 1
 
+    # ── Ternary expression (B2) ───────────────────────────────────────────────
+
+    def visit_IfExp(self, node: ast.IfExp):
+        self._increment(1)   # flat +1, no nesting penalty
+        self.generic_visit(node)
+
     # ── Logical operators (B2) ────────────────────────────────────────────────
 
     def visit_BoolOp(self, node: ast.BoolOp):
@@ -221,7 +226,10 @@ class _CognitiveComplexityVisitor(ast.NodeVisitor):
     # ── Recursion (B3) ────────────────────────────────────────────────────────
 
     def visit_Call(self, node: ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in self._func_names:
+        # Only count direct self-recursion (call to the immediately enclosing function)
+        if (isinstance(node.func, ast.Name)
+                and self._current_func is not None
+                and node.func.id == self._current_func):
             self._increment(1)
         self.generic_visit(node)
 
@@ -234,6 +242,10 @@ def cognitive_complexity(source: str) -> int:
     visitor = _CognitiveComplexityVisitor()
     visitor.visit(tree)
     return visitor.score
+
+
+# Alias used by tests and evaluation scripts
+compute_cognitive_complexity = cognitive_complexity
 
 
 # ---------------------------------------------------------------------------
