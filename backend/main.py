@@ -49,11 +49,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from features.code_metrics import compute_all_metrics
+from features.code_metrics import compute_all_metrics, compute_metrics_for_language
 from features.ast_extractor import extract_ast_features
-from features.security_patterns import scan_security_patterns
+from features.security_patterns import scan_security_patterns, scan_security_patterns_for_language
+from features.multi_lang.adapter import detect_language
 from models.security_detection import EnsembleSecurityModel
-from models.complexity_prediction import ComplexityPredictionModel
+from models.complexity_prediction import ComplexityPredictionModel, ComplexityResult
 from models.bug_predictor import BugPredictionModel, GitMetadata
 from models.pattern_recognition import PatternRFModel
 from models.code_clone_detection import CodeCloneDetector
@@ -626,6 +627,10 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
 
     t_start = time.perf_counter()
     source = req.code
+    language = detect_language(req.filename, req.language)
+    # Pre-compute metrics with the language-aware adapter for non-Python languages.
+    # Python uses the model's internal compute_all_metrics for full ML support.
+    precomputed = compute_metrics_for_language(source, language) if language != "python" else None
     loop = asyncio.get_running_loop()
 
     def _run(fn, *args):
@@ -642,8 +647,8 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
             (refactor_out, refactor_result),
             (dead_out, dead_result),
         ) = await asyncio.gather(
-            _run(_step_security, source),
-            _run(_step_complexity, source),
+            _run(_step_security, source, language),
+            _run(_step_complexity, source, precomputed),
             _run(functools.partial(_step_bug, source, req.git_metadata)),
             _run(_step_pattern, source),
             _run(_step_clones, source),
@@ -738,7 +743,8 @@ def analyze_security(req: AnalyzeRequest):
     """Security vulnerability scan only."""
     t_start = time.perf_counter()
 
-    if registry.security:
+    language = detect_language(req.filename, req.language)
+    if registry.security and language == "python":
         findings = registry.security.predict(req.code)
         vuln_score = registry.security.vulnerability_score(req.code)
         result = {
@@ -746,8 +752,7 @@ def analyze_security(req: AnalyzeRequest):
             "vulnerability_score": round(vuln_score, 3),
         }
     else:
-        scan = scan_security_patterns(req.code)
-        result = scan.to_dict()
+        result = scan_security_patterns_for_language(req.code, language).to_dict()
 
     result["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return result
@@ -757,6 +762,12 @@ def analyze_security(req: AnalyzeRequest):
 def analyze_complexity(req: AnalyzeRequest):
     """Complexity and maintainability analysis only."""
     t_start = time.perf_counter()
+
+    language = detect_language(req.filename, req.language)
+    if language != "python":
+        metrics = compute_metrics_for_language(req.code, language)
+        out, _ = _build_complexity_out_from_metrics(metrics)
+        return {**out.model_dump(), "duration_seconds": round(time.perf_counter() - t_start, 3)}
 
     if not registry.complexity:
         raise HTTPException(status_code=503, detail="Complexity model unavailable")
@@ -945,8 +956,66 @@ def analyze_readability(req: AnalyzeRequest):
 # Streaming analysis helpers (sync wrappers for asyncio.to_thread)
 # ---------------------------------------------------------------------------
 
-def _step_security(source: str) -> dict:
-    if registry.security:
+def _build_complexity_out_from_metrics(metrics) -> tuple:
+    """Build ComplexityOut + ComplexityResult from a pre-computed CodeMetricsResult.
+
+    Used for non-Python languages where the ML model's internal Python-AST
+    metric extraction would fail. Scoring is purely rule-based.
+    """
+    score = 100.0
+    cc = metrics.cyclomatic_complexity
+    if cc > 10:
+        score -= min(30, (cc - 10) * 1.5)
+    cog = metrics.cognitive_complexity
+    if cog > 15:
+        score -= min(20, (cog - 15) * 0.8)
+    if metrics.n_long_functions > 0:
+        score -= min(15, metrics.n_long_functions * 3)
+    if metrics.n_complex_functions > 0:
+        score -= min(20, metrics.n_complex_functions * 4)
+    lines_over = metrics.n_lines_over_80
+    if lines_over > 20:
+        score -= min(10, (lines_over - 20) * 0.2)
+    score = max(0.0, min(100.0, score))
+
+    def _grade(s):
+        if s >= 85: return "A"
+        if s >= 70: return "B"
+        if s >= 55: return "C"
+        if s >= 40: return "D"
+        return "F"
+
+    cr = ComplexityResult(
+        score=round(score, 1),
+        grade=_grade(score),
+        cyclomatic=metrics.cyclomatic_complexity,
+        cognitive=metrics.cognitive_complexity,
+        halstead_bugs=round(metrics.halstead.bugs_delivered, 3),
+        maintainability_index=round(metrics.maintainability_index, 1),
+        sloc=metrics.lines.sloc,
+        n_long_functions=metrics.n_long_functions,
+        n_complex_functions=metrics.n_complex_functions,
+        n_lines_over_80=metrics.n_lines_over_80,
+        function_issues=[],
+        breakdown={
+            "cyclomatic_complexity": metrics.cyclomatic_complexity,
+            "cognitive_complexity": metrics.cognitive_complexity,
+            "halstead_volume": round(metrics.halstead.volume, 1),
+            "halstead_difficulty": round(metrics.halstead.difficulty, 2),
+            "maintainability_index": round(metrics.maintainability_index, 1),
+            "sloc": metrics.lines.sloc,
+            "lines_over_80": metrics.n_lines_over_80,
+            "long_functions": metrics.n_long_functions,
+            "complex_functions": metrics.n_complex_functions,
+            "function_level": [],
+        },
+    )
+    return ComplexityOut(**cr.to_dict()), cr
+
+
+def _step_security(source: str, language: str = "python") -> dict:
+    if registry.security and language == "python":
+        # ML-based security detection is trained on Python only
         findings = registry.security.predict(source)
         sec_score = registry.security.vulnerability_score(source)
         return {
@@ -960,10 +1029,13 @@ def _step_security(source: str) -> dict:
                 "low": sum(1 for f in findings if f.severity == "low"),
             },
         }
-    return scan_security_patterns(source).to_dict()
+    return scan_security_patterns_for_language(source, language).to_dict()
 
 
-def _step_complexity(source: str):
+def _step_complexity(source: str, precomputed=None):
+    if precomputed is not None:
+        # Non-Python: skip the Python-AST-based ML model, use rule-based scoring
+        return _build_complexity_out_from_metrics(precomputed)
     if not registry.complexity:
         raise RuntimeError("Complexity model unavailable")
     r = registry.complexity.predict(source)
@@ -1068,15 +1140,17 @@ async def analyze_stream(req: AnalyzeRequest):
 
         t_start = time.perf_counter()
         source = req.code
+        language = detect_language(req.filename, req.language)
+        precomputed = compute_metrics_for_language(source, language) if language != "python" else None
 
         # 1 — Security
         yield evt({"step": "Security Detection", "progress": 8, "status": "running"})
-        security_out = await asyncio.to_thread(_step_security, source)
+        security_out = await asyncio.to_thread(_step_security, source, language)
         yield evt({"step": "Security Detection", "progress": 8, "status": "done"})
 
         # 2 — Complexity
         yield evt({"step": "Complexity Analysis", "progress": 17, "status": "running"})
-        complexity_out, complexity_result = await asyncio.to_thread(_step_complexity, source)
+        complexity_out, complexity_result = await asyncio.to_thread(_step_complexity, source, precomputed)
         yield evt({"step": "Complexity Analysis", "progress": 17, "status": "done"})
 
         # 3 — Bug prediction
@@ -1203,11 +1277,12 @@ def analyze_quick(req: AnalyzeRequest):
     Returns results in < 500 ms (no heavyweight ML inference).
     """
     source = req.code
-    result: dict = {"filename": req.filename, "language": req.language, "mode": "quick"}
+    language = detect_language(req.filename, req.language)
+    result: dict = {"filename": req.filename, "language": language, "mode": "quick"}
 
     # Security pattern scan (regex-based, very fast)
     try:
-        sec_scan = scan_security_patterns(source)
+        sec_scan = scan_security_patterns_for_language(source, language)
         result["security_patterns"] = {
             "findings": [vars(f) for f in sec_scan.findings],
             "count": len(sec_scan.findings),
@@ -1218,7 +1293,7 @@ def analyze_quick(req: AnalyzeRequest):
 
     # Complexity metrics (pure computation, no ML)
     try:
-        metrics = compute_all_metrics(source)
+        metrics = compute_metrics_for_language(source, language)
         result["complexity"] = {
             "cyclomatic": metrics.cyclomatic_complexity,
             "loc": metrics.lines.sloc,

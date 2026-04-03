@@ -427,3 +427,189 @@ def scan_security_patterns(source: str) -> SecurityScanResult:
     """Convenience wrapper: scan *source* and return SecurityScanResult."""
     scanner = SecurityPatternScanner(source)
     return scanner.scan()
+
+
+# ---------------------------------------------------------------------------
+# JavaScript / TypeScript security scanner (regex-based)
+# ---------------------------------------------------------------------------
+
+# (pattern, vuln_type, severity, title, description, confidence, cwe)
+_JS_SECURITY_RULES: list[tuple] = [
+    # XSS
+    (r'\.innerHTML\s*=', "xss", "critical",
+     "DOM-based XSS via innerHTML",
+     "Assigning to innerHTML with unsanitised input allows XSS. Use textContent or DOMPurify.",
+     0.85, "CWE-79"),
+    (r'\.outerHTML\s*=', "xss", "critical",
+     "DOM-based XSS via outerHTML",
+     "Assigning to outerHTML with unsanitised input allows XSS.", 0.85, "CWE-79"),
+    (r'document\.write\s*\(', "xss", "high",
+     "XSS risk via document.write()",
+     "document.write() with user-controlled input enables XSS attacks.", 0.80, "CWE-79"),
+    (r'\beval\s*\(', "code_injection", "critical",
+     "Use of eval()",
+     "eval() on untrusted input allows arbitrary code execution.", 0.90, "CWE-95"),
+    (r'Function\s*\(', "code_injection", "high",
+     "Dynamic Function() constructor",
+     "new Function() with user input is equivalent to eval().", 0.80, "CWE-95"),
+    (r'setTimeout\s*\(\s*["\']', "code_injection", "high",
+     "setTimeout with string argument",
+     "Passing a string to setTimeout is equivalent to eval().", 0.85, "CWE-95"),
+    (r'setInterval\s*\(\s*["\']', "code_injection", "high",
+     "setInterval with string argument",
+     "Passing a string to setInterval is equivalent to eval().", 0.85, "CWE-95"),
+    # SQL injection
+    (r'(?i)(query|execute)\s*\(\s*["\'].*\+', "sql_injection", "critical",
+     "SQL Injection via string concatenation",
+     "SQL query built from string concatenation. Use parameterised queries.", 0.88, "CWE-89"),
+    # Hardcoded credentials (shared with Python patterns — already in _HARDCODED_SECRET_PATTERNS)
+    # Weak crypto
+    (r'Math\.random\s*\(\)', "weak_crypto", "medium",
+     "Insecure random (Math.random)",
+     "Math.random() is not cryptographically secure. Use crypto.getRandomValues().",
+     0.80, "CWE-338"),
+    (r'createCipher\s*\(', "weak_crypto", "high",
+     "Deprecated crypto.createCipher()",
+     "crypto.createCipher() is deprecated; use createCipheriv() with a random IV.",
+     0.85, "CWE-327"),
+    (r'(?i)(md5|sha1)\s*\(', "weak_crypto", "high",
+     "Weak hash algorithm",
+     "MD5/SHA-1 are cryptographically broken. Use SHA-256 or stronger.", 0.75, "CWE-327"),
+    # Prototype pollution
+    (r'__proto__\s*[=\[]', "prototype_pollution", "high",
+     "Prototype pollution risk",
+     "Assigning to __proto__ can pollute the Object prototype.", 0.80, "CWE-1321"),
+    # Path traversal
+    (r'(?:readFile|readFileSync|createReadStream)\s*\([^)]*\+', "path_traversal", "high",
+     "Potential path traversal",
+     "File path built from concatenation may allow directory traversal.", 0.70, "CWE-22"),
+    # Open redirect
+    (r'res\.redirect\s*\([^)]*req\.(query|body|params)', "open_redirect", "medium",
+     "Potential open redirect",
+     "Redirect target derived from request input. Validate the URL.", 0.70, "CWE-601"),
+    # NoSQL injection (MongoDB)
+    (r'\$where\s*:', "nosql_injection", "high",
+     "MongoDB $where injection risk",
+     "$where evaluates JavaScript; avoid with user-supplied values.", 0.80, "CWE-943"),
+]
+
+# ---------------------------------------------------------------------------
+# Java security scanner (regex-based)
+# ---------------------------------------------------------------------------
+
+_JAVA_SECURITY_RULES: list[tuple] = [
+    # SQL injection
+    (r'Statement.*execute\s*\(\s*"[^"]*"\s*\+', "sql_injection", "critical",
+     "SQL Injection via string concatenation",
+     "Build SQL with PreparedStatement and bind parameters instead.", 0.88, "CWE-89"),
+    (r'createStatement\s*\(\)', "sql_injection", "medium",
+     "Use of createStatement (prefer PreparedStatement)",
+     "createStatement() with concatenated SQL is vulnerable to injection.", 0.65, "CWE-89"),
+    # Command injection
+    (r'Runtime\.getRuntime\s*\(\)\s*\.exec\s*\(', "command_injection", "critical",
+     "OS command execution via Runtime.exec()",
+     "Runtime.exec() with user-controlled input allows command injection.", 0.90, "CWE-78"),
+    (r'ProcessBuilder\s*\(', "command_injection", "high",
+     "ProcessBuilder command execution",
+     "Ensure no user-controlled values are passed to ProcessBuilder.", 0.70, "CWE-78"),
+    # Weak crypto
+    (r'MessageDigest\.getInstance\s*\(\s*"(?:MD5|SHA-1|SHA1)"', "weak_crypto", "high",
+     "Weak hash algorithm (MD5/SHA-1)",
+     "MD5 and SHA-1 are broken. Use SHA-256 or stronger.", 0.90, "CWE-327"),
+    (r'Cipher\.getInstance\s*\(\s*"(?:DES|RC4|RC2)', "weak_crypto", "high",
+     "Weak cipher (DES/RC4/RC2)",
+     "DES and RC4 are broken. Use AES-GCM.", 0.90, "CWE-327"),
+    (r'new\s+Random\s*\(\)', "weak_crypto", "medium",
+     "Insecure random (java.util.Random)",
+     "java.util.Random is not cryptographically secure. Use SecureRandom.", 0.80, "CWE-338"),
+    # Deserialization
+    (r'ObjectInputStream\s*\(', "insecure_deserialization", "critical",
+     "Unsafe Java deserialization",
+     "ObjectInputStream on untrusted data allows remote code execution.", 0.85, "CWE-502"),
+    # Path traversal
+    (r'new\s+File\s*\([^)]*request\.(getParameter|getAttribute)', "path_traversal", "high",
+     "Potential path traversal via request parameter",
+     "File path derived from request input. Validate and canonicalize paths.", 0.80, "CWE-22"),
+    # XXE
+    (r'DocumentBuilderFactory\.newInstance\s*\(\)', "xxe", "medium",
+     "XML parser XXE risk (DocumentBuilderFactory)",
+     "Disable external entity processing: setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true).",
+     0.70, "CWE-611"),
+    (r'SAXParserFactory\.newInstance\s*\(\)', "xxe", "medium",
+     "XML parser XXE risk (SAXParserFactory)",
+     "Disable external DTD and entity processing on the SAX parser.", 0.70, "CWE-611"),
+    # Hardcoded passwords
+    (r'(?i)(password|passwd|secret)\s*=\s*"[^"]{4,}"', "hardcoded_credential", "high",
+     "Hardcoded credential",
+     "Credentials should not be stored in source code.", 0.80, "CWE-798"),
+]
+
+
+class _RegexSecurityScanner:
+    """Generic regex-based security scanner for JS/TS/Java."""
+
+    def __init__(self, source: str, rules: list[tuple]):
+        self._lines = source.splitlines()
+        self._rules = rules
+        self._findings: list[SecurityFinding] = []
+
+    def scan(self) -> SecurityScanResult:
+        # Language-specific rules
+        for lineno, line in enumerate(self._lines, start=1):
+            s = line.strip()
+            if not s or s.startswith("//") or s.startswith("*"):
+                continue
+            for pattern, vuln_type, severity, title, desc, confidence, cwe in self._rules:
+                if re.search(pattern, line):
+                    self._findings.append(SecurityFinding(
+                        vuln_type=vuln_type,
+                        severity=severity,
+                        title=title,
+                        description=desc,
+                        lineno=lineno,
+                        snippet=line.strip()[:200],
+                        confidence=confidence,
+                        cwe=cwe,
+                    ))
+
+        # Shared: hardcoded secrets (language-agnostic regex)
+        for lineno, line in enumerate(self._lines, start=1):
+            for pattern, label in _HARDCODED_SECRET_PATTERNS:
+                if re.search(pattern, line):
+                    self._findings.append(SecurityFinding(
+                        vuln_type="hardcoded_credential",
+                        severity="high",
+                        title=label,
+                        description="Sensitive value should not be hardcoded in source code.",
+                        lineno=lineno,
+                        snippet=line.strip()[:200],
+                        confidence=0.75,
+                        cwe="CWE-798",
+                    ))
+
+        # Deduplicate by (lineno, vuln_type)
+        seen: set[tuple] = set()
+        unique: list[SecurityFinding] = []
+        for f in self._findings:
+            key = (f.lineno, f.vuln_type)
+            if key not in seen:
+                seen.add(key)
+                unique.append(f)
+
+        return SecurityScanResult(
+            findings=sorted(unique, key=lambda f: (
+                {"critical": 0, "high": 1, "medium": 2, "low": 3}[f.severity], f.lineno,
+            )),
+            scanned_lines=len(self._lines),
+        )
+
+
+def scan_security_patterns_for_language(source: str, language: str) -> SecurityScanResult:
+    """Scan source in the given language. Dispatches to the appropriate scanner."""
+    lang = language.lower()
+    if lang in ("javascript", "typescript"):
+        return _RegexSecurityScanner(source, _JS_SECURITY_RULES).scan()
+    if lang == "java":
+        return _RegexSecurityScanner(source, _JAVA_SECURITY_RULES).scan()
+    # Default: Python
+    return scan_security_patterns(source)
