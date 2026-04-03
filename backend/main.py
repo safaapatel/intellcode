@@ -26,6 +26,12 @@ Endpoints:
 
 from __future__ import annotations
 
+# Block HuggingFace network calls at startup — prevents model download hangs on Render
+import os as _os
+_os.environ.setdefault("HF_HUB_OFFLINE", "1")
+_os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+_os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # Disable CUDA init on CPU servers
+
 import asyncio
 import collections
 import functools
@@ -181,29 +187,61 @@ async def lifespan(app: FastAPI):
         logger.warning("  [WARN] Pattern model: %s", e)
 
     # Lightweight models — always load
-    registry.clone_detector = CodeCloneDetector()
-    logger.info("  [OK] Code clone detector")
+    try:
+        registry.clone_detector = CodeCloneDetector(enable_type4=False)
+        logger.info("  [OK] Code clone detector")
+    except Exception as e:
+        registry.load_errors["clone_detector"] = str(e)
+        logger.warning("  [WARN] Clone detector: %s", e)
 
-    registry.refactoring_suggester = RefactoringSuggester()
-    logger.info("  [OK] Refactoring suggester")
+    try:
+        registry.refactoring_suggester = RefactoringSuggester()
+        logger.info("  [OK] Refactoring suggester")
+    except Exception as e:
+        registry.load_errors["refactoring"] = str(e)
+        logger.warning("  [WARN] Refactoring suggester: %s", e)
 
-    registry.dead_code_detector = DeadCodeDetector()
-    logger.info("  [OK] Dead code detector")
+    try:
+        registry.dead_code_detector = DeadCodeDetector()
+        logger.info("  [OK] Dead code detector")
+    except Exception as e:
+        registry.load_errors["dead_code"] = str(e)
+        logger.warning("  [WARN] Dead code detector: %s", e)
 
-    registry.debt_estimator = TechnicalDebtEstimator()
-    logger.info("  [OK] Technical debt estimator")
+    try:
+        registry.debt_estimator = TechnicalDebtEstimator()
+        logger.info("  [OK] Technical debt estimator")
+    except Exception as e:
+        registry.load_errors["debt"] = str(e)
+        logger.warning("  [WARN] Technical debt estimator: %s", e)
 
-    registry.doc_analyzer = DocQualityAnalyzer()
-    logger.info("  [OK] Documentation quality analyzer")
+    try:
+        registry.doc_analyzer = DocQualityAnalyzer()
+        logger.info("  [OK] Documentation quality analyzer")
+    except Exception as e:
+        registry.load_errors["docs"] = str(e)
+        logger.warning("  [WARN] Doc quality analyzer: %s", e)
 
-    registry.performance_analyzer = PerformanceAnalyzer()
-    logger.info("  [OK] Performance hotspot analyzer")
+    try:
+        registry.performance_analyzer = PerformanceAnalyzer()
+        logger.info("  [OK] Performance hotspot analyzer")
+    except Exception as e:
+        registry.load_errors["performance"] = str(e)
+        logger.warning("  [WARN] Performance analyzer: %s", e)
 
-    registry.dependency_analyzer = DependencyAnalyzer()
-    logger.info("  [OK] Dependency & coupling analyzer")
+    try:
+        registry.dependency_analyzer = DependencyAnalyzer()
+        logger.info("  [OK] Dependency & coupling analyzer")
+    except Exception as e:
+        registry.load_errors["dependencies"] = str(e)
+        logger.warning("  [WARN] Dependency analyzer: %s", e)
 
-    registry.readability_scorer = ReadabilityScorer()
-    logger.info("  [OK] Code readability scorer")
+    try:
+        registry.readability_scorer = ReadabilityScorer()
+        logger.info("  [OK] Code readability scorer")
+    except Exception as e:
+        registry.load_errors["readability"] = str(e)
+        logger.warning("  [WARN] Readability scorer: %s", e)
 
     try:
         registry.multi_task = MultiTaskCodeModel()
