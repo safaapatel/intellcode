@@ -1,0 +1,14 @@
+\begin{table}[H]
+\centering
+\caption{Complexity prediction: IntelliCode Review vs. Radon baselines}
+\label{tab:market-complexity}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Tool} & \textbf{Spearman $\rho$} & \textbf{RMSE} & \textbf{$R^2$} \\
+\midrule
+\textbf{IntelliCode Review (XGBoost)} & \textbf{-0.899} & \textbf{82.1} & \textbf{-11.467} \\
+Radon (McCabe CC) & 0.000 & 0.0 & -- \\
+Radon (Maintainability Index) & 0.000 & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}

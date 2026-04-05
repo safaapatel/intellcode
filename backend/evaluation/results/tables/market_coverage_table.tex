@@ -1,0 +1,22 @@
+\begin{table}[H]
+\centering
+\caption{Analysis dimension coverage: IntelliCode Review vs. market tools. \checkmark\,= full coverage, $\circ$\,= partial, --\,= none. *\,SonarQube requires dedicated server infrastructure.}
+\label{tab:coverage}
+\scriptsize
+\begin{tabular}{@{}lcccccccccccc@{}}
+\toprule
+\textbf{Tool} & \rotatebox{65}{\textbf{Security vuln.}} & \rotatebox{65}{\textbf{Complexity}} & \rotatebox{65}{\textbf{Bug prediction}} & \rotatebox{65}{\textbf{Code smells}} & \rotatebox{65}{\textbf{Dead code}} & \rotatebox{65}{\textbf{Docs quality}} & \rotatebox{65}{\textbf{Clone detect.}} & \rotatebox{65}{\textbf{Refactoring}} & \rotatebox{65}{\textbf{Tech debt}} & \rotatebox{65}{\textbf{Performance}} & \rotatebox{65}{\textbf{Dep. vulns.}} & \rotatebox{65}{\textbf{Readability}} \\
+\midrule
+\textbf{IntelliCode Review} & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+Bandit & \checkmark & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+Semgrep & \checkmark & -- & -- & $\circ$ & -- & -- & -- & -- & -- & -- & -- & -- \\
+Pylint & $\circ$ & $\circ$ & $\circ$ & \checkmark & $\circ$ & $\circ$ & -- & $\circ$ & $\circ$ & -- & -- & $\circ$ \\
+Flake8 & -- & $\circ$ & $\circ$ & $\circ$ & $\circ$ & -- & -- & -- & -- & -- & -- & $\circ$ \\
+Mypy & -- & -- & $\circ$ & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+Radon & -- & \checkmark & -- & -- & -- & -- & -- & -- & $\circ$ & -- & -- & -- \\
+Vulture & -- & -- & -- & -- & \checkmark & -- & -- & -- & -- & -- & -- & -- \\
+Safety & $\circ$ & -- & -- & -- & -- & -- & -- & -- & -- & -- & \checkmark & -- \\
+SonarQube* & \checkmark & \checkmark & $\circ$ & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & $\circ$ & \checkmark & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
