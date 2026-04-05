@@ -1,0 +1,15 @@
+\begin{table}[H]
+\centering
+\caption{Bug/quality prediction AUC: IntelliCode Review vs. static-analysis proxies}
+\label{tab:market-bugs}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Tool / Proxy} & \textbf{AUC} & \textbf{AP} \\
+\midrule
+\textbf{IntelliCode Review (XGBoost)} & \textbf{0.500} & \textbf{0.500} \\
+Pylint score (inverted) & 0.534 & 0.432 \\
+Flake8 issue density & 0.518 & 0.415 \\
+Mypy type-error count & 0.521 & 0.420 \\
+\bottomrule
+\end{tabular}
+\end{table}

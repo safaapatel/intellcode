@@ -1,0 +1,103 @@
+name: IntelliCode PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Only run when Python files are touched
+    paths:
+      - "**.py"
+
+permissions:
+  contents: read
+  pull-requests: write  # needed to post review comments
+
+jobs:
+  intellicode-review:
+    name: IntelliCode Code Quality Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout the full PR HEAD (so we can read changed files)
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0        # needed for cross-project diff
+
+      # -----------------------------------------------------------------------
+      # 2. Set up Python
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # -----------------------------------------------------------------------
+      # 3. Install IntelliCode dependencies
+      #    We install a CPU-only torch to keep the image small and fast.
+      #    The security CNN falls back to RF-only when torch is unavailable,
+      #    so full functionality is preserved.
+      # -----------------------------------------------------------------------
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          # CPU-only PyTorch (much smaller download, no GPU in CI)
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend/requirements.txt
+
+      # -----------------------------------------------------------------------
+      # 4. Restore model checkpoints from cache
+      #    The checkpoints are committed to the repo (they are small .pkl/.pt
+      #    files).  This step is a no-op if they are already present.
+      # -----------------------------------------------------------------------
+      - name: Check model checkpoints
+        run: |
+          python - <<'EOF'
+          from pathlib import Path
+          checkpoints = [
+            "backend/checkpoints/complexity/model.pkl",
+            "backend/checkpoints/security/rf_model.pkl",
+            "backend/checkpoints/bug_predictor/xgb_model.pkl",
+            "backend/checkpoints/pattern/rf_model.pkl",
+          ]
+          missing = [c for c in checkpoints if not Path(c).exists()]
+          if missing:
+            print("[warn] Missing checkpoints:", missing)
+            print("[warn] Models will use rule-based fallbacks for missing checkpoints.")
+          else:
+            print("[ok] All checkpoints present.")
+          EOF
+
+      # -----------------------------------------------------------------------
+      # 5. Run IntelliCode analysis and post PR review
+      # -----------------------------------------------------------------------
+      - name: Run IntelliCode review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set quality threshold (0-100). PRs below this score get
+          # REQUEST_CHANGES; above it get a COMMENT review.
+          INTELLICODE_THRESHOLD: ${{ vars.INTELLICODE_THRESHOLD || '60' }}
+          # Set to "true" to fail the CI step when quality is below threshold.
+          # Leave as "false" (default) to report without blocking merges.
+          INTELLICODE_FAIL_ON_ISSUES: ${{ vars.INTELLICODE_FAIL_ON_ISSUES || 'false' }}
+        run: |
+          cd /
+          python $GITHUB_WORKSPACE/backend/github_action_review.py
+
+      # -----------------------------------------------------------------------
+      # 6. Upload full analysis JSON as workflow artifact (for debugging)
+      # -----------------------------------------------------------------------
+      - name: Save analysis results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intellicode-results-${{ github.event.pull_request.number }}
+          path: |
+            backend/evaluation/results/
+          retention-days: 30
+          if-no-files-found: ignore
