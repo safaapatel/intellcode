@@ -2400,8 +2400,339 @@ The comparative evaluation in Section~\ref{sec:market-comparison} covers this in
 Four graduate students each submitted a Python code sample, read the resulting report, and completed three tasks (identify key issues, interpret the quality score, assess a suggested fix). All four completed every task without assistance; all Likert responses were at or above 4. The claim is narrow: the interface produced no obvious navigation failures for this group. Two participants could not interpret the probabilistic bug risk score, which motivated the \texttt{reliability\_context} field that now surfaces all three evaluation-protocol AUC values alongside the probability. A controlled study with professional developers, realistic tasks, and pre-registered outcome metrics is the required next step.
 
 %% ============================================================
-
 \chapter{Conclusion}
 \label{ch:conclusion}
+%% ============================================================
+
+\section{Summary of contributions}
+\label{sec:contributions}
+
+IntelliCode Review addresses a practical question: can a single tool give a developer comprehensive, honest code quality feedback in under two seconds, without a server rack or DevOps budget? The platform does that. But the more important result is what the evaluation reveals when models are assessed on code they have never seen, or on commits after the training window closed.
+
+The system covers twelve analysis dimensions from a single locally-deployable web application — four driven by trained ML models, eight by deterministic AST-based modules. No comparable open-source tool covers more than five dimensions without dedicated server infrastructure (Table~\ref{tab:coverage}).
+
+ML results are uneven but honestly measured. Complexity ranking transfers across nine of ten LOPO repositories ($\rho = 0.819$, SonarQube calibration $r = 0.980$). Security in-distribution AUC of $0.963$ collapses to $0.494$ under LOPO; bug prediction is below chance under temporal split ($0.460$). The pattern classifier's debiased CV F1 of $0.653 \pm 0.017$ (Cohen's $\kappa = 0.168$) reflects near-chance agreement with independent labels. Full details are in Chapter~\ref{ch:eval}.
+
+Ten diagnostic instruments (Section~\ref{sec:novel-contributions}) — PIFF, SAEF, LAMV, PLF, TDCP, CACM, ACT, FTAX, SIG, and conformal prediction — form a reusable evaluation protocol implemented in \texttt{backend/evaluation/}. Any researcher can substitute their own models and run the full suite without modifying the system. The protocol is the methodological contribution: in every case above, the standard held-out split would have been misleading.
+
+Multi-language coverage (JavaScript, TypeScript, Java) is provided via tree-sitter adapters without retraining ML models. A NIST SARD-inspired evaluation of JavaScript rules against 52 labelled snippets yields precision 1.000, recall 0.885, F1 0.939. The Fix Guide, SSE streaming endpoint, and GitHub Actions workflow (Figure~\ref{fig:github-pr}) reflect the same principle: findings that cannot be acted on immediately will be ignored.
+
+%% ----------------------------------------------------------------
+\section{Answers to research questions}
+\label{sec:rq-answers}
+
+\textbf{RQ1: Can a single platform provide comprehensive, multi-dimensional code quality analysis that is both deeper than existing static tools and practical for everyday developer use?}
+
+Yes, within the stated scope. Table~\ref{tab:coverage} documents the coverage gap: IntelliCode Review addresses all twelve dimensions; Pylint covers five. SonarQube covers eleven but requires a server. The 100\% pass rate on 24 end-to-end API tests confirms the pipeline is correct. Coverage and depth are not the same thing — bug prediction and pattern recognition are unreliable as standalone predictors — but the platform's value comes from surfacing many signals simultaneously.
+
+\textbf{RQ2: Can machine learning models trained on real open-source data provide reliable estimates honest about their generalisation limits?}
+
+Partially. The complexity model transfers reasonably well (LOPO $\rho = 0.795$). The security model does not: in-distribution AUC $0.963$ falls to $0.494$ under LOPO. The bug predictor is below chance under temporal evaluation ($0.460$). The pattern classifier's debiased F1 of $0.653 \pm 0.017$ (Cohen's $\kappa = 0.168$) reflects near-chance agreement with any independent label source. Full details are in Section~\ref{sec:model-results}.
+
+\textbf{RQ3: Can the system be delivered as a practical, self-contained tool with response times fast enough for interactive workflows?}
+
+Yes. Full 1000-line analysis completes in under two seconds without GPU acceleration. The \texttt{/analyze/quick} endpoint stays below 400\,ms for CI integration. No cloud service, database, or administrative setup is required — only Python and Node.js with a standard development environment.
+
+%% ----------------------------------------------------------------
+\section{Implications for practitioners}
+\label{sec:implications}
+
+The eight deterministic modules (clone detection, dead code, refactoring, technical debt, documentation, performance, dependency coupling, readability) have no trainable parameters and no distribution shift problem. On an unfamiliar codebase, weight these findings heavily and treat ML outputs as supplemental signals.
+
+Among the ML components, trust complexity most: Spearman $\rho = 0.795$ under LOPO is the smallest gap between in-distribution and cross-project performance, and the feature importances exposed in the API response make individual predictions inspectable. The bug predictor's temporal AUC of 0.460 means it should not be used to identify future-buggy functions; it is useful as a structural complexity proxy. The security model's LOPO AUC of 0.494 means only vulnerability types covered by its training corpus are reliably detected — the rule-based scanner is the reliable component for out-of-distribution repositories.
+
+The binding constraint is label quality, not architecture. Anyone retraining these models should replace SZZ keyword heuristics with closed issue-tracker reports. The LAMV leakage check and LOPO benchmark in \texttt{backend/evaluation/} are designed to be reused: any dataset conforming to the documented schema can be dropped in without modifying the system.
+
+%% ----------------------------------------------------------------
+\section{Future work}
+\label{sec:future}
+
+Four directions stand out as the most impactful next steps. They are listed roughly in order of expected payoff.
+
+\textbf{Dataset expansion with representation learning.} The clearest path to improving LOPO performance is not a better model; it is better training data. The
+current dataset covers 33 repositories across five Python domains; a systematic
+expansion to 100+ repositories spanning scientific computing, systems programming,
+financial applications, and embedded firmware would test whether the LOPO collapse
+is a Python-web-framework artifact or a fundamental limit of static-metric
+representations. Alongside this, replacing the hand-crafted 15-dimensional feature
+vector with a learned code representation (e.g., CodeBERT, GraphCodeBERT, or
+AST-based GNNs) would eliminate the manual feature engineering bottleneck entirely.
+A representation learner pre-trained on 100 million lines of code can transfer far
+more robustly across project boundaries than a set of scalar metrics. The experiment
+is straightforward: swap the XGBoost input with the \texttt{[CLS]} embedding from a
+frozen CodeBERT encoder and re-run the LOPO benchmark. If LOPO Spearman rises from
+0.795 toward 0.85+, the current feature engineering is the bottleneck. If it does
+not move, the label quality problem dominates.
+
+\textbf{A pre-registered real-world deployment study.} The peer-based evaluation in
+Section~\ref{ssec:peer-eval} established that the interface is interpretable to
+graduate students working on controlled exercises. That is a necessary condition for
+usefulness, not a sufficient one. The research question that matters, whether IntelliCode Review changes what developers fix before a pull request merges, requires a controlled
+study with professional developers, their own production codebases, randomised tool
+assignment (IntelliCode Review vs. single-purpose linter), and pre-registered outcome
+metrics: issues flagged per session, issues acted on, time-to-fix, and pre-to-post
+static analysis score improvement. Pre-registration is particularly important here
+because the space of outcomes is large and exploratory analysis of tool usage logs
+will find patterns regardless of whether the tool had a causal effect.
+
+\textbf{Temporal AUC stability.} The below-chance temporal AUC of 0.460 is measured at one 80/20 split boundary. Running walk-forward evaluations at multiple cut points would establish whether anti-learning is stable across the commit timeline or localised to specific periods — if stable, it confirms a fundamental limit of static-metric bug prediction; if variable, it pinpoints where keyword-label retraining should focus.
+
+\textbf{The pattern oracle problem.} The pattern model's F1 is measured against an oracle built from metric thresholds that partially overlap the input features ($\kappa = 0.168$). A stronger oracle based on maintainer-accepted refactoring commits would establish an upper bound on what metric-free pattern detection can achieve and justify replacing the current heuristic labels.
+
+%% ----------------------------------------------------------------
+\section{Closing remarks}
+\label{sec:closing}
+
+The central bet that IntelliCode Review makes is that breadth of coverage, honest
+evaluation, and actionable output matter more to a developer than any single model's
+predictive accuracy in isolation. A security scanner that flags SQL injection in an
+otherwise simple function is useful even when the complexity model gives that function
+a perfect grade. An analysis that reports not just a score but a parameterised query
+template the developer can copy immediately is useful in a way that a score alone is
+not. A system that surfaces results in under two seconds, with the first tab populated
+in under 200 milliseconds, is used differently than one that requires a separate
+analysis run.
+
+The evaluation results show real but bounded capability. The complexity model ranks
+functions correctly across most Python projects. The security model catches the
+vulnerability patterns in its training data and misses patterns outside that set. The
+bug predictor's temporal-split AUC of 0.460 and the pattern classifier's circular
+labelling oracle both constrain what can honestly be claimed for those two modules. The
+temporal split and LOPO results are not problems to be buried in an appendix; they are
+the honest answer to the question of what this system actually does under conditions
+that approximate deployment.
+
+This thesis is an argument for a particular way of doing applied ML research in software
+engineering: use real data, build the evaluation to stress-test results rather than
+confirm them, and report what you find. The system is the means; the evaluation is the
+contribution. IntelliCode Review does not solve code quality analysis. It shows where the current generation of feature-based ML approaches works, where it breaks, and why.
+One developer, working from public datasets and open-source libraries, can build something
+broader and more honest than what most teams currently run. Whether that is impressive
+or sobering depends on what you expected going in.
+
+%% ============================================================
+%%  BIBLIOGRAPHY
+%% ============================================================
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{bacchelli2013}
+A.~Bacchelli and C.~Bird,
+``Expectations, outcomes, and challenges of modern code review,''
+in \textit{Proc. 35th Int. Conf. on Software Engineering (ICSE)},
+pp.~712--721, 2013.
+
+\bibitem{christakis2016}
+M.~Christakis and C.~Bird,
+``What developers want and need from program analysis: An empirical study,''
+in \textit{Proc. 31st IEEE/ACM Int. Conf. on Automated Software Engineering (ASE)},
+pp.~332--343, 2016.
+
+\bibitem{bandit}
+PyCQA,
+``Bandit: A tool designed to find common security issues in Python code,''
+\url{https://bandit.readthedocs.io/}, accessed 2026.
+
+\bibitem{buse2010}
+R.~P.~L.~Buse and W.~R.~Weimer,
+``Learning a metric for code readability,''
+\textit{IEEE Trans. Software Eng.}, vol.~36, no.~4, pp.~546--558, 2010.
+
+\bibitem{campbell2018}
+G.~A.~Campbell,
+``Cognitive complexity: An overview and evaluation,''
+in \textit{Proc. Int. Conf. on Technical Debt (TechDebt)}, 2018.
+
+\bibitem{chen2016}
+T.~Chen and C.~Guestrin,
+``XGBoost: A scalable tree boosting system,''
+in \textit{Proc. 22nd ACM SIGKDD Int. Conf. on Knowledge Discovery and Data Mining},
+pp.~785--794, 2016.
+
+\bibitem{fagan1976}
+M.~E.~Fagan,
+``Design and code inspections to reduce errors in program development,''
+\textit{IBM Systems J.}, vol.~15, no.~3, pp.~182--211, 1976.
+
+\bibitem{fowler1999}
+M.~Fowler,
+\textit{Refactoring: Improving the Design of Existing Code}.
+Addison-Wesley, Reading, MA, 1999.
+
+\bibitem{feng2020}
+Z.~Feng \textit{et al.},
+``CodeBERT: A pre-trained model for programming and natural languages,''
+in \textit{Findings of EMNLP 2020}, pp.~1536--1547, 2020.
+
+\bibitem{guo2021}
+D.~Guo \textit{et al.},
+``GraphCodeBERT: Pre-training code representations with data flow,''
+in \textit{Proc. ICLR 2021}, 2021.
+
+\bibitem{halstead1977}
+M.~H.~Halstead,
+\textit{Elements of Software Science}.
+Elsevier, New York, 1977.
+
+\bibitem{johnson2013}
+B.~Johnson, Y.~Song, E.~Murphy-Hill, and R.~Bowdidge,
+``Why don't software developers use static analysis tools to find bugs?''
+in \textit{Proc. ICSE 2013}, pp.~672--681, 2013.
+
+\bibitem{kamei2013}
+Y.~Kamei \textit{et al.},
+``A large-scale empirical study of just-in-time quality assurance,''
+\textit{IEEE Trans. Software Eng.}, vol.~39, no.~6, pp.~757--773, 2013.
+
+\bibitem{lessmann2008}
+S.~Lessmann, B.~Baesens, C.~Mues, and S.~Pietsch,
+``Benchmarking classification models for software defect prediction:
+A proposed framework and novel findings,''
+\textit{IEEE Trans. Software Eng.}, vol.~34, no.~4, pp.~485--496, 2008.
+
+\bibitem{letouzey2012}
+J.~Letouzey,
+``The SQALE method for evaluating technical debt,''
+in \textit{Proc. 3rd Int. Workshop on Managing Technical Debt}, 2012.
+
+\bibitem{li2017}
+Z.~Li \textit{et al.},
+``Automated vulnerability detection in source code using deep representation learning,''
+in \textit{Proc. 17th IEEE Int. Conf. on Machine Learning and Applications (ICMLA)},
+pp.~757--762, 2017.
+
+\bibitem{mccabe1976}
+T.~J.~McCabe,
+``A complexity measure,''
+\textit{IEEE Trans. Software Eng.}, vol.~SE-2, no.~4, pp.~308--320, 1976.
+
+\bibitem{mcintosh2016}
+S.~McIntosh, Y.~Kamei, B.~Adams, and A.~E.~Hassan,
+``An empirical study of the impact of modern code review practices on software quality,''
+\textit{Empirical Software Eng.}, vol.~21, no.~5, pp.~2146--2189, 2016.
+
+\bibitem{nagappan2005}
+N.~Nagappan and T.~Ball,
+``Use of relative code churn measures to predict system defect density,''
+in \textit{Proc. ICSE 2005}, pp.~284--292, 2005.
+
+\bibitem{nam2013}
+J.~Nam, S.~J.~Pan, and S.~Kim,
+``Transfer defect learning,''
+in \textit{Proc. 35th Int. Conf. on Software Engineering (ICSE)},
+pp.~382--391, 2013.
+
+\bibitem{nist2002}
+RTI International,
+``The economic impacts of inadequate infrastructure for software testing,''
+National Institute of Standards and Technology (NIST), Technical Report, 2002.
+
+\bibitem{oman1992}
+P.~Oman and J.~Hagemeister,
+``Metrics for assessing a software system's maintainability,''
+in \textit{Proc. Conf. on Software Maintenance (ICSM)}, pp.~337--344, 1992.
+
+\bibitem{pylint}
+PyCQA,
+``Pylint: A Python static code analysis tool,''
+\url{https://pylint.pycqa.org/}, accessed 2026.
+
+\bibitem{roy2007}
+C.~K.~Roy and J.~R.~Cordy,
+``A survey on software clone detection research,''
+Queen's University Technical Report, TR 2007-541, 2007.
+
+\bibitem{sajnani2016}
+H.~Sajnani \textit{et al.},
+``SourcererCC: Scaling code clone detection to big-code,''
+in \textit{Proc. ICSE 2016}, pp.~1157--1168, 2016.
+
+\bibitem{sonarqube}
+SonarSource,
+``SonarQube: Continuous code quality and security,''
+\url{https://www.sonarqube.org/}, accessed 2026.
+
+\bibitem{baum2017}
+T.~Baum, K.~Liskin, K.~Niklas, and K.~Schneider,
+``A faceted classification scheme for change-based industrial code review processes,''
+\textit{IEEE Software}, vol.~34, no.~1, pp.~38--45, 2017.
+
+\bibitem{kononenko2016}
+O.~Kononenko, O.~Baysal, and M.~W.~Godfrey,
+``Code review quality: How developers see it,''
+\textit{Proc.\ ICSE}, pp.~1028--1038, 2016.
+
+\bibitem{hu2022}
+E.~Hu \textit{et al.},
+``LoRA: Low-rank adaptation of large language models,''
+\textit{ICLR}, 2022.
+
+\bibitem{codeguru}
+Amazon Web Services,
+``Amazon CodeGuru Reviewer,''
+\url{https://aws.amazon.com/codeguru/}, accessed 2026.
+
+\bibitem{ghadvancedsecurity}
+GitHub,
+``GitHub Advanced Security,''
+\url{https://docs.github.com/en/get-started/learning-about-github/about-github-advanced-security}, accessed 2026.
+
+\bibitem{wang2021}
+Y.~Wang \textit{et al.},
+``CodeT5: Identifier-aware unified pre-trained encoder-decoder models for code understanding
+and generation,''
+in \textit{Proc. EMNLP 2021}, pp.~8696--8708, 2021.
+
+\bibitem{yamaguchi2014}
+F.~Yamaguchi \textit{et al.},
+``Modeling and discovering vulnerabilities with code property graphs,''
+in \textit{Proc. IEEE Symp. on Security and Privacy (S\&P)}, pp.~590--604, 2014.
+
+\bibitem{zimmermann2007}
+T.~Zimmermann and N.~Nagappan,
+``Predicting defects using network analysis on dependency graphs,''
+in \textit{Proc. ICSE 2007}, pp.~531--540, 2007.
+
+\bibitem{zhou2019}
+Y.~Zhou \textit{et al.},
+``Devign: Effective vulnerability identification by learning comprehensive program
+semantics via graph neural networks,''
+in \textit{Proc. NeurIPS 2019}, pp.~10197--10207, 2019.
+
+\bibitem{d2010}
+M.~D'Ambros, M.~Lanza, and R.~Robbes,
+``An extensive comparison of bug prediction approaches,''
+in \textit{Proc. 7th IEEE Working Conference on Mining Software Repositories (MSR)},
+pp.~31--41, 2010.
+
+\bibitem{menzies2011}
+T.~Menzies, A.~Butcher, D.~Cok, A.~Marcus, L.~Layman, F.~Shull, B.~Turhan,
+and T.~Zimmermann,
+``Local versus global lessons for defect prediction and effort estimation,''
+\textit{IEEE Trans. Software Eng.}, vol.~39, no.~6, pp.~822--834, 2013.
+
+\bibitem{shepperd2014}
+M.~Shepperd, D.~Bowes, and T.~Hall,
+``Researcher bias: The use of machine learning in software defect prediction,''
+\textit{IEEE Trans. Software Eng.}, vol.~40, no.~6, pp.~603--616, 2014.
+
+\bibitem{tantithamthavorn2016}
+C.~Tantithamthavorn, S.~McIntosh, A.~E.~Hassan, and K.~Matsumoto,
+``Automated parameter optimization of classification techniques for defect prediction models,''
+in \textit{Proc. 38th Int. Conf. on Software Engineering (ICSE)},
+pp.~321--332, 2016.
+
+\bibitem{wohlin2012}
+C.~Wohlin, P.~Runeson, M.~H{\"o}st, M.~C.~Ohlsson, B.~Regnell, and A.~Wessl{\'e}n,
+\textit{Experimentation in Software Engineering}.
+Springer, 2012.
+
+\bibitem{zheng2021}
+Z.~Zheng \textit{et al.},
+``D2A: A dataset built for AI-based vulnerability detection methods using differential analysis,''
+in \textit{Proc. 43rd Int. Conf. on Software Engineering: Software Engineering in Practice (ICSE-SEIP)},
+pp.~111--120, 2021.
+
+\end{thebibliography}
 
 \end{document}
