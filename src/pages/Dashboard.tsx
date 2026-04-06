@@ -9,7 +9,7 @@ import { getEntries, getDashboardStats } from "@/services/reviewHistory";
 import {
   ExternalLink, Clock, FileCode2, AlertTriangle, ClipboardCheck,
   CheckCircle2, TrendingUp, Shield, Zap, BarChart3, Plus, GitCompare,
-  Flame, X,
+  Flame, X, Activity,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -70,6 +70,106 @@ function loadFeedbackKeys(): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+// ─── Activity Heatmap ─────────────────────────────────────────────────────────
+
+function ActivityHeatmap({ entries }: { entries: ReturnType<typeof getEntries> }) {
+  const WEEKS = 15;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Anchor to the start of the current week (Monday)
+  const dayOfWeek = (today.getDay() + 6) % 7; // Mon=0 … Sun=6
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - dayOfWeek);
+
+  // Grid start = (WEEKS-1) weeks before weekStart
+  const gridStart = new Date(weekStart);
+  gridStart.setDate(weekStart.getDate() - (WEEKS - 1) * 7);
+
+  // Build date → count map
+  const countMap: Record<string, number> = {};
+  entries.forEach((e) => {
+    const d = new Date(e.submittedAt);
+    d.setHours(0, 0, 0, 0);
+    const key = d.toISOString().slice(0, 10);
+    countMap[key] = (countMap[key] ?? 0) + 1;
+  });
+
+  // Build cells: WEEKS columns, 7 rows (Mon…Sun)
+  const cells: { date: Date; count: number }[][] = Array.from({ length: WEEKS }, (_, wi) =>
+    Array.from({ length: 7 }, (_, di) => {
+      const d = new Date(gridStart);
+      d.setDate(gridStart.getDate() + wi * 7 + di);
+      const key = d.toISOString().slice(0, 10);
+      return { date: d, count: countMap[key] ?? 0 };
+    })
+  );
+
+  const maxCount = Math.max(1, ...Object.values(countMap));
+
+  function cellColor(count: number) {
+    if (count === 0) return "bg-secondary/40";
+    const intensity = Math.ceil((count / maxCount) * 4);
+    return [
+      "bg-primary/20",
+      "bg-primary/40",
+      "bg-primary/65",
+      "bg-primary",
+    ][Math.min(intensity - 1, 3)];
+  }
+
+  const totalThisPeriod = cells.flat().reduce((s, c) => s + c.count, 0);
+  const DAY_LABELS = ["Mon", "", "Wed", "", "Fri", "", "Sun"];
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
+          <h2 className="font-semibold text-foreground text-sm">Analysis Activity</h2>
+          <span className="text-xs text-muted-foreground">last {WEEKS} weeks</span>
+        </div>
+        <span className="text-xs text-muted-foreground">{totalThisPeriod} analyses</span>
+      </div>
+
+      <div className="flex gap-1">
+        {/* Day labels */}
+        <div className="flex flex-col gap-0.5 justify-between mr-1" style={{ paddingTop: "0px" }}>
+          {DAY_LABELS.map((l, i) => (
+            <div key={i} className="text-[9px] text-muted-foreground/50 leading-none" style={{ height: "11px", lineHeight: "11px" }}>{l}</div>
+          ))}
+        </div>
+
+        {/* Grid */}
+        {cells.map((week, wi) => (
+          <div key={wi} className="flex flex-col gap-0.5">
+            {week.map((cell, di) => {
+              const isFuture = cell.date > today;
+              const label = cell.date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              return (
+                <div
+                  key={di}
+                  title={isFuture ? "" : `${label}: ${cell.count} analysis${cell.count !== 1 ? "es" : ""}`}
+                  className={`w-2.5 h-2.5 rounded-sm transition-colors ${isFuture ? "bg-transparent" : cellColor(cell.count)}`}
+                />
+              );
+            })}
+          </div>
+        ))}
+
+        {/* Legend */}
+        <div className="flex flex-col justify-end ml-2 gap-0.5">
+          <span className="text-[9px] text-muted-foreground/50 mb-0.5">Less</span>
+          {["bg-secondary/40", "bg-primary/20", "bg-primary/40", "bg-primary/65", "bg-primary"].map((cls, i) => (
+            <div key={i} className={`w-2.5 h-2.5 rounded-sm ${cls}`} />
+          ))}
+          <span className="text-[9px] text-muted-foreground/50 mt-0.5">More</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const Dashboard = () => {
@@ -346,6 +446,9 @@ const Dashboard = () => {
             </div>
           </div>
         )}
+
+        {/* ── Activity Heatmap ── */}
+        {allEntries.length >= 2 && <ActivityHeatmap entries={allEntries} />}
 
         {/* ── Leaderboard ── */}
         {latestByFile.length >= 2 && (

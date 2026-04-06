@@ -604,6 +604,238 @@ class _RegexSecurityScanner:
         )
 
 
+# ---------------------------------------------------------------------------
+# Go security scanner
+# ---------------------------------------------------------------------------
+
+_GO_SECURITY_RULES: list[tuple] = [
+    (r'fmt\.Sprintf\s*\(\s*[^,)]*%s[^,)]*,\s*(?:r\.|req\.)', "sql_injection", "high",
+     "Potential SQL injection via fmt.Sprintf",
+     "Build queries with parameterised statements using database/sql placeholders.", 0.75, "CWE-89"),
+    (r'exec\.Command\s*\(', "command_injection", "high",
+     "OS command execution via exec.Command",
+     "Ensure exec.Command arguments are not derived from user-controlled input.", 0.70, "CWE-78"),
+    (r'(?i)md5\.New\s*\(\)', "weak_crypto", "high",
+     "Weak hash algorithm (MD5)",
+     "MD5 is cryptographically broken. Use crypto/sha256 or stronger.", 0.85, "CWE-327"),
+    (r'(?i)sha1\.New\s*\(\)', "weak_crypto", "high",
+     "Weak hash algorithm (SHA-1)",
+     "SHA-1 is cryptographically broken. Use crypto/sha256 or stronger.", 0.85, "CWE-327"),
+    (r'math/rand', "weak_crypto", "medium",
+     "Insecure random (math/rand)",
+     "math/rand is not cryptographically secure. Use crypto/rand.", 0.80, "CWE-338"),
+    (r'ioutil\.ReadFile\s*\([^)]*\+', "path_traversal", "high",
+     "Potential path traversal",
+     "File path built from concatenation may allow directory traversal.", 0.70, "CWE-22"),
+    (r'os\.Open\s*\([^)]*\+', "path_traversal", "medium",
+     "Potential path traversal via os.Open",
+     "Validate and sanitize file paths before opening.", 0.65, "CWE-22"),
+    (r'http\.ListenAndServe\s*\(\s*"[^"]*",\s*nil\)', "insecure_config", "medium",
+     "Default ServeMux with no middleware",
+     "Consider using a custom router with rate limiting and authentication.", 0.60, "CWE-284"),
+    (r'tls\.Config\s*\{[^}]*InsecureSkipVerify\s*:\s*true', "insecure_tls", "critical",
+     "TLS certificate verification disabled",
+     "Setting InsecureSkipVerify to true disables certificate validation.", 0.95, "CWE-295"),
+]
+
+# ---------------------------------------------------------------------------
+# Rust security scanner
+# ---------------------------------------------------------------------------
+
+_RUST_SECURITY_RULES: list[tuple] = [
+    (r'unsafe\s*\{', "unsafe_code", "medium",
+     "Unsafe block",
+     "Unsafe blocks bypass Rust's memory safety guarantees. Review carefully.", 0.80, "CWE-119"),
+    (r'std::process::Command::new', "command_injection", "high",
+     "OS command execution",
+     "Ensure Command arguments are not derived from user-controlled input.", 0.70, "CWE-78"),
+    (r'unwrap\s*\(\)', "error_handling", "low",
+     "Unchecked unwrap() — potential panic",
+     "Prefer explicit error handling with match or ? instead of unwrap().", 0.60, "CWE-391"),
+    (r'expect\s*\(', "error_handling", "low",
+     "Unchecked expect() — potential panic in production",
+     "expect() panics on None/Err. Use proper error propagation.", 0.55, "CWE-391"),
+    (r'md5\s*::', "weak_crypto", "high",
+     "Weak hash algorithm (MD5 crate)",
+     "MD5 is cryptographically broken. Use sha2 or blake3.", 0.85, "CWE-327"),
+    (r'(?i)from_utf8_unchecked', "memory_safety", "high",
+     "Unsafe UTF-8 conversion",
+     "from_utf8_unchecked bypasses validity checks. Use from_utf8() instead.", 0.85, "CWE-20"),
+    (r'std::mem::transmute', "memory_safety", "critical",
+     "Use of mem::transmute",
+     "transmute reinterprets memory bits — can cause undefined behaviour.", 0.90, "CWE-704"),
+]
+
+# ---------------------------------------------------------------------------
+# C# security scanner
+# ---------------------------------------------------------------------------
+
+_CS_SECURITY_RULES: list[tuple] = [
+    (r'SqlCommand\s*\(\s*["\'][^"\']*"\s*\+', "sql_injection", "critical",
+     "SQL Injection via string concatenation",
+     "Use SqlParameter or LINQ instead of concatenating SQL strings.", 0.88, "CWE-89"),
+    (r'ExecuteNonQuery|ExecuteScalar|ExecuteReader', "sql_injection", "low",
+     "Direct SQL execution — verify parameterisation",
+     "Ensure all SQL commands use parameterised queries.", 0.50, "CWE-89"),
+    (r'Process\.Start\s*\(', "command_injection", "high",
+     "OS process execution via Process.Start",
+     "Validate all arguments passed to Process.Start.", 0.75, "CWE-78"),
+    (r'MD5\.Create\s*\(\)', "weak_crypto", "high",
+     "Weak hash algorithm (MD5)",
+     "MD5 is broken. Use SHA-256 via SHA256.Create().", 0.90, "CWE-327"),
+    (r'SHA1\.Create\s*\(\)', "weak_crypto", "high",
+     "Weak hash algorithm (SHA-1)",
+     "SHA-1 is broken. Use SHA-256 via SHA256.Create().", 0.90, "CWE-327"),
+    (r'new\s+Random\s*\(\)', "weak_crypto", "medium",
+     "Insecure random (System.Random)",
+     "System.Random is not cryptographically secure. Use RNGCryptoServiceProvider.", 0.80, "CWE-338"),
+    (r'BinaryFormatter', "insecure_deserialization", "critical",
+     "Unsafe deserialisation via BinaryFormatter",
+     "BinaryFormatter is insecure and deprecated. Use System.Text.Json or Newtonsoft.", 0.90, "CWE-502"),
+    (r'Response\.Write\s*\([^)]*Request', "xss", "high",
+     "Potential XSS via Response.Write with request data",
+     "Encode output using HttpUtility.HtmlEncode before writing to response.", 0.80, "CWE-79"),
+    (r'XmlDocument\s*\(\)', "xxe", "medium",
+     "XmlDocument may be vulnerable to XXE",
+     "Disable DTD processing: set XmlResolver = null.", 0.65, "CWE-611"),
+    (r'(?i)(password|secret|apikey)\s*=\s*"[^"]{4,}"', "hardcoded_credential", "high",
+     "Hardcoded credential",
+     "Store credentials in environment variables or a secrets manager.", 0.80, "CWE-798"),
+]
+
+# ---------------------------------------------------------------------------
+# Ruby security scanner
+# ---------------------------------------------------------------------------
+
+_RUBY_SECURITY_RULES: list[tuple] = [
+    (r'ActiveRecord::Base\.connection\.execute\s*\([^)]*#\{', "sql_injection", "critical",
+     "SQL Injection via string interpolation",
+     "Use parameterised queries or ActiveRecord finders instead of raw SQL.", 0.88, "CWE-89"),
+    (r'\.where\s*\(\s*"[^"]*#\{', "sql_injection", "high",
+     "SQL Injection in ActiveRecord where() clause",
+     "Use hash conditions or ? placeholders instead of interpolated strings.", 0.85, "CWE-89"),
+    (r'system\s*\(|`[^`]+`|\bexec\s*\(', "command_injection", "critical",
+     "OS command execution",
+     "Avoid passing user-controlled data to system(), exec(), or backticks.", 0.85, "CWE-78"),
+    (r'render\s+inline\s*:', "xss", "high",
+     "Potential XSS via render :inline",
+     "render inline: evaluates ERB — sanitize user input before rendering.", 0.75, "CWE-79"),
+    (r'html_safe\b|raw\s*\(', "xss", "medium",
+     "Possible XSS via html_safe / raw",
+     "html_safe and raw mark strings as trusted — ensure they are sanitized.", 0.70, "CWE-79"),
+    (r'Marshal\.load\s*\(', "insecure_deserialization", "critical",
+     "Unsafe deserialisation via Marshal.load",
+     "Marshal.load on untrusted data allows remote code execution.", 0.90, "CWE-502"),
+    (r'eval\s*\(', "code_injection", "critical",
+     "Use of eval()",
+     "eval() on untrusted input allows arbitrary code execution.", 0.88, "CWE-95"),
+    (r'Digest::MD5', "weak_crypto", "high",
+     "Weak hash algorithm (MD5)",
+     "MD5 is broken. Use Digest::SHA256.", 0.85, "CWE-327"),
+    (r'Digest::SHA1\b', "weak_crypto", "high",
+     "Weak hash algorithm (SHA-1)",
+     "SHA-1 is broken. Use Digest::SHA256.", 0.85, "CWE-327"),
+    (r'rand\b(?!\w)', "weak_crypto", "medium",
+     "Insecure random (Kernel.rand)",
+     "Kernel.rand is not cryptographically secure. Use SecureRandom.", 0.70, "CWE-338"),
+]
+
+# ---------------------------------------------------------------------------
+# PHP security scanner
+# ---------------------------------------------------------------------------
+
+_PHP_SECURITY_RULES: list[tuple] = [
+    (r'mysql_query\s*\(\s*["\'][^"\']*"\s*\.\s*\$', "sql_injection", "critical",
+     "SQL Injection via string concatenation",
+     "Use PDO or MySQLi with prepared statements.", 0.90, "CWE-89"),
+    (r'mysqli_query\s*\([^,]+,\s*["\'][^"\']*"\s*\.\s*\$', "sql_injection", "critical",
+     "SQL Injection in mysqli_query",
+     "Use prepared statements with bind_param().", 0.88, "CWE-89"),
+    (r'\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\[', "input_validation", "medium",
+     "Unvalidated superglobal access",
+     "Validate and sanitize all superglobal inputs before use.", 0.55, "CWE-20"),
+    (r'echo\s+\$_(?:GET|POST|REQUEST)', "xss", "critical",
+     "XSS via direct echo of superglobal",
+     "Always htmlspecialchars() or htmlentities() output from user input.", 0.90, "CWE-79"),
+    (r'shell_exec\s*\(|exec\s*\(|system\s*\(|passthru\s*\(|popen\s*\(', "command_injection", "critical",
+     "OS command execution",
+     "Never pass user-controlled data to shell execution functions.", 0.88, "CWE-78"),
+    (r'eval\s*\(\s*\$', "code_injection", "critical",
+     "Code injection via eval($...)",
+     "eval() on dynamic data allows arbitrary PHP execution.", 0.90, "CWE-95"),
+    (r'include\s*\(\s*\$|require\s*\(\s*\$|include_once\s*\(\s*\$|require_once\s*\(\s*\$', "path_traversal", "critical",
+     "Remote/local file inclusion via variable",
+     "Never include files based on user-controlled paths.", 0.88, "CWE-22"),
+    (r'unserialize\s*\(\s*\$', "insecure_deserialization", "critical",
+     "Unsafe deserialisation via unserialize()",
+     "unserialize() on untrusted data allows object injection. Use json_decode().", 0.90, "CWE-502"),
+    (r'md5\s*\(', "weak_crypto", "high",
+     "Weak hash algorithm (MD5)",
+     "MD5 is cryptographically broken. Use password_hash() or hash('sha256', ...).", 0.85, "CWE-327"),
+    (r'sha1\s*\(', "weak_crypto", "high",
+     "Weak hash algorithm (SHA-1)",
+     "SHA-1 is broken. Use hash('sha256', ...) or password_hash().", 0.85, "CWE-327"),
+    (r'header\s*\(\s*["\']Location:\s*\'\s*\.\s*\$', "open_redirect", "high",
+     "Open redirect via user-controlled Location header",
+     "Validate redirect targets against an allowlist.", 0.80, "CWE-601"),
+    (r'rand\s*\(|mt_rand\s*\(', "weak_crypto", "medium",
+     "Insecure random (rand/mt_rand)",
+     "rand() and mt_rand() are not cryptographically secure. Use random_bytes().", 0.75, "CWE-338"),
+]
+
+# ---------------------------------------------------------------------------
+# C / C++ security scanner
+# ---------------------------------------------------------------------------
+
+_C_SECURITY_RULES: list[tuple] = [
+    (r'\bgets\s*\(', "buffer_overflow", "critical",
+     "Unsafe gets() — no bounds checking",
+     "gets() is removed from C11. Use fgets() with explicit size limit.", 0.95, "CWE-120"),
+    (r'\bsprintf\s*\(', "buffer_overflow", "high",
+     "Unsafe sprintf — potential buffer overflow",
+     "Use snprintf() with explicit size to prevent buffer overflows.", 0.85, "CWE-120"),
+    (r'\bstrcpy\s*\(', "buffer_overflow", "high",
+     "Unsafe strcpy — no bounds checking",
+     "Use strncpy() or strlcpy() with explicit size.", 0.85, "CWE-120"),
+    (r'\bstrcat\s*\(', "buffer_overflow", "high",
+     "Unsafe strcat — no bounds checking",
+     "Use strncat() with explicit size.", 0.80, "CWE-120"),
+    (r'\bsystem\s*\(', "command_injection", "high",
+     "OS command execution via system()",
+     "Avoid system() with user input. Use execve() with validated args instead.", 0.80, "CWE-78"),
+    (r'\bprintf\s*\(\s*[a-zA-Z_]\w*\s*\)', "format_string", "high",
+     "Format string vulnerability",
+     "Never pass untrusted input directly to printf. Use printf(\"%s\", str).", 0.85, "CWE-134"),
+    (r'\bmalloc\s*\([^)]*\)(?!\s*[=;])', "memory_leak", "low",
+     "malloc result not checked or stored",
+     "Always check the return value of malloc() for NULL.", 0.55, "CWE-252"),
+    (r'\bfree\s*\(\s*(\w+)\s*\).*\bfree\s*\(\s*\1\s*\)', "use_after_free", "critical",
+     "Double free detected",
+     "Freeing the same pointer twice causes undefined behaviour. Set pointer to NULL after free.", 0.70, "CWE-415"),
+    (r'rand\s*\(\)', "weak_crypto", "medium",
+     "Insecure random (rand())",
+     "rand() is not cryptographically secure. Use /dev/urandom or platform CSPRNG.", 0.80, "CWE-338"),
+    (r'\bmd5\b|MD5_Init|MD5_Update', "weak_crypto", "high",
+     "Weak hash algorithm (MD5)",
+     "MD5 is cryptographically broken. Use SHA-256 via OpenSSL EVP.", 0.85, "CWE-327"),
+    (r'SQL_C_CHAR.*strcpy|strcat.*sql', "sql_injection", "high",
+     "Potential SQL injection in C",
+     "Use parameterised ODBC queries instead of string concatenation.", 0.65, "CWE-89"),
+]
+
+_CPP_SECURITY_RULES: list[tuple] = _C_SECURITY_RULES + [
+    (r'reinterpret_cast\s*<', "memory_safety", "medium",
+     "Use of reinterpret_cast",
+     "reinterpret_cast bypasses type safety. Review carefully.", 0.65, "CWE-704"),
+    (r'const_cast\s*<', "memory_safety", "low",
+     "Use of const_cast",
+     "const_cast removes const qualifier — may cause undefined behaviour if the original was const.", 0.55, "CWE-704"),
+    (r'\bnew\b(?!.*\bdelete\b)', "memory_leak", "low",
+     "Potential memory leak (new without visible delete)",
+     "Prefer smart pointers (unique_ptr, shared_ptr) over raw new/delete.", 0.45, "CWE-401"),
+]
+
+
 def scan_security_patterns_for_language(source: str, language: str) -> SecurityScanResult:
     """Scan source in the given language. Dispatches to the appropriate scanner."""
     lang = language.lower()
@@ -611,5 +843,22 @@ def scan_security_patterns_for_language(source: str, language: str) -> SecurityS
         return _RegexSecurityScanner(source, _JS_SECURITY_RULES).scan()
     if lang == "java":
         return _RegexSecurityScanner(source, _JAVA_SECURITY_RULES).scan()
+    if lang == "go":
+        return _RegexSecurityScanner(source, _GO_SECURITY_RULES).scan()
+    if lang == "rust":
+        return _RegexSecurityScanner(source, _RUST_SECURITY_RULES).scan()
+    if lang == "csharp":
+        return _RegexSecurityScanner(source, _CS_SECURITY_RULES).scan()
+    if lang == "ruby":
+        return _RegexSecurityScanner(source, _RUBY_SECURITY_RULES).scan()
+    if lang == "php":
+        return _RegexSecurityScanner(source, _PHP_SECURITY_RULES).scan()
+    if lang == "cpp":
+        return _RegexSecurityScanner(source, _CPP_SECURITY_RULES).scan()
+    if lang == "c":
+        return _RegexSecurityScanner(source, _C_SECURITY_RULES).scan()
+    # kotlin/swift: use JS rules as best available approximation
+    if lang in ("kotlin", "swift"):
+        return _RegexSecurityScanner(source, _JS_SECURITY_RULES).scan()
     # Default: Python
     return scan_security_patterns(source)

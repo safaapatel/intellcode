@@ -31,11 +31,11 @@ import {
   Check,
 } from "lucide-react";
 import { mockReviewResult, mockIssues } from "@/data/mockData";
-import { getEntry } from "@/services/reviewHistory";
+import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
 import { toast } from "sonner";
 import type { FullAnalysisResult } from "@/types/analysis";
-import { submitAnalysisFeedback } from "@/services/api";
+import { submitAnalysisFeedback, explainAnalysis, type ExplainResult } from "@/services/api";
 
 // ─── Feedback types ────────────────────────────────────────────────────────────
 
@@ -242,11 +242,63 @@ function Empty({ msg }: { msg: string }) {
   );
 }
 
+// ─── File score history sparkline ─────────────────────────────────────────────
+
+function FileScoreHistory({ filename }: { filename: string }) {
+  const history = getEntries()
+    .filter((e) => e.filename === filename)
+    .sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime())
+    .slice(-10);
+
+  if (history.length < 2) return null;
+
+  const scores = history.map((e) => e.overallScore);
+  const minS = Math.min(...scores);
+  const maxS = Math.max(...scores);
+  const range = maxS - minS || 1;
+  const W = 220, H = 48, PAD = 4;
+  const pts = scores.map((s, i) => {
+    const x = PAD + (i / (scores.length - 1)) * (W - PAD * 2);
+    const y = PAD + ((maxS - s) / range) * (H - PAD * 2);
+    return `${x},${y}`;
+  }).join(" ");
+
+  const latest = scores[scores.length - 1];
+  const first = scores[0];
+  const delta = latest - first;
+  const deltaColor = delta >= 0 ? "text-emerald-400" : "text-red-400";
+  const lineColor = delta >= 0 ? "#10b981" : "#ef4444";
+
+  return (
+    <div className="bg-secondary/30 border border-border rounded-xl px-4 py-3 flex items-center gap-4">
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-muted-foreground mb-1">Score history — {history.length} analyses</p>
+        <svg width={W} height={H} className="overflow-visible">
+          <polyline fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" points={pts} />
+          {scores.map((s, i) => {
+            const x = PAD + (i / (scores.length - 1)) * (W - PAD * 2);
+            const y = PAD + ((maxS - s) / range) * (H - PAD * 2);
+            return <circle key={i} cx={x} cy={y} r="3" fill={lineColor} />;
+          })}
+        </svg>
+      </div>
+      <div className="text-right shrink-0">
+        <div className="text-2xl font-bold text-foreground">{latest}</div>
+        <div className={`text-xs font-semibold ${deltaColor}`}>
+          {delta >= 0 ? "+" : ""}{delta} pts
+        </div>
+        <div className="text-[10px] text-muted-foreground">vs first run</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab bodies ───────────────────────────────────────────────────────────────
 
 function OverviewTab({ r }: { r: FullAnalysisResult }) {
   return (
     <div className="space-y-6">
+      <FileScoreHistory filename={r.filename} />
       <div className="flex flex-wrap gap-6 items-end justify-center py-2">
         <ScoreCircle score={r.overall_score} label="Overall" />
         {r.complexity && <ScoreCircle score={r.complexity.score} label="Complexity" size={96} />}
@@ -1010,6 +1062,172 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
   );
 }
 
+// ─── ExplainTab ───────────────────────────────────────────────────────────────
+
+function ExplainTab({ r }: { r: FullAnalysisResult }) {
+  const [data, setData] = useState<ExplainResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    if (!r.filename) return;
+    // We need the original source — stored in the result or we reconstruct from snippet
+    const code = (r as unknown as Record<string, string>)._source ?? "";
+    if (!code) {
+      setError("Source code not available for explanation (stored result may be truncated).");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await explainAnalysis(code, r.filename);
+      setData(result);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const IMPACT_CLS: Record<string, string> = {
+    high:   "bg-red-500/20 text-red-400 border border-red-500/30",
+    medium: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
+    low:    "bg-blue-500/20 text-blue-400 border border-blue-500/30",
+  };
+
+  if (!data && !loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center gap-4">
+        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Brain className="w-7 h-7 text-primary" />
+        </div>
+        <div>
+          <p className="text-lg font-semibold text-foreground">ML Explanation</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+            Understand exactly which code features drove each model's prediction — feature importance, risk drivers, and actionable recommendations.
+          </p>
+        </div>
+        {error && <p className="text-sm text-destructive max-w-sm">{error}</p>}
+        <button
+          onClick={load}
+          className="px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          Generate Explanation
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-muted-foreground">Generating ML explanations...</p>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      {/* Actionable summary */}
+      <div className="bg-primary/5 border border-primary/20 rounded-xl p-5">
+        <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Actionable Summary</p>
+        <ul className="space-y-2">
+          {data.actionable_summary.map((item, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+              <span className="text-primary font-bold shrink-0">{i + 1}.</span>
+              {item}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Complexity model */}
+      {data.models.complexity && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-sm font-semibold text-foreground mb-1">Complexity Model (XGBoost)</p>
+          <p className="text-xs text-muted-foreground mb-4">{data.models.complexity.interpretation}</p>
+          <div className="space-y-2">
+            {data.models.complexity.top_features.slice(0, 6).map((f) => (
+              <div key={f.feature} className="flex items-center gap-3">
+                <span className="text-xs font-mono text-foreground w-44 truncate shrink-0">{f.feature}</span>
+                <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full"
+                    style={{ width: `${Math.min(100, f.importance * 400)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground w-12 text-right shrink-0">
+                  {f.value}
+                </span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${IMPACT_CLS[f.impact] ?? ""}`}>
+                  {f.impact}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Security model */}
+      {data.models.security && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-sm font-semibold text-foreground mb-1">Security Model (RF + CNN)</p>
+          <p className="text-xs text-muted-foreground mb-4">{data.models.security.interpretation}</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {Object.entries(data.models.security.rf_features)
+              .filter(([, v]) => v > 0)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 9)
+              .map(([k, v]) => (
+                <div key={k} className={`flex justify-between p-2 rounded-lg text-xs border ${
+                  data.models.security!.high_risk_signals.includes(k)
+                    ? "bg-red-500/10 border-red-500/30 text-red-400"
+                    : "bg-secondary/30 border-border text-muted-foreground"
+                }`}>
+                  <span className="font-mono truncate">{k.replace("n_", "")}</span>
+                  <span className="font-bold ml-2 shrink-0">{v}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Bug risk model */}
+      {data.models.bug && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <p className="text-sm font-semibold text-foreground mb-1">Bug Risk Model (XGBoost + LR)</p>
+          <p className="text-xs text-muted-foreground mb-4">{data.models.bug.interpretation}</p>
+          <div className="space-y-2">
+            {data.models.bug.risk_drivers.map((d) => (
+              <div key={d.feature} className={`flex items-center gap-3 p-2.5 rounded-lg border text-xs ${
+                d.exceeded ? "bg-orange-500/10 border-orange-500/30" : "bg-secondary/20 border-border"
+              }`}>
+                <span className={`font-mono flex-1 truncate ${d.exceeded ? "text-orange-300" : "text-muted-foreground"}`}>
+                  {d.feature}
+                </span>
+                <span className="text-foreground font-semibold shrink-0">{d.value}</span>
+                <span className="text-muted-foreground shrink-0">/ {d.threshold}</span>
+                {d.exceeded && <span className="text-orange-400 font-bold shrink-0">!</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={load}
+        className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+      >
+        Refresh explanations
+      </button>
+    </div>
+  );
+}
+
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -1027,6 +1245,7 @@ const TABS = [
   { id: "deps",        label: "Dependencies",  Icon: Network },
   { id: "readability", label: "Readability",   Icon: AlignLeft },
   { id: "fixes",       label: "Fix Guide",     Icon: Lightbulb },
+  { id: "explain",     label: "Explain",       Icon: Brain },
 ];
 
 const ReviewDetail = () => {
@@ -1372,6 +1591,7 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
             <TabsContent value="deps">       <DepsTab r={result} /></TabsContent>
             <TabsContent value="readability"><ReadabilityTab r={result} /></TabsContent>
             <TabsContent value="fixes">       <FixesTab r={result} /></TabsContent>
+            <TabsContent value="explain">    <ExplainTab r={result} /></TabsContent>
           </div>
         </Tabs>
 

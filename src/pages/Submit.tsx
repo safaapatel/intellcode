@@ -12,10 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, Github, Loader2, AlertCircle, FolderOpen, ScanLine, Braces, Settings2, CheckCircle2, Copy, Check } from "lucide-react";
+import { Upload, Github, Loader2, AlertCircle, FolderOpen, ScanLine, Braces, Settings2, CheckCircle2, Copy, Check, Zap } from "lucide-react";
 import { mockRuleSets } from "@/data/mockData";
 import { toast } from "sonner";
-import { analyzeCode, analyzeCodeStream } from "@/services/api";
+import { analyzeCode, analyzeCodeStream, analyzeCodeQuick } from "@/services/api";
 import { authHeaders } from "@/services/github";
 
 function loadRuleSets() {
@@ -155,6 +155,7 @@ const Submit = () => {
     }
     setDoneSteps(new Set(MODEL_STEPS.map((s) => s.id)));
   };
+  const [analysisMode, setAnalysisMode] = useState<"full" | "quick">("full");
   const [submissionMethod, setSubmissionMethod] = useState<"upload" | "github">("upload");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const ruleSets = useMemo(() => loadRuleSets(), []);
@@ -247,7 +248,7 @@ const Submit = () => {
         const eligible = (data.tree || []).filter(
           (f) =>
             f.type === "blob" &&
-            /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|rb|php|kt|swift|ipynb)$/.test(f.path) &&
+            /\.(py|js|ts|jsx|tsx|java|go|rs|cpp|cc|c|cs|cxx|h|hpp|rb|php|kt|swift|ipynb)$/.test(f.path) &&
             !SCAN_SKIP.some((skip) => f.path.includes(skip))
         );
         // Notebooks can be large (outputs embedded) but we extract code cells only — allow up to 500KB
@@ -317,10 +318,16 @@ const Submit = () => {
     setError(null);
     startProgress();
     try {
-      const result = await analyzeCodeStream(
-        code, filename, detectLanguage(filename), onStepDone, undefined, undefined
-      );
-      stopProgress();
+      let result;
+      if (analysisMode === "quick") {
+        result = await analyzeCodeQuick(code, filename, detectLanguage(filename));
+        stopProgress();
+      } else {
+        result = await analyzeCodeStream(
+          code, filename, detectLanguage(filename), onStepDone, undefined, undefined
+        );
+        stopProgress();
+      }
       toast.success("Analysis complete!", { description: result.summary });
       navigate(result._entryId ? `/reviews/${result._entryId}` : "/reviews/result", { state: { result } });
     } catch (err) {
@@ -710,6 +717,43 @@ const Submit = () => {
           </div>
         )}
 
+        {/* Analysis mode toggle */}
+        {submissionMethod === "upload" && (
+          <div className="bg-card border border-border rounded-xl p-4 mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="w-4 h-4 text-primary" />
+              <h2 className="text-sm font-semibold text-foreground">Analysis Mode</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setAnalysisMode("full")}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  analysisMode === "full"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground"
+                }`}
+              >
+                <div className="font-medium text-sm text-foreground mb-0.5">Full Analysis</div>
+                <div className="text-xs text-muted-foreground">All 12 ML models · ~15s</div>
+              </button>
+              <button
+                onClick={() => setAnalysisMode("quick")}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  analysisMode === "quick"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="font-medium text-sm text-foreground">Quick Scan</span>
+                  <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded font-semibold">FAST</span>
+                </div>
+                <div className="text-xs text-muted-foreground">Security · Complexity · Readability · ~3s</div>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Configuration */}
         <div className="bg-card border border-border rounded-xl p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
@@ -858,6 +902,12 @@ const Submit = () => {
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Analyzing...
+                </>
+              ) : analysisMode === "quick" ? (
+                <>
+                  <Zap className="w-4 h-4 mr-2" />
+                  Quick Scan →
+                  <span className="ml-2 text-xs opacity-60 hidden sm:inline">Ctrl+↵</span>
                 </>
               ) : (
                 <>

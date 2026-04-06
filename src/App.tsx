@@ -24,6 +24,7 @@ import Admin from "./pages/Admin";
 import Compare from "./pages/Compare";
 import CI from "./pages/CI";
 import Diff from "./pages/Diff";
+import Batch from "./pages/Batch";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -74,6 +75,7 @@ const App = () => (
           <Route path="/compare"      element={<ProtectedRoute><Compare /></ProtectedRoute>} />
           <Route path="/ci"           element={<ProtectedRoute><CI /></ProtectedRoute>} />
           <Route path="/diff"         element={<ProtectedRoute><Diff /></ProtectedRoute>} />
+          <Route path="/batch"        element={<ProtectedRoute><Batch /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
