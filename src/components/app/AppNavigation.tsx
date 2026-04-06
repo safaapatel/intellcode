@@ -43,6 +43,7 @@ function loadProfileSettings() {
 const baseNavLinks = [
   { name: "Dashboard",     path: "/dashboard" },
   { name: "Submit",        path: "/submit" },
+  { name: "Batch",         path: "/batch" },
   { name: "Repositories",  path: "/repositories" },
   { name: "Reviews",       path: "/reviews" },
   { name: "Compare",       path: "/compare" },

@@ -200,6 +200,107 @@ export async function submitAnalysisFeedback(payload: {
   return res.json();
 }
 
+/**
+ * Quick analysis via /analyze/quick — security patterns + complexity + readability only.
+ * Much faster than full analysis (~2-4s vs ~15s). Persists to history like full analysis.
+ */
+export async function analyzeCodeQuick(
+  code: string,
+  filename = "snippet.py",
+  language = "python",
+  repoName?: string
+): Promise<FullAnalysisResult & { _entryId?: string }> {
+  const req: AnalyzeRequest = { code, filename, language };
+  const result = await post<FullAnalysisResult>("/analyze/quick", req);
+  const entry = addEntry(result, filename, language, repoName);
+  notifyIfCritical(result);
+  return { ...result, _entryId: entry.id };
+}
+
+// ── Batch analysis ──────────────────────────────────────────────────────────
+
+export interface BatchFileInput {
+  code: string;
+  filename: string;
+  language?: string;
+}
+
+export interface BatchAnalysisResult {
+  aggregate: {
+    files_analysed: number;
+    files_errored: number;
+    avg_score: number;
+    min_score: number;
+    max_score: number;
+    total_security_findings: number;
+    critical_files: string[];
+  };
+  results: (FullAnalysisResult & { filename: string })[];
+  errors: { error: string }[];
+}
+
+export async function analyzeBatch(
+  files: BatchFileInput[],
+  failFast = false
+): Promise<BatchAnalysisResult> {
+  const res = await fetch(`${BASE_URL}/analyze/batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files, fail_fast: failFast }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Batch API error ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<BatchAnalysisResult>;
+}
+
+// ── Explain ─────────────────────────────────────────────────────────────────
+
+export interface ExplainResult {
+  features: Record<string, number>;
+  models: {
+    complexity?: {
+      predicted_cognitive_complexity: number;
+      score: number;
+      top_features: { feature: string; value: number; importance: number; impact: string }[];
+      interpretation: string;
+    };
+    security?: {
+      pattern_findings: number;
+      finding_categories: Record<string, number>;
+      rf_features: Record<string, number>;
+      high_risk_signals: string[];
+      interpretation: string;
+    };
+    bug?: {
+      bug_probability: number;
+      risk_level: string;
+      risk_drivers: { feature: string; value: number; threshold: number; exceeded: boolean; explanation: string }[];
+      risk_factors: string[];
+      interpretation: string;
+    };
+  };
+  actionable_summary: string[];
+}
+
+export async function explainAnalysis(
+  code: string,
+  filename = "snippet.py",
+  language = "python"
+): Promise<ExplainResult> {
+  const res = await fetch(`${BASE_URL}/analyze/explain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, filename, language }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Explain API error ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<ExplainResult>;
+}
+
 export async function getFeedbackStats(): Promise<{
   total: number;
   positive: number;

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Download, Lightbulb, TrendingUp, BarChart3, PieChart as PieIcon } from "lucide-react";
+import { Download, Lightbulb, TrendingUp, BarChart3, PieChart as PieIcon, AlertTriangle, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -136,7 +136,47 @@ function buildAnalytics(range: number, repoFilter = "") {
       latest: runs[runs.length - 1].score,
     }));
 
-  return { qualityTrend, issueDistribution, commonIssues, scoreBuckets, avgScore, totalIssues, insights, fileTimelines, count: use.length, usedFallback };
+  // Regression alerts: files whose latest score is at least 10 pts below their best
+  const regressions = Object.entries(byFile)
+    .filter(([, runs]) => runs.length >= 2)
+    .map(([filename, runs]) => {
+      const best = Math.max(...runs.map((r) => r.score));
+      const latest = runs[runs.length - 1].score;
+      const prev = runs[runs.length - 2].score;
+      return { filename, best, latest, prev, drop: best - latest, stepDrop: prev - latest };
+    })
+    .filter((r) => r.drop >= 10)
+    .sort((a, b) => b.drop - a.drop)
+    .slice(0, 5);
+
+  // Most improved
+  const improved = Object.entries(byFile)
+    .filter(([, runs]) => runs.length >= 2)
+    .map(([filename, runs]) => ({
+      filename,
+      delta: runs[runs.length - 1].score - runs[0].score,
+      latest: runs[runs.length - 1].score,
+    }))
+    .filter((r) => r.delta >= 5)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 5);
+
+  // Language breakdown
+  const langCounts: Record<string, number> = {};
+  use.forEach((e) => { const l = e.language || "unknown"; langCounts[l] = (langCounts[l] ?? 0) + 1; });
+  const LANG_COLORS: Record<string, string> = {
+    python: "hsl(210, 90%, 60%)", javascript: "hsl(48, 96%, 53%)",
+    typescript: "hsl(210, 70%, 50%)", java: "hsl(25, 95%, 53%)",
+    go: "hsl(180, 70%, 45%)", rust: "hsl(15, 90%, 55%)",
+    cpp: "hsl(270, 80%, 60%)", ruby: "hsl(0, 75%, 55%)",
+  };
+  const langBreakdown = Object.entries(langCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([lang, count]) => ({ lang, count, color: LANG_COLORS[lang] ?? "hsl(220, 20%, 50%)" }));
+  const langTotal = langBreakdown.reduce((s, l) => s + l.count, 0);
+
+  return { qualityTrend, issueDistribution, commonIssues, scoreBuckets, avgScore, totalIssues, insights, fileTimelines, regressions, improved, langBreakdown, langTotal, count: use.length, usedFallback };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -179,7 +219,11 @@ const Analytics = () => {
   const commonIssues   = real?.commonIssues.length ? real.commonIssues : mockCommonIssues;
   const scoreBuckets   = real?.scoreBuckets ?? null;
   const fileTimelines  = real?.fileTimelines ?? [];
+  const regressions    = real?.regressions   ?? [];
+  const improved       = real?.improved       ?? [];
   const insights       = real?.insights       ?? mockKeyInsights;
+  const langBreakdown  = real?.langBreakdown  ?? [];
+  const langTotal      = real?.langTotal      ?? 1;
 
   const totalReviews   = real?.count          ?? mockAnalyticsStats.totalReviews;
   const avgScore       = real?.avgScore       ?? mockAnalyticsStats.avgQualityScore;
@@ -405,6 +449,117 @@ const Analytics = () => {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Regression Alerts + Most Improved */}
+        {(regressions.length > 0 || improved.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            {/* Regression Alerts */}
+            {regressions.length > 0 && (
+              <div className="bg-card border border-red-500/30 rounded-xl p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                  <h2 className="text-lg font-semibold text-foreground">Regression Alerts</h2>
+                  <span className="text-xs text-muted-foreground ml-1">files that degraded since best score</span>
+                </div>
+                <div className="space-y-3">
+                  {regressions.map(({ filename, best, latest, drop, stepDrop }) => (
+                    <div key={filename} className="flex items-center gap-3 p-3 bg-red-500/5 border border-red-500/20 rounded-lg">
+                      <div className="shrink-0">
+                        <ArrowDownRight className="w-4 h-4 text-red-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-mono text-foreground truncate">{filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Best: <span className="text-emerald-400 font-semibold">{best}</span>
+                          {" → "}Latest: <span className="text-red-400 font-semibold">{latest}</span>
+                          {stepDrop > 0 && <span className="ml-2 text-red-400">({stepDrop > 0 ? "-" : ""}{stepDrop} last run)</span>}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-red-400 shrink-0">-{drop} pts</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Most Improved */}
+            {improved.length > 0 && (
+              <div className="bg-card border border-emerald-500/30 rounded-xl p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                  <h2 className="text-lg font-semibold text-foreground">Most Improved</h2>
+                  <span className="text-xs text-muted-foreground ml-1">largest score gains</span>
+                </div>
+                <div className="space-y-3">
+                  {improved.map(({ filename, delta, latest }) => (
+                    <div key={filename} className="flex items-center gap-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+                      <div className="shrink-0">
+                        <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-mono text-foreground truncate">{filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Latest score: <span className={`font-semibold ${latest >= 80 ? "text-emerald-400" : latest >= 60 ? "text-yellow-400" : "text-red-400"}`}>{latest}/100</span>
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-emerald-400 shrink-0">+{delta} pts</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Language Breakdown */}
+        {langBreakdown.length >= 2 && (
+          <div className="bg-card border border-border rounded-xl p-6 mb-8">
+            <div className="flex items-center gap-2 mb-5">
+              <BarChart3 className="w-4 h-4 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Language Breakdown</h2>
+              <span className="text-xs text-muted-foreground ml-1">{langTotal} file{langTotal !== 1 ? "s" : ""} analysed</span>
+            </div>
+            <div className="space-y-3">
+              {langBreakdown.map(({ lang, count, color }) => {
+                const pct = Math.round((count / langTotal) * 100);
+                return (
+                  <div key={lang} className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-foreground w-20 shrink-0 capitalize">{lang}</span>
+                    <div className="flex-1 h-2.5 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%`, backgroundColor: color }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 w-24 text-right">
+                      <span className="text-xs text-muted-foreground ml-auto">{count} file{count !== 1 ? "s" : ""}</span>
+                      <span className="text-xs font-semibold text-foreground w-8 text-right">{pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Stacked bar visual */}
+            <div className="mt-4 h-3 rounded-full overflow-hidden flex">
+              {langBreakdown.map(({ lang, count, color }) => (
+                <div
+                  key={lang}
+                  title={lang}
+                  className="h-full transition-all duration-500"
+                  style={{ width: `${(count / langTotal) * 100}%`, backgroundColor: color }}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-3 mt-3">
+              {langBreakdown.map(({ lang, color }) => (
+                <div key={lang} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                  <span className="capitalize">{lang}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
