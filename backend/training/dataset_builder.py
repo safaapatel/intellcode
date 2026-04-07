@@ -54,22 +54,104 @@ logger = logging.getLogger(__name__)
 # Repository lists — carefully curated for label quality
 # ---------------------------------------------------------------------------
 
-# Intentionally-vulnerable repositories (positive security labels)
-SECURITY_POSITIVE_REPOS = [
-    "juice-shop/juice-shop",
-    "digininja/DVWA",
-    "appsecco/dvna",
+# IMPORTANT: Do NOT use intentionally-vulnerable toy repos (juice-shop, DVWA)
+# as positive training samples. Those repos signal "low-quality codebase",
+# not "vulnerability pattern". Models trained on them learn software quality
+# tier instead of vulnerability patterns, achieving LOPO AUC=0.494 (chance).
+#
+# Correct approach: use ONLY function-level CVE-linked records from CVEFixes
+# or OSV as positives. Repo-level positive labels are invalid.
+#
+# SECURITY_POSITIVE_REPOS intentionally left empty -- use fetch_cvefixes_python()
+SECURITY_POSITIVE_REPOS: list[str] = []
+
+# Hard negatives: functions that USE dangerous APIs correctly (safe usage).
+# These are the failure cases for keyword-based scanners. The model must
+# learn the difference between:
+#   cursor.execute(sql, params)    -- safe (parameterized)
+#   cursor.execute("SELECT " + sql)-- vulnerable (concatenation)
+#
+# Sources of hard negatives:
+#   1. Django ORM -- uses execute() with params everywhere
+#   2. psycopg2 tests -- parameterized queries, no injection
+#   3. cryptography lib -- correct key derivation, no weak algos
+SECURITY_HARD_NEGATIVE_REPOS = [
+    "django/django",             # ORM: safe execute() with params
+    "psf/requests",              # HTTP: correct TLS, certificate checking
+    "pyca/cryptography",         # Cryptography: correct algorithms, no MD5/SHA1
+    "sqlalchemy/sqlalchemy",     # ORM: parameterized queries throughout
+    "encode/httpx",              # HTTP: verify=True by default, correct SSL
+    "pytest-dev/pytest",         # Test infra: no network/crypto patterns
 ]
 
-# High-quality, well-audited Python repositories (negative security labels)
-# Selected for: active security review, low CVE history, large contributor base.
+# Clean negative repositories (genuinely safe, well-reviewed code)
 SECURITY_NEGATIVE_REPOS = [
     "django/django",
     "pallets/flask",
     "psf/requests",
     "sqlalchemy/sqlalchemy",
     "encode/httpx",
+    "pyca/cryptography",
+    "ansible/ansible",
+    "home-assistant/core",
 ]
+
+# ---------------------------------------------------------------------------
+# Hard negative mining: safe uses of dangerous APIs
+# ---------------------------------------------------------------------------
+# A hard negative is a function that calls a dangerous API (execute, open,
+# subprocess, hashlib) but does so correctly (parameterized, validated, using
+# strong algorithms). These are the cases that keyword-scanners false-positive
+# on and that the RF must learn to classify correctly.
+
+import re as _re
+
+_DANGEROUS_API_CALLS = _re.compile(
+    r"\b(cursor\.execute|connection\.execute|subprocess\.|os\.system|"
+    r"hashlib\.(md5|sha1)|pickle\.|yaml\.load|eval\(|exec\()\b"
+)
+
+_PARAMETERIZED_PATTERN = _re.compile(
+    r"\.execute\s*\(\s*['\"].*?['\"],\s*[(\[]"  # execute("...", (params,))
+)
+
+_STRONG_HASH = _re.compile(r"hashlib\.(sha256|sha512|sha3_|blake2)")
+
+
+def is_hard_negative(source: str) -> bool:
+    """
+    Return True if source contains dangerous API calls used correctly.
+
+    Hard negatives have:
+      - Parameterized SQL (execute with params tuple/list)
+      - Strong hash algorithms (sha256, sha512, blake2) instead of md5/sha1
+      - subprocess with shell=False (default) and validated inputs
+      - No string concatenation into dangerous calls
+
+    These are more valuable training negatives than generic clean code
+    because they force the model to learn semantic differences, not just
+    keyword presence/absence.
+    """
+    has_dangerous = bool(_DANGEROUS_API_CALLS.search(source))
+    if not has_dangerous:
+        return False   # Not relevant as a hard negative
+
+    has_parameterized = bool(_PARAMETERIZED_PATTERN.search(source))
+    has_strong_hash = bool(_STRONG_HASH.search(source))
+    has_md5_sha1 = bool(_re.search(r"hashlib\.(md5|sha1)\b", source))
+    has_shell_true = bool(_re.search(r"shell\s*=\s*True", source))
+    has_string_concat_in_exec = bool(_re.search(
+        r'execute\s*\(\s*["\'].*?["\']\s*\+', source
+    ))
+
+    # Hard negative: uses dangerous API but correctly
+    if has_string_concat_in_exec or has_shell_true or has_md5_sha1:
+        return False   # Actually vulnerable -- not a hard negative
+    if has_parameterized or has_strong_hash:
+        return True    # Safe use of dangerous API
+
+    return False
+
 
 # Repositories for bug datasets — selected for size (>1k commits) and Python
 BUG_REPOS = [
@@ -545,21 +627,36 @@ def build_security_dataset(
         logger.info("  Security (vuln repos): %d samples", count - base_count)
 
         # Source 3: Clean repos (label=0)
+        # Hard negatives (files that use dangerous APIs correctly) are tagged
+        # with sample_weight=3.0 so the model pays extra attention to learning
+        # SAFE usage of dangerous APIs -- the primary source of false positives.
+        #
+        # Hard negative definition (from audit): functions that call execute(),
+        # subprocess, hashlib etc. but do so correctly (parameterized, validated).
+        # These are the cases keyword-scanners false-positive on.
         base_count = count
         for file_info in iter_python_files(negative_repos, github_token, max_per_repo):
             try:
-                ast_feats = ASTExtractor().extract(file_info["content"])
-                tokens = tokenize_code(file_info["content"])[:512]
-                bigram_feats = extract_ast_bigram_features(file_info["content"])
+                source = file_info["content"]
+                ast_feats = ASTExtractor().extract(source)
+                tokens = tokenize_code(source)[:512]
+                bigram_feats = extract_ast_bigram_features(source)
+
+                # Detect hard negatives: safe use of dangerous APIs
+                hard_neg = is_hard_negative(source)
+                sample_weight = 3.0 if hard_neg else 1.0
+
                 out.write(json.dumps({
-                    "repo":        file_info["repo"],
-                    "path":        file_info["path"],
-                    "label":       0,
-                    "tokens":      tokens,
-                    "n_calls":     ast_feats.get("n_calls", 0),
-                    "n_imports":   ast_feats.get("n_imports", 0),
-                    "severity":    "none",
-                    "data_source": "clean_repo",
+                    "repo":          file_info["repo"],
+                    "path":          file_info["path"],
+                    "label":         0,
+                    "tokens":        tokens,
+                    "n_calls":       ast_feats.get("n_calls", 0),
+                    "n_imports":     ast_feats.get("n_imports", 0),
+                    "severity":      "none",
+                    "data_source":   "clean_repo",
+                    "is_hard_negative": hard_neg,
+                    "sample_weight": sample_weight,
                     **bigram_feats,
                 }) + "\n")
                 count += 1
@@ -1008,12 +1105,29 @@ def build_bug_dataset(
                                 if commit.hash[:8] in fix_hashes:
                                     label = 1
 
+                            # Label dilution weight (audit fix):
+                            # A 1000-line file with a 5-line bug patch looks
+                            # identical to a clean 1000-line file on static
+                            # metrics. Weight buggy samples by the fraction of
+                            # the file that actually changed, so large files
+                            # with tiny bug patches don't dominate the loss.
+                            #
+                            # Weight = min(1.0, 10 * changed_lines / file_sloc)
+                            # Clean files keep weight=1.0 (they are the full file).
+                            file_sloc = max(1, metrics.lines.sloc)
+                            changed_lines = jit.get("LT", 0)  # lines touched in this commit
+                            if label == 1 and changed_lines > 0:
+                                sample_weight = min(1.0, 10.0 * changed_lines / file_sloc)
+                            else:
+                                sample_weight = 1.0
+
                             out.write(json.dumps({
                                 "repo":            repo_url,
                                 "file":            mf.filename,
                                 "commit":          commit.hash[:8],
                                 "author_date":     str(commit.committer_date),
                                 "label":           label,
+                                "sample_weight":   round(sample_weight, 4),
                                 "static_features": feat_vec,
                                 "jit_features":    jit,
                                 # Backward-compat scalar mapping
