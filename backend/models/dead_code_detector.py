@@ -198,11 +198,30 @@ def _check_unused_functions(tree: ast.Module) -> list[DeadCodeIssue]:
     collector.visit(tree)
     used = collector.used
 
+    _DUNDER_SKIP = frozenset({
+        "__init__", "__new__", "__del__", "__repr__", "__str__", "__bytes__",
+        "__format__", "__lt__", "__le__", "__eq__", "__ne__", "__gt__", "__ge__",
+        "__hash__", "__bool__", "__len__", "__getitem__", "__setitem__",
+        "__delitem__", "__iter__", "__next__", "__contains__", "__call__",
+        "__enter__", "__exit__", "__get__", "__set__", "__delete__",
+        "__init_subclass__", "__class_getitem__", "main", "setup", "teardown",
+    })
+
     issues = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("_") or node.name in ("main", "__init__"):
+            if node.name.startswith("_") or node.name in _DUNDER_SKIP:
                 continue  # private / special functions are commonly "unused" by design
+            # Skip pytest fixtures and test functions
+            if node.name.startswith("test_") or node.name.startswith("fixture_"):
+                continue
+            decorator_names = {
+                (d.id if isinstance(d, ast.Name) else
+                 d.attr if isinstance(d, ast.Attribute) else "")
+                for d in node.decorator_list
+            }
+            if "fixture" in decorator_names or "pytest" in decorator_names:
+                continue
             if node.name not in used:
                 end = getattr(node, "end_lineno", node.lineno)
                 issues.append(DeadCodeIssue(
@@ -270,6 +289,22 @@ def _check_empty_except(tree: ast.Module) -> list[DeadCodeIssue]:
         if isinstance(node, ast.Try):
             for handler in node.handlers:
                 body = handler.body
+                # Bare except: (no exception type) — catches BaseException including KeyboardInterrupt
+                if handler.type is None:
+                    issues.append(DeadCodeIssue(
+                        issue_type="bare_except",
+                        title=f"Bare 'except:' at line {handler.lineno}",
+                        description=(
+                            f"'except:' at line {handler.lineno} catches ALL exceptions "
+                            f"including SystemExit and KeyboardInterrupt. Use "
+                            f"'except Exception:' or specify the exact exception type."
+                        ),
+                        location=f"line {handler.lineno}",
+                        start_line=handler.lineno,
+                        end_line=getattr(handler, "end_lineno", handler.lineno),
+                        severity="warning",
+                        removable=False,
+                    ))
                 # Empty or pass-only body
                 if all(isinstance(s, ast.Pass) for s in body):
                     issues.append(DeadCodeIssue(

@@ -308,7 +308,6 @@ class RefactoringSuggester:
                         effort_minutes=10,
                         priority="medium",
                     ))
-                    break  # one suggestion per function for this
 
         # --- Many Return Points ---
         n_returns = _count_return_points(func)
@@ -382,17 +381,20 @@ class RefactoringSuggester:
             ))
 
         # --- Duplicate import aliases ---
+        from collections import Counter
         import_names: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 for alias in node.names:
                     import_names.append(alias.name)
-        if len(import_names) != len(set(import_names)):
+        duplicates = [name for name, cnt in Counter(import_names).items() if cnt > 1]
+        if duplicates:
+            dup_list = ", ".join(f"'{d}'" for d in duplicates[:5])
             results.append(RefactoringSuggestion(
                 refactoring_type="remove_duplicate_imports",
-                title="Remove Duplicate Imports",
+                title=f"Remove Duplicate Imports ({len(duplicates)} module(s))",
                 description=(
-                    "Some modules are imported more than once. "
+                    f"Module(s) {dup_list} are imported more than once. "
                     "Consolidate all imports at the top of the file."
                 ),
                 location="module-level imports",
