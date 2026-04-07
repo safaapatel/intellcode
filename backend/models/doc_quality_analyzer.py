@@ -277,8 +277,8 @@ class DocQualityAnalyzer:
         scored = [s.quality_score for s in symbol_scores if s.has_docstring]
         avg_quality = sum(scored) / len(scored) if scored else 0.0
 
-        # Overall grade: combine coverage and quality
-        overall = coverage * 50 + avg_quality * 0.5
+        # Overall grade: coverage (0-1) contributes 70 pts, avg_quality (0-100) contributes 30 pts
+        overall = coverage * 70 + avg_quality * 0.30
         grade = _grade(overall)
 
         summary = (

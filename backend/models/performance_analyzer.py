@@ -191,7 +191,6 @@ def _check_string_concat_loop(tree: ast.Module) -> list[PerformanceIssue]:
         for child in _loop_body_nodes(node):
             # AugAssign: s += expr
             if isinstance(child, ast.AugAssign) and isinstance(child.op, ast.Add):
-                # Check if right side involves a string
                 if _is_string_node(child.value) or (
                     isinstance(child.value, ast.Call) and _call_name(child.value) == "str"
                 ):
@@ -209,6 +208,27 @@ def _check_string_concat_loop(tree: ast.Module) -> list[PerformanceIssue]:
                         severity="high",
                         speedup_hint="''.join(parts) → O(n) vs O(n²)",
                     ))
+            # Assign: s = s + '...' or s = '...' + s
+            elif isinstance(child, ast.Assign) and isinstance(child.value, ast.BinOp):
+                binop = child.value
+                if isinstance(binop.op, ast.Add):
+                    left_str = _is_string_node(binop.left) or (isinstance(binop.left, ast.Call) and _call_name(binop.left) == "str")
+                    right_str = _is_string_node(binop.right) or (isinstance(binop.right, ast.Call) and _call_name(binop.right) == "str")
+                    # At least one side is a string literal/str() call and the other is a Name
+                    if (left_str and isinstance(binop.right, ast.Name)) or (right_str and isinstance(binop.left, ast.Name)):
+                        issues.append(PerformanceIssue(
+                            pattern_type="string_concat_loop",
+                            title=f"String concatenation via assignment in loop (line {child.lineno})",
+                            description=(
+                                f"'s = s + ...' at line {child.lineno} creates a new string "
+                                f"object every iteration (O(n²) total). "
+                                f"Use 'parts.append(...); result = \"\".join(parts)' instead."
+                            ),
+                            location=f"line {child.lineno}",
+                            start_line=child.lineno,
+                            severity="high",
+                            speedup_hint="''.join(parts) → O(n) vs O(n²)",
+                        ))
 
     return issues
 
@@ -342,6 +362,75 @@ def _check_mutable_default_args(tree: ast.Module) -> list[PerformanceIssue]:
     return issues
 
 
+_DB_CALL_NAMES = {
+    "execute", "executemany", "fetchone", "fetchall", "fetchmany",
+    "query", "filter", "filter_by", "get", "find", "find_one",
+    "commit", "rollback",
+}
+
+_REGEX_CALL_NAMES = {"match", "search", "findall", "finditer", "fullmatch", "sub", "subn", "split"}
+
+
+def _check_regex_in_loop(tree: ast.Module) -> list[PerformanceIssue]:
+    """Detect re.compile()-able patterns called directly inside loops."""
+    issues = []
+    for node in ast.walk(tree):
+        if not _is_loop(node):
+            continue
+        for child in _loop_body_nodes(node):
+            if not isinstance(child, ast.Call):
+                continue
+            # re.match(...) / re.search(...) etc. with a literal pattern string
+            if (isinstance(child.func, ast.Attribute)
+                    and child.func.attr in _REGEX_CALL_NAMES
+                    and isinstance(child.func.value, ast.Name)
+                    and child.func.value.id == "re"
+                    and child.args
+                    and isinstance(child.args[0], ast.Constant)):
+                issues.append(PerformanceIssue(
+                    pattern_type="regex_in_loop",
+                    title=f"re.{child.func.attr}() with literal pattern inside loop (line {child.lineno})",
+                    description=(
+                        f"re.{child.func.attr}() at line {child.lineno} recompiles the regex "
+                        f"pattern on every iteration. Pre-compile with "
+                        f"'pattern = re.compile(...)' before the loop and call 'pattern.{child.func.attr}()'."
+                    ),
+                    location=f"line {child.lineno}",
+                    start_line=child.lineno,
+                    severity="medium",
+                    speedup_hint="Pre-compile regex → avoid per-iteration compilation overhead",
+                ))
+    return issues
+
+
+def _check_db_query_in_loop(tree: ast.Module) -> list[PerformanceIssue]:
+    """Detect database query calls (execute/query/filter) inside loops — N+1 query pattern."""
+    issues = []
+    for node in ast.walk(tree):
+        if not _is_loop(node):
+            continue
+        for child in _loop_body_nodes(node):
+            if not isinstance(child, ast.Call):
+                continue
+            name = _call_name(child)
+            if name and name in _DB_CALL_NAMES:
+                issues.append(PerformanceIssue(
+                    pattern_type="db_query_in_loop",
+                    title=f"Database call '{name}()' inside loop (line {child.lineno})",
+                    description=(
+                        f"'{name}()' at line {child.lineno} is called inside a loop. "
+                        f"This is the N+1 query problem — each iteration hits the database. "
+                        f"Batch the query outside the loop (e.g. fetch all records once, "
+                        f"then index by key in a dict)."
+                    ),
+                    location=f"line {child.lineno}",
+                    start_line=child.lineno,
+                    severity="high",
+                    speedup_hint="Batch query outside loop → N db calls → 1 db call",
+                ))
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Main analyzer
 # ---------------------------------------------------------------------------
@@ -374,6 +463,8 @@ class PerformanceAnalyzer:
         issues.extend(_check_repeated_attr_access(tree))
         issues.extend(_check_membership_test(tree))
         issues.extend(_check_mutable_default_args(tree))
+        issues.extend(_check_regex_in_loop(tree))
+        issues.extend(_check_db_query_in_loop(tree))
 
         # Deduplicate by (type, line)
         seen: set[tuple[str, int]] = set()

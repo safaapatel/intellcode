@@ -144,16 +144,6 @@ def _classify_module(name: str, is_relative: bool) -> str:
     return "external"
 
 
-def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
-    """Check if a node is inside a function definition."""
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for child in ast.walk(node):
-                if child is target:
-                    return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Main analyzer
 # ---------------------------------------------------------------------------

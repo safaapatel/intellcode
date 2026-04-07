@@ -321,6 +321,11 @@ class SecurityPatternScanner(ast.NodeVisitor):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _uses_format_or_percent_str(line: str) -> bool:
+        """String-level check: does the line use .format(), %, or f-strings?"""
+        return bool(re.search(r'\.format\s*\(|%\s*[({"\']|f["\']', line))
+
+    @staticmethod
     def _is_string_concat(node: ast.expr) -> bool:
         """True if node is a string concatenation (BinOp with Add)."""
         return isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
@@ -422,6 +427,79 @@ class SecurityPatternScanner(ast.NodeVisitor):
                         cwe="CWE-611",
                     ))
 
+            # Insecure SSL — requests/httpx with verify=False
+            if re.search(r'\bverify\s*=\s*False\b', line) and not line.lstrip().startswith("#"):
+                self._add(SecurityFinding(
+                    vuln_type="insecure_ssl",
+                    severity="high",
+                    title="SSL Certificate Verification Disabled",
+                    description=(
+                        "verify=False disables TLS certificate validation, making the "
+                        "connection vulnerable to man-in-the-middle attacks. "
+                        "Remove verify=False or use a proper CA bundle."
+                    ),
+                    lineno=line_idx,
+                    snippet=line.strip(),
+                    confidence=0.90,
+                    cwe="CWE-295",
+                ))
+
+            # LDAP injection — ldap3 / python-ldap with string formatting
+            if re.search(r'ldap.*search|ldap.*filter|connection\.search', line, re.IGNORECASE):
+                if self._uses_format_or_percent_str(line):
+                    self._add(SecurityFinding(
+                        vuln_type="ldap_injection",
+                        severity="high",
+                        title="Potential LDAP Injection",
+                        description=(
+                            "LDAP filter built with string formatting may be injectable. "
+                            "Use ldap3.utils.conv.escape_filter_chars() to sanitize inputs."
+                        ),
+                        lineno=line_idx,
+                        snippet=line.strip(),
+                        confidence=0.70,
+                        cwe="CWE-90",
+                    ))
+
+            # SSRF — HTTP request with variable URL
+            if re.search(r'\brequests\.(get|post|put|delete|patch|head)\s*\(', line):
+                if not re.search(r'requests\.\w+\s*\(\s*["\']https?://', line):
+                    # URL arg is not a string literal — might be user-controlled
+                    if not line.lstrip().startswith("#"):
+                        self._add(SecurityFinding(
+                            vuln_type="ssrf",
+                            severity="medium",
+                            title="Possible Server-Side Request Forgery (SSRF)",
+                            description=(
+                                "HTTP request made with a dynamic URL. If the URL is "
+                                "user-controlled, an attacker can force the server to make "
+                                "requests to internal services. Validate and whitelist URLs."
+                            ),
+                            lineno=line_idx,
+                            snippet=line.strip(),
+                            confidence=0.55,
+                            cwe="CWE-918",
+                        ))
+
+            # Short/empty hardcoded secrets (api_key="" or token='' missed by 6-char filter)
+            if re.search(
+                r'(?i)(password|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{0,5}["\']',
+                line
+            ) and not line.lstrip().startswith("#"):
+                self._add(SecurityFinding(
+                    vuln_type="hardcoded_secret",
+                    severity="medium",
+                    title="Empty or Short Hardcoded Credential",
+                    description=(
+                        "A credential variable is assigned a very short string literal. "
+                        "Even empty/test values should come from environment variables."
+                    ),
+                    lineno=line_idx,
+                    snippet=line.strip(),
+                    confidence=0.65,
+                    cwe="CWE-798",
+                ))
+
 
 def scan_security_patterns(source: str) -> SecurityScanResult:
     """Convenience wrapper: scan *source* and return SecurityScanResult."""
@@ -458,10 +536,14 @@ _JS_SECURITY_RULES: list[tuple] = [
     (r'setInterval\s*\(\s*["\']', "code_injection", "high",
      "setInterval with string argument",
      "Passing a string to setInterval is equivalent to eval().", 0.85, "CWE-95"),
-    # SQL injection
+    # SQL injection — inline string literal concatenation
     (r'(?i)(query|execute)\s*\(\s*["\'].*\+', "sql_injection", "critical",
      "SQL Injection via string concatenation",
      "SQL query built from string concatenation. Use parameterised queries.", 0.88, "CWE-89"),
+    # SQL injection — pre-built query variable passed to query/execute (M1 fix)
+    (r'(?i)(?:const|let|var)\s+\w+\s*=\s*["\'][^"\']*["\']\s*\+', "sql_injection", "high",
+     "SQL Injection via string concatenation into variable",
+     "String concatenation used to build a query. Ensure it is not passed to a DB call.", 0.72, "CWE-89"),
     # Hardcoded credentials (shared with Python patterns — already in _HARDCODED_SECRET_PATTERNS)
     # Weak crypto
     (r'Math\.random\s*\(\)', "weak_crypto", "medium",

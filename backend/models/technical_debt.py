@@ -186,8 +186,15 @@ class TechnicalDebtEstimator:
             key=lambda r: rating_order.index(r) if r in rating_order else 0,
         )
 
-        # Interest: 2% of current debt per day (compound)
-        interest_per_day = total * 0.02
+        # Interest: severity-weighted debt growth (higher-rated categories compound faster).
+        # E=3x, D=2x, C=1x, B=0.5x, A=0x — 0.5% base rate per day.
+        # This means a critical security violation accrues ~6x more interest than a style issue.
+        _severity_weight = {"E": 3.0, "D": 2.0, "C": 1.0, "B": 0.5, "A": 0.0}
+        weighted_debt = sum(
+            c.debt_minutes * _severity_weight.get(c.rating, 1.0)
+            for c in categories
+        )
+        interest_per_day = round(weighted_debt * 0.005, 1)
         # Payoff: assume 4 hours/day of remediation work
         payoff_days = total / 240 if total > 0 else 0.0
 

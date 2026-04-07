@@ -114,6 +114,10 @@ _PYTHON_KEYWORDS = frozenset({
     "range", "int", "str", "float", "list", "dict", "set", "tuple", "bool",
     "type", "isinstance", "super", "property", "staticmethod", "classmethod",
     "async", "await",
+    # Python 3.10+ structural pattern matching
+    "match", "case",
+    # Python 3.12+ type aliases
+    "type",
 })
 
 
@@ -174,7 +178,7 @@ def _extract_blocks(source: str) -> list[CodeBlock]:
         start = node.lineno - 1
         end   = node.end_lineno
         snippet = textwrap.dedent("\n".join(lines[start:end]))
-        if len(snippet.strip().splitlines()) < 3:
+        if len(snippet.strip().splitlines()) < 6:  # skip trivial 1-3 line functions (m5 fix)
             continue
 
         t1 = _type1_normalize(snippet)

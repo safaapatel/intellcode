@@ -119,7 +119,8 @@ class ASTExtractor(ast.NodeVisitor):
         self._functions.append({
             "name": node.name,
             "lineno": node.lineno,
-            "n_params": len(node.args.args) + len(node.args.posonlyargs),
+            "n_params": (len(node.args.args) + len(node.args.posonlyargs)
+                         + len(node.args.kwonlyargs)),
             "body_lines": body_lines,
             "n_decorators": len(node.decorator_list),
             "is_async": False,
@@ -136,7 +137,8 @@ class ASTExtractor(ast.NodeVisitor):
         self._functions.append({
             "name": node.name,
             "lineno": node.lineno,
-            "n_params": len(node.args.args) + len(node.args.posonlyargs),
+            "n_params": (len(node.args.args) + len(node.args.posonlyargs)
+                         + len(node.args.kwonlyargs)),
             "body_lines": body_lines,
             "n_decorators": len(node.decorator_list),
             "is_async": True,
@@ -149,7 +151,8 @@ class ASTExtractor(ast.NodeVisitor):
         self._current_depth += 1
         self._max_depth = max(self._max_depth, self._current_depth)
 
-        methods = [n for n in ast.walk(node) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        # Use direct body children only — ast.walk would double-count nested class methods
+        methods = [n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         self._classes.append({
             "name": node.name,
             "lineno": node.lineno,
