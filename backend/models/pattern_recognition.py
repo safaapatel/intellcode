@@ -49,36 +49,36 @@ def _rf_extract_features(source: str):
         comment_ratio = m.lines.comments / sloc
 
         return np.array([
-            float(m.cyclomatic_complexity),
-            float(m.cognitive_complexity),
-            float(m.max_function_complexity),
-            float(m.avg_function_complexity),
-            float(m.lines.sloc),
-            float(m.lines.comments),
-            float(comment_ratio),
-            float(m.halstead.volume),
-            float(m.halstead.difficulty),
-            float(m.halstead.bugs_delivered),
-            float(m.maintainability_index),
-            float(m.n_long_functions),
-            float(m.n_complex_functions),
-            float(m.n_lines_over_80),
-            float(ast_feats.get("n_functions", 0)),
-            float(ast_feats.get("n_classes", 0)),
-            float(ast_feats.get("n_try_blocks", 0)),
-            float(ast_feats.get("n_raises", 0)),
-            float(ast_feats.get("n_with_blocks", 0)),
-            float(ast_feats.get("max_nesting_depth", 0)),
-            float(ast_feats.get("max_params", 0)),
-            float(ast_feats.get("avg_params", 0.0)),
-            float(ast_feats.get("n_decorated_functions", 0)),
-            float(ast_feats.get("n_imports", 0)),
-            float(ast_feats.get("max_function_body_lines", 0)),
-            float(ast_feats.get("avg_function_body_lines", 0.0)),
+            float(m.cyclomatic_complexity),       # 0
+            float(m.cognitive_complexity),         # 1
+            float(m.max_function_complexity),      # 2
+            float(m.avg_function_complexity),      # 3
+            float(m.lines.sloc),                   # 4
+            float(m.lines.comments),               # 5
+            float(comment_ratio),                  # 6
+            float(m.halstead.volume),              # 7
+            float(m.halstead.difficulty),          # 8
+            float(m.halstead.bugs_delivered),      # 9
+            # maintainability_index removed (data leakage — MI is derived from CC/volume)
+            float(m.n_long_functions),             # 10
+            float(m.n_complex_functions),          # 11
+            float(m.n_lines_over_80),              # 12
+            float(ast_feats.get("n_functions", 0)),             # 13
+            float(ast_feats.get("n_classes", 0)),               # 14
+            float(ast_feats.get("n_try_blocks", 0)),            # 15
+            float(ast_feats.get("n_raises", 0)),                # 16
+            float(ast_feats.get("n_with_blocks", 0)),           # 17
+            float(ast_feats.get("max_nesting_depth", 0)),       # 18
+            float(ast_feats.get("max_params", 0)),              # 19
+            float(ast_feats.get("avg_params", 0.0)),            # 20
+            float(ast_feats.get("n_decorated_functions", 0)),   # 21
+            float(ast_feats.get("n_imports", 0)),               # 22
+            float(ast_feats.get("max_function_body_lines", 0)), # 23
+            float(ast_feats.get("avg_function_body_lines", 0.0)), # 24
         ], dtype=np.float32)
     except Exception:
         import numpy as np
-        return np.zeros(26, dtype=np.float32)
+        return np.zeros(25, dtype=np.float32)
 
 
 class PatternRFModel:
@@ -95,9 +95,11 @@ class PatternRFModel:
 
     def _try_load(self):
         import pickle
+        from utils.checkpoint_integrity import verify_checkpoint
         path = Path(self._checkpoint)
         if path.exists():
             try:
+                verify_checkpoint(path)
                 with open(path, "rb") as f:
                     self._clf = pickle.load(f)
             except Exception:

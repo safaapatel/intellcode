@@ -63,6 +63,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from utils.checkpoint_integrity import verify_checkpoint
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -124,25 +126,71 @@ def _encode_with_transformer(
     tokenizer,
     backbone,
     max_length: int = 512,
+    stride: int = 256,
 ) -> np.ndarray:
     """
-    Encode source code to a pooled embedding using the transformer backbone.
-    Returns a (hidden_dim,) float32 vector (CLS token representation).
+    Encode source code using a sliding-window strategy over the transformer.
+
+    Motivation: Most Python files exceed 512 tokens. Simple truncation discards
+    everything after the first ~50-80 lines, losing the actual patterns of
+    interest (deep functions, security sinks, complex logic). Sliding windows
+    with 50% overlap ensure every token contributes to the final embedding.
+
+    Strategy:
+      - Tokenise the full source (no truncation)
+      - Slide a 512-token window with `stride` overlap
+      - Encode each chunk, take its CLS token
+      - Mean-pool all chunk embeddings -> file representation
+
+    Args:
+        source:     Full Python source code.
+        tokenizer:  HuggingFace tokenizer.
+        backbone:   HuggingFace model (AutoModel).
+        max_length: Chunk size in tokens (default 512, matches BERT max).
+        stride:     Step size between chunks (default 256 = 50% overlap).
+
+    Returns:
+        (hidden_dim,) float32 embedding.
     """
     import torch
 
-    inputs = tokenizer(
-        source,
-        return_tensors="pt",
-        max_length=max_length,
-        truncation=True,
-        padding=True,
-    )
-    with torch.no_grad():
-        outputs = backbone(**inputs)
-    # Use CLS token (index 0) as the sequence representation
-    cls_vec = outputs.last_hidden_state[:, 0, :].squeeze(0).numpy()
-    return cls_vec.astype(np.float32)
+    # Tokenise without truncation to get the full token sequence
+    full_ids = tokenizer.encode(source, add_special_tokens=False)
+
+    if len(full_ids) == 0:
+        # Empty source: return zero vector sized to backbone hidden dim
+        try:
+            hidden_dim = backbone.config.hidden_size
+        except Exception:
+            hidden_dim = 768
+        return np.zeros(hidden_dim, dtype=np.float32)
+
+    # Build chunks with overlap
+    # Each chunk: [CLS] + tokens[start:start+max_length-2] + [SEP]
+    chunk_size = max_length - 2  # reserve 2 tokens for [CLS] and [SEP]
+    cls_id = tokenizer.cls_token_id or 0
+    sep_id = tokenizer.sep_token_id or 0
+
+    chunk_embeddings = []
+    start = 0
+    while start < len(full_ids):
+        chunk_ids = [cls_id] + full_ids[start:start + chunk_size] + [sep_id]
+        input_ids = torch.tensor([chunk_ids], dtype=torch.long)
+        attention_mask = torch.ones_like(input_ids)
+
+        with torch.no_grad():
+            outputs = backbone(input_ids=input_ids, attention_mask=attention_mask)
+        # CLS token at position 0
+        cls_vec = outputs.last_hidden_state[0, 0, :].numpy().astype(np.float32)
+        chunk_embeddings.append(cls_vec)
+
+        if start + chunk_size >= len(full_ids):
+            break
+        start += stride
+
+    # Mean pool across all chunks
+    embedding = np.mean(np.stack(chunk_embeddings), axis=0)
+    return embedding.astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +492,7 @@ class MultiTaskCodeModel:
         if not shallow_path.exists():
             return False
         try:
+            verify_checkpoint(shallow_path)
             with open(shallow_path, "rb") as f:
                 self._shallow_heads = pickle.load(f)
             self._mode  = "shallow"

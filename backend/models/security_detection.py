@@ -23,6 +23,29 @@ import numpy as np
 from features.ast_extractor import ASTExtractor, tokenize_code, tokens_to_ids
 from features.code_metrics import compute_all_metrics, metrics_to_feature_vector
 from features.security_patterns import scan_security_patterns, SecurityFinding
+from utils.checkpoint_integrity import verify_checkpoint
+
+import logging
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# LOPO AUC gate: disable ML ensemble when cross-project performance is
+# at or below chance level.  Evidence: LOPO AUC=0.494 (16 projects),
+# ablation shows removing features IMPROVES AUC -- the model is anti-predictive.
+# The pattern scanner alone is more reliable than a miscalibrated ML component.
+# ---------------------------------------------------------------------------
+_ML_LOPO_GATE_THRESHOLD = 0.55   # disable if LOPO AUC below this
+_LOPO_RESULTS_PATH = Path(__file__).parent.parent / "evaluation" / "results" / "lopo_security.json"
+
+
+def _load_lopo_auc() -> float:
+    """Load stored LOPO AUC for security. Returns 1.0 (pass) if file absent."""
+    try:
+        with open(_LOPO_RESULTS_PATH) as f:
+            data = json.load(f)
+        return float(data.get("mean_auc", 1.0))
+    except Exception:
+        return 1.0   # no results yet -- assume model is untested, don't gate
 
 
 # ---------------------------------------------------------------------------
@@ -156,17 +179,25 @@ def _build_rf_feature_vector(source: str) -> np.ndarray:
     Build a fixed-length numeric feature vector for the Random Forest.
     v2: Extended with Python-specific security signals.
 
-    Feature groups (24 total):
+    Feature groups (31 total):
       [0-14]  Static code metrics (15-dim from metrics_to_feature_vector)
-      [15-23] Security-specific features (9 original + 6 new = extended)
-
-    New features added in v2:
-      - format string injection count (f-strings / % format feeding queries)
-      - taint source count (calls to input/request/environ/etc.)
-      - weak crypto usage count
-      - hardcoded secret string count
-      - network API usage count
-      - injection API call density (injection_calls / total_calls)
+      [15-30] Security-specific features:
+                [15] dangerous_import_count
+                [16] dangerous_call_count
+                [17] long_string_count
+                [18] scan_critical
+                [19] scan_high
+                [20] scan_total
+                [21] n_try_blocks
+                [22] n_string_literals
+                [23] n_calls
+                [24] injection_api_count   (v2)
+                [25] injection_density     (v2)
+                [26] format_inject_count   (v2)
+                [27] taint_source_count    (v2)
+                [28] weak_crypto_count     (v2)
+                [29] hardcoded_secret_count(v2)
+                [30] network_usage_count   (v2)
     """
     ast_feats = ASTExtractor().extract(source)
     metric_vec = metrics_to_feature_vector(compute_all_metrics(source))
@@ -222,7 +253,7 @@ def _build_rf_feature_vector(source: str) -> np.ndarray:
     return np.array(metric_vec + security_feats, dtype=np.float32)
 
 
-# Feature names for interpretability (24-dim)
+# Feature names for interpretability (31-dim)
 RF_FEATURE_NAMES = [
     "cc", "max_func_cc", "avg_func_cc", "sloc", "comments", "blank",
     "halstead_vol", "halstead_diff", "halstead_effort", "halstead_bugs",
@@ -257,10 +288,10 @@ class RandomForestSecurityModel:
             max_depth=rf_kwargs.get("max_depth", None),
             min_samples_split=rf_kwargs.get("min_samples_split", 5),
             class_weight="balanced",
-            n_jobs=-1,
+            n_jobs=1,   # n_jobs=-1 causes OOM/pickle errors on Windows
             random_state=42,
         )
-        # Calibrate probabilities with Platt scaling
+        # Platt scaling calibration (initial; post-hoc isotonic applied separately)
         self._clf = CalibratedClassifierCV(base, cv=5, method="sigmoid")
         self._clf.fit(X, y)
 
@@ -276,6 +307,7 @@ class RandomForestSecurityModel:
             pickle.dump(self._clf, f)
 
     def load(self, path: str):
+        verify_checkpoint(path)
         with open(path, "rb") as f:
             self._clf = pickle.load(f)
 
@@ -436,6 +468,20 @@ class EnsembleSecurityModel:
         self._rf_ready = False
         self._cnn_ready = False
         self._rf_threshold: float = 0.5   # loaded from metrics.json if available
+        self._calibrator = None           # IsotonicCalibrator (optional)
+        self._ood_detector = None         # OODDetector (optional)
+
+        # LOPO AUC gate: if cross-project AUC is at-chance, the ML component
+        # is anti-predictive and should be disabled (pattern scanner is better).
+        lopo_auc = _load_lopo_auc()
+        self._ml_disabled = lopo_auc < _ML_LOPO_GATE_THRESHOLD
+        if self._ml_disabled:
+            logger.warning(
+                "Security ML ensemble DISABLED: LOPO AUC=%.3f < %.2f threshold. "
+                "The model is anti-predictive on cross-project data. "
+                "Using pattern scanner only. Retrain on CVEFixes to re-enable.",
+                lopo_auc, _ML_LOPO_GATE_THRESHOLD,
+            )
 
         self._try_load()
 
@@ -468,7 +514,8 @@ class EnsembleSecurityModel:
             ))
 
         # --- ML ensemble (adds extra confidence or new findings) ---
-        if self._rf_ready or self._cnn_ready:
+        # Skipped when _ml_disabled=True (LOPO AUC below chance threshold)
+        if not self._ml_disabled and (self._rf_ready or self._cnn_ready):
             vuln_prob = self._ensemble_proba(source)
             # Only report an additional ML finding if high confidence AND
             # no pattern-scan finding was already found
@@ -493,13 +540,13 @@ class EnsembleSecurityModel:
         ))
 
     def vulnerability_score(self, source: str) -> float:
-        """Return a single 0–1 probability of any vulnerability."""
+        """Return a single 0-1 probability of any vulnerability."""
         scan = scan_security_patterns(source)
         if scan.critical:
             return 0.95
         if scan.high:
             return 0.80
-        if self._rf_ready or self._cnn_ready:
+        if not self._ml_disabled and (self._rf_ready or self._cnn_ready):
             return self._ensemble_proba(source)
         if scan.findings:
             return 0.50
@@ -512,10 +559,29 @@ class EnsembleSecurityModel:
     def _ensemble_proba(self, source: str) -> float:
         rf_p, cnn_p = 0.0, 0.0
         weight_sum = 0.0
+        rf_feat = None
 
         if self._rf_ready:
             try:
-                feat = _build_rf_feature_vector(source)
+                # Build feature vector: base (31-dim) + identifier semantics (32-dim)
+                # + taint paths (12-dim) = 75-dim total when all available
+                base_feat = _build_rf_feature_vector(source)
+
+                try:
+                    from features.identifier_semantics import extract_identifier_features
+                    id_vec = extract_identifier_features(source).vector
+                    feat = np.concatenate([base_feat, id_vec])
+                except Exception:
+                    feat = base_feat
+
+                # Append taint path features (causal path signal)
+                try:
+                    from features.taint_tracker import augment_security_features
+                    feat = augment_security_features(feat, source)
+                except Exception:
+                    pass
+
+                rf_feat = feat
                 rf_p = self._rf.predict_proba(feat)
                 weight_sum += self._rf_weight
             except Exception:
@@ -530,7 +596,36 @@ class EnsembleSecurityModel:
 
         if weight_sum == 0:
             return 0.0
-        return (rf_p * self._rf_weight + cnn_p * self._cnn_weight) / weight_sum
+        raw = (rf_p * self._rf_weight + cnn_p * self._cnn_weight) / weight_sum
+
+        # Apply isotonic calibration if available
+        if self._calibrator is not None:
+            try:
+                raw = float(self._calibrator.transform(raw))
+            except Exception:
+                pass
+
+        # Apply asymmetric OOD confidence scaling.
+        # High-risk predictions (p > 0.5): decay less to preserve recall —
+        #   a missed vulnerability is worse than a false alarm.
+        # Low-risk predictions (p < 0.5): decay more to avoid silent false negatives
+        #   caused by OOD inputs that happen to look clean.
+        if self._ood_detector is not None and rf_feat is not None:
+            try:
+                factor = self._ood_detector.confidence_factor(rf_feat)
+                if factor < 1.0:
+                    deviation = raw - 0.5
+                    if deviation > 0.0:
+                        # High risk: slower pull toward 0.5 (half-decay)
+                        damped = deviation * (0.5 + 0.5 * factor)
+                    else:
+                        # Low risk: full pull toward 0.5 (standard decay)
+                        damped = deviation * factor
+                    raw = 0.5 + damped
+            except Exception:
+                pass
+
+        return float(np.clip(raw, 0.0, 1.0))
 
     def _try_load(self):
         """Silently load saved checkpoints if available."""
@@ -559,8 +654,29 @@ class EnsembleSecurityModel:
                 with open(metrics_path) as f:
                     saved_metrics = json.load(f)
                 self._rf_threshold = float(saved_metrics.get("rf_threshold", 0.5))
+            except Exception as e:
+                print(f"[WARN] security: failed to load rf_threshold from metrics.json: {e} — using default 0.5")
+        else:
+            print(f"[WARN] security: metrics.json not found at {metrics_path} — using default threshold 0.5. Run training/train_security.py to generate optimal thresholds.")
+
+        # Load isotonic calibrator if available (post-hoc probability correction)
+        cal_path = self._checkpoint_dir / "isotonic_calibrator.pkl"
+        if cal_path.exists():
+            try:
+                from models.contrastive_security import IsotonicCalibrator
+                cal = IsotonicCalibrator()
+                if cal.load(str(cal_path)):
+                    self._calibrator = cal
             except Exception:
                 pass
+
+        # Load OOD detector if available
+        ood_path = self._checkpoint_dir / "ood_detector.pkl"
+        try:
+            from features.ood_detector import OODDetector
+            self._ood_detector = OODDetector.load(str(ood_path))
+        except Exception:
+            pass
 
     def save(self):
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)
