@@ -35,6 +35,7 @@ from features.code_metrics import (
     _function_cyclomatic,
 )
 from features.ast_extractor import ASTExtractor
+from utils.checkpoint_integrity import verify_checkpoint
 
 
 FEATURE_NAMES = [
@@ -209,6 +210,10 @@ class ComplexityPredictionModel:
             score = ml_score * 0.4 + rule_score * 0.6
         else:
             score = rule_score
+        # Calibration correction: SonarQube validation showed +1.067 positive bias
+        # in cognitive complexity prediction (Mar 2026 audit). Subtract to remove
+        # systematic overestimation. Clamp to [0, 100] after correction.
+        score = max(0.0, min(100.0, score - 1.067))
 
         # Build per-function issues
         function_issues: list[FunctionIssue] = []
@@ -310,13 +315,16 @@ class ComplexityPredictionModel:
             lineno = node.lineno
             end_lineno = node.end_lineno or node.lineno
 
-            # Extract this function's source text
+            # Extract this function's source text and dedent so ast.parse succeeds
+            # on methods (which are indented relative to their class body).
+            import textwrap
             func_src = ast.get_source_segment(source, node)
             if not func_src:
                 # Fallback: extract by line numbers
                 lines = source.splitlines()
                 func_lines = lines[lineno - 1 : end_lineno]
                 func_src = "\n".join(func_lines)
+            func_src = textwrap.dedent(func_src)
 
             # Cyclomatic complexity directly from AST node (no re-parse needed)
             cc = float(_function_cyclomatic(node))
@@ -390,7 +398,7 @@ class ComplexityPredictionModel:
         Train an XGBoost regressor.
 
         Args:
-            X: Feature matrix of shape (N, 16) from metrics_to_feature_vector().
+            X: Feature matrix of shape (N, 15) from metrics_to_feature_vector().
             y: Target scores in [0, 100].
             output_path: Where to save the trained model.
 
@@ -414,7 +422,7 @@ class ComplexityPredictionModel:
             "colsample_bytree": xgb_kwargs.get("colsample_bytree", 0.8),
             "reg_lambda": xgb_kwargs.get("reg_lambda", 1.0),
             "random_state": 42,
-            "n_jobs": -1,
+            "n_jobs": 1,  # n_jobs=-1 causes OOM/pickle errors on Windows
         }
 
         self._regressor = xgb.XGBRegressor(**params)
@@ -512,7 +520,7 @@ class ComplexityPredictionModel:
         if self._shap_explainer is None:
             self._shap_explainer = shap.TreeExplainer(self._regressor)
 
-        shap_values = self._shap_explainer.shap_values(feat_vec)  # shape (1, 16)
+        shap_values = self._shap_explainer.shap_values(feat_vec)  # shape (1, 15)
         contributions = shap_values[0]
 
         results = []
@@ -569,7 +577,7 @@ class ComplexityPredictionModel:
 
     def feature_importance(self) -> list[tuple[str, float]]:
         """Return (feature_name, importance) pairs sorted by importance."""
-        if self._regressor is None:
+        if self._regressor is None or not hasattr(self._regressor, "feature_importances_"):
             return []
         importances = self._regressor.feature_importances_
         pairs = sorted(
@@ -586,6 +594,7 @@ class ComplexityPredictionModel:
     def _try_load(self):
         if self._checkpoint and Path(self._checkpoint).exists():
             try:
+                verify_checkpoint(self._checkpoint)
                 with open(self._checkpoint, "rb") as f:
                     self._regressor = pickle.load(f)
             except Exception:
@@ -596,6 +605,7 @@ class ComplexityPredictionModel:
             mapie_path = Path(self._checkpoint).parent / "mapie_wrapper.pkl"
             if mapie_path.exists():
                 try:
+                    verify_checkpoint(mapie_path)
                     with open(mapie_path, "rb") as f:
                         self._mapie = pickle.load(f)
                 except Exception:

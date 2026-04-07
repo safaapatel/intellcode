@@ -273,20 +273,37 @@ def _score_structural_clarity(
     score = 100.0
     lines = source.splitlines()
 
-    # Long lines
-    long_lines = [i + 1 for i, l in enumerate(lines) if len(l) > 100]
-    if len(long_lines) > 5:
-        penalty = min(20, len(long_lines))
+    # Long lines — PEP 8: soft limit 79, hard limit 99
+    long_lines_soft = [i + 1 for i, l in enumerate(lines) if len(l) > 79]
+    long_lines_hard = [i + 1 for i, l in enumerate(lines) if len(l) > 99]
+    if len(long_lines_hard) > 3:
+        penalty = min(20, len(long_lines_hard) * 2)
         score -= penalty
         issues_out.append(ReadabilityIssue(
             dimension="structural_clarity",
-            title=f"{len(long_lines)} line(s) exceed 100 characters",
+            title=f"{len(long_lines_hard)} line(s) exceed 99 characters (PEP 8 hard limit)",
             description=(
-                f"Long lines reduce readability. Wrap at 79–99 characters. "
-                f"First offender: line {long_lines[0]}."
+                f"PEP 8 recommends a hard maximum of 99 characters per line. "
+                f"{len(long_lines_soft)} line(s) exceed the soft 79-char limit. "
+                f"First offender: line {long_lines_hard[0]}."
             ),
-            location=f"line {long_lines[0]}",
-            start_line=long_lines[0],
+            location=f"line {long_lines_hard[0]}",
+            start_line=long_lines_hard[0],
+            penalty=penalty,
+        ))
+    elif len(long_lines_soft) > 10:
+        penalty = min(10, len(long_lines_soft))
+        score -= penalty
+        issues_out.append(ReadabilityIssue(
+            dimension="structural_clarity",
+            title=f"{len(long_lines_soft)} line(s) exceed 79 characters (PEP 8 soft limit)",
+            description=(
+                f"PEP 8 recommends wrapping lines at 79 characters for readability. "
+                f"Consider using implicit line continuation inside parentheses. "
+                f"First offender: line {long_lines_soft[0]}."
+            ),
+            location=f"line {long_lines_soft[0]}",
+            start_line=long_lines_soft[0],
             penalty=penalty,
         ))
 

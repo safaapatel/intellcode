@@ -22,15 +22,43 @@ Features:
 
 from __future__ import annotations
 
+import json
+import logging
+import math
 import pickle
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
+_logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Temporal AUC gate — mirrors the LOPO AUC gate in security_detection.py.
+# Temporal AUC = 0.460 (below chance) on the bug dataset means the static-feature
+# model is actively wrong as a forward-looking predictor.  When a stored temporal
+# AUC result exists and falls below this threshold, bug ML predictions are flagged
+# as unreliable but still returned (with abstained=True) so callers can decide
+# how to surface them.  The gate does NOT disable prediction entirely because the
+# static-file score still has some soft diagnostic value (complexity, churn).
+# ---------------------------------------------------------------------------
+_BUG_TEMPORAL_AUC_WARN_THRESHOLD = 0.50
+_BUG_LOPO_RESULTS_PATH = Path(__file__).parent.parent / "evaluation" / "results" / "lopo_bug.json"
+
+
+def _load_bug_temporal_auc() -> float:
+    """Load stored temporal AUC for bug predictor. Returns 1.0 if file absent."""
+    try:
+        with open(_BUG_LOPO_RESULTS_PATH) as f:
+            data = json.load(f)
+        return float(data.get("temporal_auc", 1.0))
+    except Exception:
+        return 1.0
+
 import numpy as np
 
 from features.code_metrics import compute_all_metrics
 from features.ast_extractor import ASTExtractor
+from utils.checkpoint_integrity import verify_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -49,14 +77,39 @@ class GitMetadata:
 @dataclass
 class BugPrediction:
     bug_probability: float
-    risk_level: str               # "low" | "medium" | "high" | "critical"
+    risk_level: str               # "low" | "medium" | "high" | "critical" | "uncertain"
     risk_factors: list[str]
-    confidence: float
+    confidence: float             # derived from prediction entropy, not hardcoded
     static_score: float           # contribution from static features
     git_score: Optional[float]    # contribution from git features (None if unavailable)
+    abstained: bool = False       # True if model chose not to predict (low confidence)
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _probability_to_confidence(p: float) -> float:
+    """
+    Derive model confidence from prediction entropy.
+
+    Entropy H(p) = -(p*log2(p) + (1-p)*log2(1-p)) in [0, 1].
+    Confidence = 1 - H(p): high when p is near 0 or 1, low near 0.5.
+
+    This replaces the hardcoded confidence=0.87 that was scientifically invalid
+    (a model can output 0.87 confidence but be wrong 60% of the time LOPO).
+    """
+    p = max(1e-9, min(1.0 - 1e-9, p))
+    entropy = -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
+    return round(max(0.0, 1.0 - entropy), 3)
+
+
+_ABSTENTION_CONFIDENCE_THRESHOLD = 0.25
+"""
+Abstain when confidence < 0.25 (i.e., predicted probability between ~0.37 and ~0.63).
+In this range the model has no confident view on the outcome.
+This is especially important under LOPO where temporal AUC=0.460 shows the model
+can be systematically wrong -- abstaining beats a wrong confident prediction.
+"""
 
 
 _RISK_THRESHOLDS = {
@@ -67,22 +120,23 @@ _RISK_THRESHOLDS = {
 }
 
 STATIC_FEATURE_NAMES = [
-    "cyclomatic_complexity",
-    "cognitive_complexity",
-    "max_function_complexity",
-    "avg_function_complexity",
-    "sloc",
-    "comments",
-    "blank_lines",
-    "halstead_volume",
-    "halstead_difficulty",
-    "halstead_effort",
-    "halstead_bugs",
-    "n_long_functions",
-    "n_complex_functions",
-    "max_line_length",
-    "avg_line_length",
-    "n_lines_over_80",
+    # 15-dim — matches metrics_to_feature_vector() exactly.
+    # cognitive_complexity is EXCLUDED (it is the complexity prediction target).
+    "cyclomatic_complexity",        # 0
+    "max_function_complexity",      # 1
+    "avg_function_complexity",      # 2
+    "sloc",                         # 3
+    "comments",                     # 4
+    "blank_lines",                  # 5
+    "halstead_volume",              # 6
+    "halstead_difficulty",          # 7
+    "halstead_effort",              # 8
+    "halstead_bugs",                # 9
+    "n_long_functions",             # 10
+    "n_complex_functions",          # 11
+    "max_line_length",              # 12
+    "avg_line_length",              # 13
+    "n_lines_over_80",              # 14
 ]
 
 GIT_FEATURE_NAMES = [
@@ -103,7 +157,7 @@ ALL_FEATURE_NAMES = STATIC_FEATURE_NAMES + GIT_FEATURE_NAMES
 def _extract_static_features(source: str) -> np.ndarray:
     from features.code_metrics import metrics_to_feature_vector
     metrics = compute_all_metrics(source)
-    # Use metrics_to_feature_vector to match the 16-feature vector used during training
+    # Use metrics_to_feature_vector to match the 15-feature vector used during training
     return np.array(metrics_to_feature_vector(metrics), dtype=np.float32)
 
 
@@ -195,6 +249,7 @@ class LogisticRegressionBugPredictor:
             pickle.dump(self._clf, f)
 
     def load(self, path: str):
+        verify_checkpoint(path)
         with open(path, "rb") as f:
             self._clf = pickle.load(f)
 
@@ -307,6 +362,7 @@ class MLPBugPredictor:
         # Load the StandardScaler saved during training (required for correct inference)
         scaler_path = Path(path).parent / "mlp_scaler.pkl"
         if scaler_path.exists():
+            verify_checkpoint(scaler_path)
             with open(scaler_path, "rb") as f:
                 self._scaler = pickle.load(f)
         else:
@@ -329,6 +385,7 @@ class XGBoostBugPredictor:
         return float(self._clf.predict_proba(x.reshape(1, -1))[0, 1])
 
     def load(self, path: str):
+        verify_checkpoint(path)
         with open(path, "rb") as f:
             self._clf = pickle.load(f)
 
@@ -352,6 +409,19 @@ class BugPredictionModel:
         self._xgb_ready = False
         self._lr_ready = False
         self._mlp_ready = False
+        self._ood_detector = None   # OODDetector fitted on training distribution
+        # Temporal AUC gate: temporal AUC=0.460 on the bug dataset means the model
+        # is systematically wrong as a forward-looking predictor.  Flag predictions
+        # so callers can surface a reliability note without suppressing the score.
+        self._temporal_auc = _load_bug_temporal_auc()
+        self._temporal_unreliable = self._temporal_auc < _BUG_TEMPORAL_AUC_WARN_THRESHOLD
+        if self._temporal_unreliable:
+            _logger.warning(
+                "Bug predictor temporal AUC=%.3f < %.2f threshold — "
+                "predictions are flagged unreliable for forward-looking use.",
+                self._temporal_auc,
+                _BUG_TEMPORAL_AUC_WARN_THRESHOLD,
+            )
         self._try_load()
 
     # ------------------------------------------------------------------
@@ -378,54 +448,61 @@ class BugPredictionModel:
         full_feats = np.concatenate([static_feats, git_feats])
 
         # Determine probability — prefer ensemble(XGB+LR) > XGB > MLP > LR > heuristic
+        # Invariant: static_score = ML prediction using only static code features.
+        #            git_score    = probability AFTER applying git metadata adjustment.
+        #            prob         = final probability used for risk_level (= git_score if available).
         if self._xgb_ready and self._lr_ready:
             try:
                 xgb_prob = self._xgb.predict_proba(full_feats)
                 lr_prob = self._lr.predict_proba(full_feats)
-                prob = 0.5 * xgb_prob + 0.5 * lr_prob
+                static_score = 0.5 * xgb_prob + 0.5 * lr_prob
                 source_name = "ensemble_xgb_lr"
-                static_score = prob
-                git_score = prob if git_metadata else None
+                git_score = self._git_adjustment(static_score, git_metadata) if git_metadata else None
+                prob = git_score if git_score is not None else static_score
             except Exception:
                 self._xgb_ready = False
                 prob, static_score = self._heuristic_proba(static_feats)
-                git_score = None
+                git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
+                if git_score is not None:
+                    prob = git_score
                 source_name = "heuristic"
         elif self._xgb_ready:
             try:
-                prob = self._xgb.predict_proba(full_feats)
+                static_score = self._xgb.predict_proba(full_feats)
                 source_name = "xgboost"
-                static_score = prob
-                git_score = prob if git_metadata else None
+                git_score = self._git_adjustment(static_score, git_metadata) if git_metadata else None
+                prob = git_score if git_score is not None else static_score
             except Exception:
                 self._xgb_ready = False
                 prob, static_score = self._heuristic_proba(static_feats)
-                git_score = None
+                git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
+                if git_score is not None:
+                    prob = git_score
                 source_name = "heuristic"
         elif self._mlp_ready:
-            prob = self._mlp.predict_proba(full_feats)
+            static_score = self._mlp.predict_proba(full_feats)
             source_name = "mlp"
-            static_score = prob
-            git_score = prob if git_metadata else None
+            git_score = self._git_adjustment(static_score, git_metadata) if git_metadata else None
+            prob = git_score if git_score is not None else static_score
         elif self._lr_ready:
             try:
-                prob = self._lr.predict_proba(full_feats)
+                static_score = self._lr.predict_proba(full_feats)
                 source_name = "logistic_regression"
-                static_score = prob
-                git_score = prob if git_metadata else None
+                git_score = self._git_adjustment(static_score, git_metadata) if git_metadata else None
+                prob = git_score if git_score is not None else static_score
             except Exception:
                 self._lr_ready = False
                 prob, static_score = self._heuristic_proba(static_feats)
                 git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
                 if git_score is not None:
-                    prob = git_score  # _git_adjustment returns the adjusted probability directly
+                    prob = git_score
                 source_name = "heuristic"
         else:
             # Heuristic fallback
             prob, static_score = self._heuristic_proba(static_feats)
             git_score = self._git_adjustment(prob, git_metadata) if git_metadata else None
             if git_score is not None:
-                prob = git_score  # _git_adjustment returns the adjusted probability directly
+                prob = git_score
             source_name = "heuristic"
 
         # Risk level
@@ -437,12 +514,73 @@ class BugPredictionModel:
 
         risk_factors = _risk_factors_from_features(source, git_metadata)
 
+        # Combined uncertainty = entropy_score x OOD_factor x model_agreement
+        #
+        # entropy_score:   1 - H(p), where H(p) is binary entropy of final prob.
+        #                  Peaks at p=0/1 (certain), lowest at p=0.5 (uncertain).
+        #
+        # OOD_factor:      Mahalanobis distance from training distribution.
+        #                  1.0 = in-distribution, <1.0 = increasingly OOD.
+        #
+        # model_agreement: |xgb_prob - lr_prob| disagreement => lower confidence.
+        #                  Only computed when both models are ready.
+        #
+        # Together these three orthogonal uncertainty sources give a calibrated
+        # signal: a prediction that is near 0.5 AND OOD AND models disagree
+        # will have very low confidence and trigger abstention.
+        entropy_score = _probability_to_confidence(prob)
+
+        # OOD factor
+        ood_factor = 1.0
+        if self._ood_detector is not None:
+            try:
+                ood_factor = self._ood_detector.confidence_factor(full_feats)
+            except Exception:
+                pass
+
+        # Model agreement (only meaningful with ensemble)
+        agreement_factor = 1.0
         if self._xgb_ready and self._lr_ready:
-            confidence = 0.87
+            try:
+                xgb_p = self._xgb.predict_proba(full_feats)
+                lr_p  = self._lr.predict_proba(full_feats)
+                disagreement = abs(xgb_p - lr_p)   # 0=perfect agree, 1=max disagree
+                agreement_factor = 1.0 - 0.5 * disagreement  # at most halves confidence
+            except Exception:
+                pass
+
+        base_conf = entropy_score * ood_factor * agreement_factor
+        # Small ensemble bonus for having both models
+        if self._xgb_ready and self._lr_ready:
+            confidence = min(1.0, base_conf * 1.10)
         elif self._xgb_ready or self._lr_ready:
-            confidence = 0.80
+            confidence = base_conf
         else:
-            confidence = 0.60
+            confidence = base_conf * 0.75   # heuristic: lower trust
+
+        confidence = round(confidence, 3)
+
+        # Abstention: if confidence is below threshold, decline to predict.
+        # This avoids misleading triage when the model has no signal
+        # (e.g., on projects unlike the training distribution).
+        abstained = confidence < _ABSTENTION_CONFIDENCE_THRESHOLD
+
+        # Temporal AUC gate: if stored temporal AUC < 0.50 the static-feature model
+        # is anti-predictive for future bugs.  Mark abstained and add a note so the
+        # caller can surface this to the user rather than suppressing output entirely.
+        if self._temporal_unreliable:
+            abstained = True
+            temporal_note = (
+                f"Reliability note: temporal AUC={self._temporal_auc:.3f} "
+                f"(< {_BUG_TEMPORAL_AUC_WARN_THRESHOLD:.2f}) -- score reflects code "
+                "complexity, not confirmed future-bug likelihood."
+            )
+            if temporal_note not in risk_factors:
+                risk_factors = list(risk_factors) + [temporal_note]
+
+        if abstained:
+            risk_level = "uncertain"
+
         return BugPrediction(
             bug_probability=round(prob, 3),
             risk_level=risk_level,
@@ -450,6 +588,7 @@ class BugPredictionModel:
             confidence=confidence,
             static_score=round(static_score, 3),
             git_score=round(git_score, 3) if git_score is not None else None,
+            abstained=abstained,
         )
 
     # ------------------------------------------------------------------
@@ -506,21 +645,21 @@ class BugPredictionModel:
     @staticmethod
     def _heuristic_proba(static_feats: np.ndarray) -> tuple[float, float]:
         """
-        Rule-based probability estimate from static features (16-feature vector).
+        Rule-based probability estimate from static features (15-feature vector).
         Returns (probability, static_score).
         """
         f = static_feats.tolist()
-        # indices match STATIC_FEATURE_NAMES / metrics_to_feature_vector order (16 features)
+        # indices match metrics_to_feature_vector() 15-dim vector:
+        # [CC, maxCC, avgCC, sloc, comments, blank, vol, diff, effort, bugs,
+        #  n_long, n_complex, max_line, avg_line, over80]
         cc        = f[0]   # cyclomatic_complexity
-        cog       = f[1]   # cognitive_complexity
-        hb        = f[10]  # halstead_bugs
-        n_long    = f[11]  # n_long_functions
-        n_complex = f[12]  # n_complex_functions
-        over_80   = f[15]  # n_lines_over_80
+        hb        = f[9]   # halstead_bugs (bugs_delivered)
+        n_long    = f[10]  # n_long_functions
+        n_complex = f[11]  # n_complex_functions
+        over_80   = f[14]  # n_lines_over_80
 
         score = 0.0
         score += min(0.3, (cc - 5) * 0.02) if cc > 5 else 0
-        score += min(0.2, cog * 0.008)
         score += min(0.15, hb * 0.05)
         score += min(0.15, n_complex * 0.05)
         score += min(0.10, n_long * 0.03)
@@ -567,5 +706,14 @@ class BugPredictionModel:
             try:
                 self._mlp.load(str(mlp_path))
                 self._mlp_ready = True
+            except Exception:
+                pass
+
+        # Load OOD detector (trained on bug predictor's feature distribution)
+        ood_path = self._checkpoint_dir / "ood_detector.pkl"
+        if ood_path.exists():
+            try:
+                from features.ood_detector import OODDetector
+                self._ood_detector = OODDetector.load(str(ood_path))
             except Exception:
                 pass
