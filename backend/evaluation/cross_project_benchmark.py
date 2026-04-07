@@ -58,6 +58,14 @@ class ProjectResult:
     f1:             Optional[float]
     rmse:           Optional[float]
     spearman:       Optional[float]
+    # Research-grade additions: effort-aware + calibration metrics
+    p_at_5:         Optional[float] = None   # Precision@5
+    p_at_10:        Optional[float] = None   # Precision@10 (primary security metric)
+    pofb20:         Optional[float] = None   # PofB@20% (primary bug metric)
+    ece:            Optional[float] = None   # Expected Calibration Error (LOPO holdout)
+    ece_in_dist:    Optional[float] = None   # ECE on in-distribution test samples
+    ece_ood:        Optional[float] = None   # ECE on OOD test samples (Mahalanobis > 2sigma)
+    ecosystem_contaminated: bool = False     # True if train/test share likely code
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -82,6 +90,16 @@ class BenchmarkReport:
     std_spearman:    Optional[float]
     random_split_auc: Optional[float] = None
     degradation_auc:  Optional[float] = None
+    # Research-grade additions
+    mean_p_at_10:    Optional[float] = None   # mean Precision@10
+    std_p_at_10:     Optional[float] = None
+    mean_pofb20:     Optional[float] = None   # mean PofB@20%
+    std_pofb20:      Optional[float] = None
+    mean_ece:        Optional[float] = None   # mean ECE (LOPO holdout)
+    std_ece:         Optional[float] = None
+    mean_ece_in_dist: Optional[float] = None  # mean ECE on in-distribution test samples
+    mean_ece_ood:     Optional[float] = None  # mean ECE on OOD test samples
+    n_contaminated:  int = 0                  # projects flagged for ecosystem overlap
 
     def to_dict(self) -> dict:
         return {
@@ -98,6 +116,15 @@ class BenchmarkReport:
             "std_rmse":          self.std_rmse,
             "mean_spearman":     self.mean_spearman,
             "std_spearman":      self.std_spearman,
+            "mean_p_at_10":      self.mean_p_at_10,
+            "std_p_at_10":       self.std_p_at_10,
+            "mean_pofb20":       self.mean_pofb20,
+            "std_pofb20":        self.std_pofb20,
+            "mean_ece":          self.mean_ece,
+            "std_ece":           self.std_ece,
+            "mean_ece_in_dist":  self.mean_ece_in_dist,
+            "mean_ece_ood":      self.mean_ece_ood,
+            "n_contaminated":    self.n_contaminated,
             "random_split_auc":  self.random_split_auc,
             "degradation_auc":   self.degradation_auc,
             "project_results":   [r.to_dict() for r in self.project_results],
@@ -285,15 +312,52 @@ def _build_model(task: str):
 def _score(model, X_te, y_te, task: str) -> dict:
     from sklearn.metrics import (roc_auc_score, average_precision_score,
                                   f1_score, mean_squared_error)
-    out = {k: None for k in ("auc", "ap", "f1", "rmse", "spearman")}
+    out = {k: None for k in ("auc", "ap", "f1", "rmse", "spearman",
+                              "p_at_5", "p_at_10", "pofb20", "ece")}
     try:
         if task in ("bug", "security"):
             prob = model.predict_proba(X_te)[:, 1]
             pred = (prob > 0.5).astype(int)
+            y_arr = np.array(y_te)
             if len(set(y_te)) > 1:
-                out["auc"] = float(roc_auc_score(y_te, prob))
-                out["ap"]  = float(average_precision_score(y_te, prob))
+                out["auc"] = float(roc_auc_score(y_arr, prob))
+                out["ap"]  = float(average_precision_score(y_arr, prob))
+
+                # Effort-aware metrics (primary research metrics per audit)
+                try:
+                    from evaluation.precision_at_k import (
+                        precision_at_k, pofb_at_effort,
+                        IsotonicCalibrator as _Cal,
+                    )
+                    out["p_at_5"]  = round(float(precision_at_k(y_arr, prob, 5)),  4)
+                    out["p_at_10"] = round(float(precision_at_k(y_arr, prob, 10)), 4)
+                    out["pofb20"]  = round(float(pofb_at_effort(y_arr, prob, 0.20)), 4)
+                except ImportError:
+                    try:
+                        from precision_at_k import precision_at_k, pofb_at_effort
+                        out["p_at_5"]  = round(float(precision_at_k(y_arr, prob, 5)),  4)
+                        out["p_at_10"] = round(float(precision_at_k(y_arr, prob, 10)), 4)
+                        out["pofb20"]  = round(float(pofb_at_effort(y_arr, prob, 0.20)), 4)
+                    except Exception:
+                        pass
+
+                # Expected Calibration Error
+                try:
+                    n_bins = 10
+                    bins = np.linspace(0.0, 1.0, n_bins + 1)
+                    ece = 0.0
+                    n = len(y_arr)
+                    for lo, hi in zip(bins[:-1], bins[1:]):
+                        mask = (prob >= lo) & (prob < hi)
+                        if not mask.any():
+                            continue
+                        ece += (mask.sum() / n) * abs(float(y_arr[mask].mean()) - float(prob[mask].mean()))
+                    out["ece"] = round(ece, 4)
+                except Exception:
+                    pass
+
             out["f1"] = float(f1_score(y_te, pred, zero_division=0))
+
         elif task == "pattern":
             pred = model.predict(X_te)
             prob = model.predict_proba(X_te)
@@ -314,6 +378,34 @@ def _score(model, X_te, y_te, task: str) -> dict:
     except Exception as e:
         logger.debug("Scoring error: %s", e)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Ecosystem contamination detection
+# ---------------------------------------------------------------------------
+
+# Projects that share dependencies or are in the same ecosystem.
+# If a test project is in the same group as a training project, the LOPO
+# result may be optimistic due to shared coding conventions or copy-pasted code.
+_ECOSYSTEM_GROUPS = [
+    {"django/django", "pallets/flask", "encode/httpx", "psf/requests"},   # web framework
+    {"sqlalchemy/sqlalchemy", "django/django"},                            # ORM
+    {"pytest-dev/pytest", "pallets/flask"},                                # test infra
+    {"numpy/numpy", "pandas-dev/pandas", "scikit-learn/scikit-learn"},    # scientific
+    {"aio-libs/aiohttp", "encode/httpx"},                                  # async HTTP
+]
+
+
+def _check_ecosystem_contamination(held_out: str, train_repos: set[str]) -> bool:
+    """
+    Return True if the held-out repo is in the same ecosystem group as any
+    training repo. This flags potentially optimistic LOPO results.
+    """
+    for group in _ECOSYSTEM_GROUPS:
+        if held_out in group:
+            if group & train_repos:  # overlap with training
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -368,10 +460,56 @@ class CrossProjectBenchmark:
                 held_out[:40], len(X_tr), n_train_repos, len(X_te),
             )
 
+            contaminated = _check_ecosystem_contamination(
+                held_out, set(repos_arr[tr_mask])
+            )
+            if contaminated:
+                logger.info(
+                    "  [WARNING] %s shares ecosystem with training repos -- "
+                    "LOPO result may be optimistic.",
+                    held_out,
+                )
+
             model = _build_model(self._task)
+            ece_in_dist = None
+            ece_ood = None
             try:
                 model.fit(X_tr, y_tr)
                 s = _score(model, X_te, y_te, self._task)
+
+                # Calibration under shift: split test set into in-dist vs OOD
+                # using Mahalanobis distance from the training distribution.
+                # ECE_ood > ECE_in_dist confirms calibration degrades under shift.
+                if self._task in ("bug", "security"):
+                    try:
+                        from features.ood_detector import OODDetector
+                        ood_det = OODDetector().fit(X_tr)
+                        ood_flags = np.array([
+                            ood_det.sigma_distance(x) > 2.0 for x in X_te
+                        ])
+                        # Get predicted probabilities for ECE breakdown
+                        try:
+                            probs_te = np.array(model.predict_proba(X_te)[:, 1])
+                        except Exception:
+                            probs_te = np.array([float(model.predict_proba(x.reshape(1,-1))[0,1])
+                                                 for x in X_te])
+                        from training.hard_negative_miner import compute_ece_breakdown
+                        ece_breakdown = compute_ece_breakdown(
+                            probs_te, y_te.astype(float), ood_flags
+                        )
+                        ece_in_dist = ece_breakdown.get("in_dist_ece")
+                        ece_ood     = ece_breakdown.get("ood_ece")
+                        if ece_in_dist is not None and not np.isnan(ece_in_dist):
+                            ece_in_dist = round(float(ece_in_dist), 4)
+                        else:
+                            ece_in_dist = None
+                        if ece_ood is not None and not np.isnan(ece_ood):
+                            ece_ood = round(float(ece_ood), 4)
+                        else:
+                            ece_ood = None
+                    except Exception:
+                        pass
+
             except Exception as e:
                 logger.warning("  Training failed: %s", e)
                 s = {}
@@ -382,6 +520,13 @@ class CrossProjectBenchmark:
                 n_train_repos=n_train_repos,
                 auc=s.get("auc"), ap=s.get("ap"), f1=s.get("f1"),
                 rmse=s.get("rmse"), spearman=s.get("spearman"),
+                p_at_5=s.get("p_at_5"),
+                p_at_10=s.get("p_at_10"),
+                pofb20=s.get("pofb20"),
+                ece=s.get("ece"),
+                ece_in_dist=ece_in_dist,
+                ece_ood=ece_ood,
+                ecosystem_contaminated=contaminated,
             ))
 
         return self._build_report(results)
@@ -427,49 +572,105 @@ class CrossProjectBenchmark:
                 return None, None
             return round(float(np.mean(vals)), 4), round(float(np.std(vals)), 4)
 
-        m_auc,  s_auc  = _agg("auc")
-        m_ap,   s_ap   = _agg("ap")
-        m_f1,   s_f1   = _agg("f1")
-        m_rmse, s_rmse = _agg("rmse")
-        m_spr,  s_spr  = _agg("spearman")
+        m_auc,   s_auc   = _agg("auc")
+        m_ap,    s_ap    = _agg("ap")
+        m_f1,    s_f1    = _agg("f1")
+        m_rmse,  s_rmse  = _agg("rmse")
+        m_spr,   s_spr   = _agg("spearman")
+        m_p10,   s_p10   = _agg("p_at_10")
+        m_pofb,  s_pofb  = _agg("pofb20")
+        m_ece,   s_ece   = _agg("ece")
+        m_ece_id, _      = _agg("ece_in_dist")   # std not reported separately
+        m_ece_ood, _     = _agg("ece_ood")
+        n_cont = sum(1 for r in results if r.ecosystem_contaminated)
 
         return BenchmarkReport(
             task=self._task, protocol="lopo",
             n_projects=len(results),
             project_results=results,
-            mean_auc=m_auc,   std_auc=s_auc,
-            mean_ap=m_ap,     std_ap=s_ap,
-            mean_f1=m_f1,     std_f1=s_f1,
-            mean_rmse=m_rmse, std_rmse=s_rmse,
+            mean_auc=m_auc,      std_auc=s_auc,
+            mean_ap=m_ap,        std_ap=s_ap,
+            mean_f1=m_f1,        std_f1=s_f1,
+            mean_rmse=m_rmse,    std_rmse=s_rmse,
             mean_spearman=m_spr, std_spearman=s_spr,
+            mean_p_at_10=m_p10,  std_p_at_10=s_p10,
+            mean_pofb20=m_pofb,  std_pofb20=s_pofb,
+            mean_ece=m_ece,      std_ece=s_ece,
+            mean_ece_in_dist=m_ece_id,
+            mean_ece_ood=m_ece_ood,
+            n_contaminated=n_cont,
         )
 
     def print_report(self, report: BenchmarkReport) -> None:
-        print(f"\n{'='*72}")
-        print(f"Cross-Project Benchmark — Task: {report.task} | Protocol: LOPO")
-        print(f"{report.n_projects} held-out projects")
-        print(f"{'='*72}")
-        print(f"  {'Project':<40} {'AUC':>8} {'AP':>8} {'F1':>8} {'RMSE':>8}")
-        print(f"  {'-'*68}")
-        def _fmt(v, w=8, d=4):
+        print(f"\n{'='*80}")
+        print(f"Cross-Project Benchmark -- Task: {report.task} | Protocol: LOPO")
+        print(f"{report.n_projects} held-out projects"
+              + (f" ({report.n_contaminated} ecosystem-contaminated)" if report.n_contaminated else ""))
+        print(f"{'='*80}")
+        hdr = f"  {'Project':<35} {'AUC':>7} {'AP':>7} {'P@10':>7} {'PofB20':>7} {'ECE':>7} {'F1':>7}"
+        print(hdr)
+        print(f"  {'-'*76}")
+
+        def _fmt(v, w=7, d=4):
             return f"{v:{w}.{d}f}" if v is not None else f"{'N/A':>{w}}"
 
         for r in report.project_results:
-            print(f"  {r.held_out_repo[:40]:<40} "
+            cont_flag = "*" if r.ecosystem_contaminated else " "
+            print(f"{cont_flag} {r.held_out_repo[:35]:<35} "
                   f"{_fmt(r.auc)} "
                   f"{_fmt(r.ap)} "
-                  f"{_fmt(r.f1)} "
-                  f"{_fmt(r.rmse, d=3)}")
-        print(f"  {'-'*68}")
+                  f"{_fmt(r.p_at_10)} "
+                  f"{_fmt(r.pofb20)} "
+                  f"{_fmt(r.ece)} "
+                  f"{_fmt(r.f1)}")
+
+        print(f"  {'-'*76}")
         m = report
-        print(f"  {'MEAN ± STD':<40} "
-              f"{f'{m.mean_auc:.4f}±{m.std_auc:.4f}' if m.mean_auc else 'N/A':>8}")
-        if report.degradation_auc is not None:
-            pct = abs(report.degradation_auc) / (report.random_split_auc or 1) * 100
+
+        def _ms(mean, std):
+            if mean is None:
+                return f"{'N/A':>7}"
+            s = f"{mean:.3f}" if std is None else f"{mean:.3f}+-{std:.3f}"
+            return f"{s:>7}"
+
+        print(f"  {'MEAN +- STD':<35} "
+              f"{_ms(m.mean_auc, m.std_auc)} "
+              f"{_ms(m.mean_ap, m.std_ap)} "
+              f"{_ms(m.mean_p_at_10, m.std_p_at_10)} "
+              f"{_ms(m.mean_pofb20, m.std_pofb20)} "
+              f"{_ms(m.mean_ece, m.std_ece)} "
+              f"{_ms(m.mean_f1, m.std_f1)}")
+
+        if report.n_contaminated:
+            print(f"\n  * = ecosystem-contaminated result (shared framework -- may be optimistic)")
+
+        if report.degradation_auc is not None and report.random_split_auc:
+            pct = abs(report.degradation_auc) / report.random_split_auc * 100
             print(f"\n  Random-split AUC : {report.random_split_auc:.4f}")
             print(f"  Cross-proj AUC   : {report.mean_auc:.4f}")
             print(f"  Degradation      : {report.degradation_auc:+.4f} ({pct:.1f}% drop)")
-        print(f"{'='*72}\n")
+
+        # Deployment threshold check (research-grade gates)
+        if m.mean_p_at_10 is not None:
+            p10_pass = m.mean_p_at_10 >= 0.50
+            print(f"\n  Deployment gates:")
+            print(f"    P@10    >=0.50: {'PASS' if p10_pass else 'FAIL'}"
+                  f"  (mean={m.mean_p_at_10:.3f})")
+        if m.mean_pofb20 is not None:
+            pofb_pass = m.mean_pofb20 >= 0.60
+            print(f"    PofB20  >=0.60: {'PASS' if pofb_pass else 'FAIL'}"
+                  f"  (mean={m.mean_pofb20:.3f})")
+        if m.mean_ece is not None:
+            ece_pass = m.mean_ece <= 0.08
+            print(f"    ECE     <=0.08: {'PASS' if ece_pass else 'FAIL'}"
+                  f"  (mean={m.mean_ece:.3f})")
+            # ECE under shift: shows calibration degradation for OOD inputs
+            if m.mean_ece_in_dist is not None or m.mean_ece_ood is not None:
+                id_str  = f"{m.mean_ece_in_dist:.3f}" if m.mean_ece_in_dist is not None else "N/A"
+                ood_str = f"{m.mean_ece_ood:.3f}"     if m.mean_ece_ood is not None     else "N/A"
+                print(f"    ECE breakdown: in-dist={id_str}  OOD={ood_str}"
+                      f"  (OOD > in-dist confirms calibration shift)")
+        print(f"{'='*80}\n")
 
     def save_report(self, report: BenchmarkReport, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

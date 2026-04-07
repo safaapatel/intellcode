@@ -347,7 +347,7 @@ def train_xgb(
         scale_pos_weight=scale,
         eval_metric="logloss",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,   # n_jobs=-1 causes OOM/pickle errors on Windows
         early_stopping_rounds=30,
     )
     clf.fit(X_tr, y_tr, eval_set=[(X_te, y_te)], verbose=False)

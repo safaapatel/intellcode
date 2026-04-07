@@ -154,7 +154,7 @@ def train(
         max_depth=None,
         min_samples_split=5,
         class_weight="balanced",
-        n_jobs=-1,
+        n_jobs=1,   # n_jobs=-1 causes OOM/pickle errors on Windows
         random_state=42,
     )
     clf = CalibratedClassifierCV(base, cv=5, method="sigmoid")

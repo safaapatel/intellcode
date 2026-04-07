@@ -199,7 +199,7 @@ class ExperimentTracker:
         json_path = proj_dir / f"{self._run_name}.json"
         with open(json_path, "w") as f:
             json.dump(run_data, f, indent=2, default=str)
-        print(f"[tracker] Run saved → {json_path}  (elapsed: {elapsed:.1f}s)")
+        print(f"[tracker] Run saved -> {json_path}  (elapsed: {elapsed:.1f}s)")
 
         # ── Update runs index ─────────────────────────────────────────────────
         _update_runs_index(proj_dir, run_data)
@@ -275,7 +275,8 @@ def compare_runs(
         return
 
     valid.sort(key=lambda x: x[1], reverse=higher_is_better)
-    print(f"\nLeaderboard — {project} | {metric} ({'↑ higher better' if higher_is_better else '↓ lower better'})")
+    direction = "(higher better)" if higher_is_better else "(lower better)"
+    print(f"\nLeaderboard -- {project} | {metric} {direction}")
     print("-" * 60)
     for i, (name, val) in enumerate(valid, 1):
         print(f"  {i:2d}. {name:40s}  {val:.5f}")
