@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { QuickActions } from "@/components/app/QuickActions";
 import { Button } from "@/components/ui/button";
-import { mockUser } from "@/data/mockData";
 import { getSession } from "@/services/auth";
 import { getEntries, getDashboardStats } from "@/services/reviewHistory";
+import { STORAGE_KEYS } from "@/constants/storage";
 import {
   ExternalLink, Clock, FileCode2, AlertTriangle, ClipboardCheck,
   CheckCircle2, TrendingUp, Shield, Zap, BarChart3, Plus, GitCompare,
@@ -17,12 +17,13 @@ import {
 
 function savedFirstName(): string {
   try {
-    const raw = localStorage.getItem("intellcode_settings");
+    const raw = localStorage.getItem(STORAGE_KEYS.settings);
     const name = raw ? JSON.parse(raw)?.name : null;
-    return name ? name.split(" ")[0] : mockUser.name.split(" ")[0];
-  } catch {
-    return mockUser.name.split(" ")[0];
-  }
+    if (name) return name.split(" ")[0];
+  } catch { /* ignore */ }
+  // Fall back to session name, then a generic greeting
+  const session = getSession();
+  return session?.name?.split(" ")[0] ?? "there";
 }
 
 const SEV_CONFIG: Record<string, { cls: string; bar: string }> = {
@@ -59,7 +60,7 @@ function ScoreMini({ score }: { score: number }) {
 
 function loadFeedbackKeys(): Set<string> {
   try {
-    const raw = localStorage.getItem("intellcode_feedback");
+    const raw = localStorage.getItem(STORAGE_KEYS.feedback);
     if (!raw) return new Set();
     const all = JSON.parse(raw);
     const keys = new Set<string>();
@@ -172,6 +173,33 @@ function ActivityHeatmap({ entries }: { entries: ReturnType<typeof getEntries> }
   );
 }
 
+// ─── Grade Ring ───────────────────────────────────────────────────────────────
+
+function GradeRing({ score }: { score: number }) {
+  const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+  const color = score >= 90 ? "#10b981" : score >= 80 ? "#22c55e" : score >= 70 ? "#eab308" : score >= 60 ? "#f97316" : "#ef4444";
+  const SIZE = 88, R = 34, CIRC = 2 * Math.PI * R;
+  return (
+    <div className="relative hidden sm:flex items-center justify-center shrink-0">
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+        <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="hsl(var(--border))" strokeWidth="6" />
+        <circle
+          cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none"
+          stroke={color} strokeWidth="6"
+          strokeDasharray={CIRC}
+          strokeDashoffset={CIRC * (1 - score / 100)}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center leading-none gap-0.5">
+        <span className="text-2xl font-black leading-none" style={{ color }}>{grade}</span>
+        <span className="text-[10px] text-muted-foreground leading-none">{score}/100</span>
+      </div>
+    </div>
+  );
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const session = getSession();
@@ -275,6 +303,7 @@ const Dashboard = () => {
                   : "Run your first analysis to see ML insights"}
               </p>
             </div>
+            {realStats && <GradeRing score={realStats.avgScore} />}
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
               {!isReviewer && recentEntries.length > 0 && (
                 <Button variant="outline" className="gap-2 shadow-sm" onClick={() => navigate("/compare")}>

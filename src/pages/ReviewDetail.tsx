@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,6 @@ import {
   ClipboardCopy,
   Check,
 } from "lucide-react";
-import { mockReviewResult, mockIssues } from "@/data/mockData";
 import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
 import { toast } from "sonner";
@@ -100,10 +99,13 @@ function AnalysisFeedbackBar({ result }: { result: FullAnalysisResult }) {
         rating,
         comment: comment.trim() || undefined,
       });
-    } catch { /* backend offline — ignore */ }
-    setSent(true);
-    setSubmitting(false);
-    toast.success(rating === "positive" ? "Thanks! Glad it was helpful." : "Thanks for the feedback — we'll use it to improve.");
+      toast.success(rating === "positive" ? "Thanks! Glad it was helpful." : "Thanks for the feedback — we'll use it to improve.");
+    } catch {
+      toast.warning("Feedback saved locally — could not reach backend.");
+    } finally {
+      setSent(true);
+      setSubmitting(false);
+    }
   };
 
   if (sent) {
@@ -293,12 +295,103 @@ function FileScoreHistory({ filename }: { filename: string }) {
   );
 }
 
+// ─── Quality Radar ────────────────────────────────────────────────────────────
+
+function QualityRadar({ r }: { r: FullAnalysisResult }) {
+  const secScore = Math.max(0, 100 - (r.security?.findings?.length ?? 0) * 8);
+  const dims = [
+    { label: "Security",   score: secScore },
+    { label: "Complexity", score: r.complexity?.score ?? 0 },
+    { label: "Bug Risk",   score: Math.round((1 - (r.bug_prediction?.bug_probability ?? 0)) * 100) },
+    { label: "Readability",score: r.readability?.overall_score ?? 0 },
+    { label: "Docs",       score: r.docs?.average_quality ?? 0 },
+  ];
+  const N = dims.length;
+  const CX = 80, CY = 80, R = 60;
+  const angle = (i: number) => (i / N) * 2 * Math.PI - Math.PI / 2;
+  const pt = (i: number, radius: number) => ({
+    x: CX + radius * Math.cos(angle(i)),
+    y: CY + radius * Math.sin(angle(i)),
+  });
+  const gridLevels = [0.25, 0.5, 0.75, 1];
+  const dataPoints = dims.map((d, i) => pt(i, (d.score / 100) * R));
+  const dataPath = dataPoints.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ") + "Z";
+
+  return (
+    <div className="bg-secondary/20 border border-border rounded-xl p-4 flex flex-col sm:flex-row items-center gap-5">
+      <svg width={160} height={160} viewBox="0 0 160 160" className="shrink-0">
+        {gridLevels.map((lvl) => {
+          const pts = Array.from({ length: N }, (_, i) => pt(i, lvl * R));
+          return (
+            <path key={lvl}
+              d={pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ") + "Z"}
+              fill="none" stroke="hsl(var(--border))" strokeWidth="1" />
+          );
+        })}
+        {dims.map((_, i) => {
+          const end = pt(i, R);
+          return <line key={i} x1={CX} y1={CY} x2={end.x} y2={end.y} stroke="hsl(var(--border))" strokeWidth="1" />;
+        })}
+        <path d={dataPath} fill="hsl(var(--primary))" fillOpacity="0.18" stroke="hsl(var(--primary))" strokeWidth="2" strokeLinejoin="round" />
+        {dataPoints.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="3" fill="hsl(var(--primary))" />
+        ))}
+        {dims.map((d, i) => {
+          const labelR = R + 18;
+          const p = { x: CX + labelR * Math.cos(angle(i)), y: CY + labelR * Math.sin(angle(i)) };
+          return (
+            <text key={i} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="central"
+              fontSize="8.5" fill="hsl(var(--muted-foreground))">{d.label}
+            </text>
+          );
+        })}
+      </svg>
+      <div className="space-y-2 flex-1 w-full">
+        {dims.map((d) => {
+          const color = d.score >= 75 ? "bg-emerald-500" : d.score >= 50 ? "bg-yellow-500" : "bg-red-500";
+          return (
+            <div key={d.label} className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">{d.label}</span>
+              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${color}`} style={{ width: `${d.score}%` }} />
+              </div>
+              <span className="text-xs font-semibold text-foreground w-6 text-right shrink-0">{Math.round(d.score)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab bodies ───────────────────────────────────────────────────────────────
 
 function OverviewTab({ r }: { r: FullAnalysisResult }) {
+  // Delta vs immediately previous scan of the same file
+  const prev = useMemo(() => {
+    const entries = getEntries()
+      .filter((e) => e.filename === r.filename)
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+    return entries.length >= 2 ? entries[1] : null;
+  }, [r.filename]);
+
+  const prevResult = prev?.result ?? null;
+
+  function Delta({ current, previous }: { current: number; previous: number | null }) {
+    if (previous === null) return null;
+    const d = current - previous;
+    if (d === 0) return null;
+    return (
+      <span className={`text-[10px] font-bold ml-1 ${d > 0 ? "text-emerald-400" : "text-red-400"}`}>
+        {d > 0 ? "+" : ""}{d}
+      </span>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <FileScoreHistory filename={r.filename} />
+      <QualityRadar r={r} />
       <div className="flex flex-wrap gap-6 items-end justify-center py-2">
         <ScoreCircle score={r.overall_score} label="Overall" />
         {r.complexity && <ScoreCircle score={r.complexity.score} label="Complexity" size={96} />}
@@ -314,6 +407,7 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
             sub: `${r.security?.summary?.critical ?? 0} critical`,
             cls: (r.security?.summary?.critical ?? 0) > 0 ? "text-destructive" : "text-foreground",
             border: (r.security?.summary?.critical ?? 0) > 0 ? "border-l-destructive" : (r.security?.summary?.total ?? 0) > 0 ? "border-l-orange-500" : "border-l-green-500",
+            delta: prevResult ? <Delta current={r.security?.summary?.total ?? 0} previous={prevResult.security?.summary?.total ?? 0} /> : null,
           },
           {
             label: "Bug Risk",
@@ -321,6 +415,7 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
             sub: `${Math.round((r.bug_prediction?.bug_probability ?? 0) * 100)}% probability`,
             cls: ({ low: "text-green-500", medium: "text-yellow-500", high: "text-orange-500", critical: "text-destructive" } as Record<string, string>)[r.bug_prediction?.risk_level ?? ""] ?? "text-foreground",
             border: ({ low: "border-l-green-500", medium: "border-l-yellow-500", high: "border-l-orange-500", critical: "border-l-destructive" } as Record<string, string>)[r.bug_prediction?.risk_level ?? ""] ?? "border-l-primary",
+            delta: prevResult ? <Delta current={Math.round((r.bug_prediction?.bug_probability ?? 0) * 100)} previous={Math.round((prevResult.bug_prediction?.bug_probability ?? 0) * 100)} /> : null,
           },
           {
             label: "Clones Found",
@@ -328,6 +423,7 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
             sub: `${((r.clones?.clone_rate ?? 0) * 100).toFixed(0)}% duplication`,
             cls: "text-foreground",
             border: (r.clones?.clones?.length ?? 0) > 0 ? "border-l-yellow-500" : "border-l-green-500",
+            delta: prevResult ? <Delta current={r.clones?.clones?.length ?? 0} previous={prevResult.clones?.clones?.length ?? 0} /> : null,
           },
           {
             label: "Dead Code",
@@ -335,10 +431,11 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
             sub: `${((r.dead_code?.dead_ratio ?? 0) * 100).toFixed(1)}% of file`,
             cls: "text-foreground",
             border: (r.dead_code?.dead_line_count ?? 0) > 0 ? "border-l-primary" : "border-l-green-500",
+            delta: prevResult ? <Delta current={r.dead_code?.dead_line_count ?? 0} previous={prevResult.dead_code?.dead_line_count ?? 0} /> : null,
           },
         ].map((card) => (
           <div key={card.label} className={`bg-secondary/40 rounded-xl p-4 text-center border-l-4 ${card.border}`}>
-            <p className={`text-2xl font-bold ${card.cls}`}>{card.value}</p>
+            <p className={`text-2xl font-bold ${card.cls}`}>{card.value}{card.delta}</p>
             <p className="text-xs text-muted-foreground font-medium mt-1">{card.label}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{card.sub}</p>
           </div>
@@ -371,6 +468,61 @@ function OverviewTab({ r }: { r: FullAnalysisResult }) {
   );
 }
 
+// ─── Decision Badge ───────────────────────────────────────────────────────────
+
+const DECISION_STYLES: Record<string, string> = {
+  fix_now:         "bg-red-500/15 text-red-400 border border-red-500/30",
+  review_manually: "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
+  low_priority:    "bg-blue-500/15 text-blue-400 border border-blue-500/30",
+  unreliable:      "bg-secondary text-muted-foreground border border-border",
+};
+
+function DecisionBadge({ decision }: { decision?: { action: string; label: string; explanation: string } }) {
+  if (!decision) return null;
+  return (
+    <span
+      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${DECISION_STYLES[decision.action] ?? DECISION_STYLES.unreliable}`}
+      title={decision.explanation}
+    >
+      {decision.label}
+    </span>
+  );
+}
+
+// ─── Trust Banner ─────────────────────────────────────────────────────────────
+
+function TrustBanner({ r }: { r: FullAnalysisResult }) {
+  const ts = r.trust_summary;
+  if (!ts) return null;
+  if (ts.overall_reliable && ts.language_in_distribution) return null;
+
+  return (
+    <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/8 p-4 space-y-2 mb-4">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
+        <span className="text-sm font-semibold text-yellow-400">Model reliability notice</span>
+        {r.model_version && (
+          <span className="text-xs text-muted-foreground ml-auto">v{r.model_version}</span>
+        )}
+      </div>
+      <div className="space-y-1">
+        {ts.items.map((item) => (
+          <div key={item.model} className="flex items-start gap-2 text-xs">
+            <span className={`shrink-0 font-semibold w-20 ${
+              item.reliability === "high" ? "text-green-400"
+              : item.reliability === "medium" ? "text-yellow-400"
+              : "text-red-400"
+            }`}>
+              {item.model}:
+            </span>
+            <span className="text-muted-foreground">{item.message}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SecurityTab({
   r,
   feedbacks,
@@ -382,8 +534,15 @@ function SecurityTab({
 }) {
   const { findings, summary } = r.security;
   if (findings.length === 0) return <Empty msg="No security vulnerabilities detected." />;
+
+  // Sort findings by decision priority (fix_now first, unreliable last)
+  const priorityOf = (f: typeof findings[0]) =>
+    f.decision?.priority ?? (f.severity === "critical" ? 1 : f.severity === "high" ? 2 : 3);
+  const sorted = [...findings].sort((a, b) => priorityOf(a) - priorityOf(b));
+
   return (
     <div className="space-y-4">
+      <TrustBanner r={r} />
       <div className="flex gap-3 text-sm flex-wrap mb-2">
         {(["critical", "high", "medium", "low"] as const).map((sev) => (
           <span key={sev} className="flex items-center gap-1">
@@ -392,16 +551,22 @@ function SecurityTab({
           </span>
         ))}
       </div>
-      {findings.map((f, i) => {
+      {sorted.map((f, i) => {
         const key = `${f.title}-${f.lineno}`;
         const fb = feedbacks[key];
         return (
           <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[f.severity] ?? "border-l-border"}`}>
             <div className="flex items-center gap-2 flex-wrap">
               <SevBadge sev={f.severity} />
+              <DecisionBadge decision={f.decision} />
               <span className="font-semibold text-foreground text-sm">{f.title}</span>
               <span className="text-xs text-muted-foreground ml-auto">{f.cwe} · line {f.lineno}</span>
             </div>
+            {f.decision?.action === "unreliable" && (
+              <p className="text-xs text-muted-foreground italic bg-secondary/40 rounded px-2 py-1">
+                {f.decision.explanation}
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">{f.description}</p>
             {f.snippet && (
               <pre className="bg-destructive/10 border border-destructive/20 rounded p-3 text-xs font-mono text-foreground overflow-x-auto">
@@ -411,6 +576,9 @@ function SecurityTab({
             <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs text-muted-foreground">
                 Source: {f.source} · Confidence: {Math.round(f.confidence * 100)}%
+                {f.decision && f.decision.action !== "unreliable" && (
+                  <span className="ml-2 italic">{f.decision.explanation}</span>
+                )}
               </p>
               {fb ? (
                 <div className="flex items-center gap-2">
@@ -828,6 +996,7 @@ function ReadabilityTab({ r }: { r: FullAnalysisResult }) {
 function PatternTab({ r }: { r: FullAnalysisResult }) {
   const p = r.patterns;
   if (!p) return <Empty msg="Pattern analysis not available." />;
+  const criticalSecFindings = r.security?.summary?.critical ?? 0;
 
   const LABEL_COLORS: Record<string, string> = {
     clean: "text-green-500",
@@ -852,6 +1021,15 @@ function PatternTab({ r }: { r: FullAnalysisResult }) {
 
   return (
     <div className="space-y-6">
+      {criticalSecFindings > 0 && p.label === "clean" && (
+        <div className="flex items-start gap-3 bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+          <p className="text-sm text-orange-300">
+            <strong>Note:</strong> The pattern model classifies code structure only — it does not evaluate security semantics.
+            This file has <strong>{criticalSecFindings} critical security finding{criticalSecFindings !== 1 ? "s" : ""}</strong>; review the Security tab for details.
+          </p>
+        </div>
+      )}
       <div className="flex items-center gap-4">
         <div className={`p-4 rounded-full bg-secondary/40`}>
           <Brain className={`w-8 h-8 ${LABEL_COLORS[p.label] ?? "text-foreground"}`} />
@@ -943,6 +1121,47 @@ const DEBT_FIXES: Record<string, string> = {
   F: "Critical — full code review needed; consider rewriting affected modules",
 };
 
+// ─── Complexity fix templates (SHAP-guided: keyed by primary metric driver) ──
+
+const COMPLEXITY_TEMPLATES: Record<string, { title: string; before: string; after: string; explanation: string }> = {
+  high_cyclomatic: {
+    title: "Reduce Cyclomatic Complexity",
+    before: "def process(x):\n    if x > 0:\n        if x > 10:\n            if x > 100:\n                return 'large'\n            return 'medium'\n        return 'small'\n    return 'negative'",
+    after: "THRESHOLDS = [(100, 'large'), (10, 'medium'), (0, 'small')]\n\ndef classify(x):\n    for threshold, label in THRESHOLDS:\n        if x > threshold:\n            return label\n    return 'negative'\n\ndef process(x):\n    return classify(x)",
+    explanation: "Cyclomatic complexity is elevated. Replace deep if/else chains with early returns, lookup tables, or extracted helper functions. Target CC <= 10 per function.",
+  },
+  long_functions: {
+    title: "Break Up Long Functions",
+    before: "def do_everything(data, config):\n    # validation\n    if not data: raise ValueError(...)\n    # processing — 60+ more lines\n    ...",
+    after: "def _validate(data): ...\ndef _process(data, config): ...\ndef _format(result): ...\n\ndef do_everything(data, config):\n    _validate(data)\n    result = _process(data, config)\n    return _format(result)",
+    explanation: "Long functions (> 50 lines) are a primary complexity driver. Decompose into single-responsibility helpers. Each function should fit on one screen.",
+  },
+  complex_functions: {
+    title: "Extract Complex Function Logic",
+    before: "def render(data, config, user, fmt, opts):\n    # 15+ branching paths, deeply nested\n    ...",
+    after: "def _select_template(fmt, opts): ...\ndef _apply_permissions(data, user): ...\n\ndef render(data, config, user, fmt, opts):\n    tpl = _select_template(fmt, opts)\n    data = _apply_permissions(data, user)\n    return tpl.render(data, config)",
+    explanation: "Functions with CC > 10 are the top driver of your complexity score. Extract discrete logical sections into named helpers — this directly reduces the complexity model's prediction.",
+  },
+  high_halstead: {
+    title: "Simplify Dense Operator Usage",
+    before: "result = (a + b * c - d / e) if (x > y and z != w or p <= q) else (f * g + h)",
+    after: "numerator = a + b * c - d / e\ncondition = x > y and (z != w or p <= q)\nfallback = f * g + h\nresult = numerator if condition else fallback",
+    explanation: "High Halstead volume/difficulty indicates dense operator and operand usage. Introduce intermediate named variables to clarify intent and reduce estimated bug density.",
+  },
+  lines_over_80: {
+    title: "Fix Long Lines",
+    before: "result = some_function(arg_one, arg_two, arg_three, key_one=val_one, key_two=val_two)",
+    after: "result = some_function(\n    arg_one,\n    arg_two,\n    arg_three,\n    key_one=val_one,\n    key_two=val_two,\n)",
+    explanation: "Many lines exceed 80 characters, reducing readability scores. Break long calls and expressions using Python's implicit line continuation inside parentheses.",
+  },
+  high_cognitive: {
+    title: "Reduce Cognitive Complexity",
+    before: "for item in items:\n    if item.active:\n        if item.type == 'A':\n            for sub in item.children:\n                if sub.valid:\n                    process(sub)  # nesting depth 4",
+    after: "def _process_valid_children(item):\n    for sub in item.children:\n        if sub.valid:\n            process(sub)\n\nfor item in items:\n    if item.active and item.type == 'A':\n        _process_valid_children(item)",
+    explanation: "Cognitive complexity measures how hard code is to understand. Flatten nesting by inverting conditions, using early returns, and extracting inner loops into helpers.",
+  },
+};
+
 function FixesTab({ r }: { r: FullAnalysisResult }) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const fixes: Array<{ priority: "critical" | "high" | "medium" | "low"; category: string; title: string; before?: string; after?: string; explanation: string }> = [];
@@ -992,6 +1211,65 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
     });
   }
 
+  // ── Complexity fixes — SHAP-guided via metric elevation as importance proxy ─
+  // Rank each metric by how far it is above its acceptable threshold.
+  // The metric with the highest elevation score is the top driver of the
+  // complexity prediction (mirrors SHAP feature attribution logic).
+  const cx = r.complexity;
+  if (cx && (cx.grade === "C" || cx.grade === "D" || cx.grade === "F")) {
+    const drivers: Array<{ key: string; elevationScore: number }> = [];
+    if (cx.cyclomatic > 10)         drivers.push({ key: "high_cyclomatic",  elevationScore: cx.cyclomatic / 10 });
+    if (cx.cognitive > 15)          drivers.push({ key: "high_cognitive",   elevationScore: cx.cognitive / 15 });
+    if (cx.n_complex_functions > 0) drivers.push({ key: "complex_functions",elevationScore: cx.n_complex_functions * 1.5 });
+    if (cx.n_long_functions > 0)    drivers.push({ key: "long_functions",   elevationScore: cx.n_long_functions * 1.2 });
+    if (cx.halstead_bugs > 0.5)     drivers.push({ key: "high_halstead",    elevationScore: cx.halstead_bugs * 8 });
+    if (cx.n_lines_over_80 > 5)     drivers.push({ key: "lines_over_80",    elevationScore: cx.n_lines_over_80 / 5 });
+
+    // Sort descending — highest elevation = primary driver = highest priority fix
+    drivers.sort((a, b) => b.elevationScore - a.elevationScore);
+    const cxPriority: "high" | "medium" = cx.grade === "D" || cx.grade === "F" ? "high" : "medium";
+
+    drivers.slice(0, 3).forEach(({ key }) => {
+      const tpl = COMPLEXITY_TEMPLATES[key];
+      if (tpl) {
+        fixes.push({
+          priority: cxPriority,
+          category: "Complexity",
+          title: tpl.title,
+          before: tpl.before,
+          after: tpl.after,
+          explanation: tpl.explanation,
+        });
+      }
+    });
+  }
+
+  // ── Performance fixes ───────────────────────────────────────────────────────
+  (r.performance?.issues ?? []).slice(0, 3).forEach((p) => {
+    fixes.push({
+      priority: p.severity as "high" | "medium" | "low",
+      category: "Performance",
+      title: p.title,
+      explanation: p.speedup_hint ? `${p.description}\n\nHint: ${p.speedup_hint}` : p.description,
+    });
+  });
+
+  // ── Documentation fixes ─────────────────────────────────────────────────────
+  const docCoverage = r.docs?.coverage ?? 1;
+  if (r.docs && docCoverage < 0.7) {
+    const undocumented = r.docs.symbol_scores.filter((s) => !s.has_docstring).slice(0, 2).map((s) => s.name);
+    fixes.push({
+      priority: docCoverage < 0.3 ? "high" : "medium",
+      category: "Documentation",
+      title: `Add docstrings to ${r.docs.total_symbols - r.docs.documented_symbols} undocumented symbol${r.docs.total_symbols - r.docs.documented_symbols !== 1 ? "s" : ""}`,
+      before: undocumented.length > 0 ? `def ${undocumented[0]}(...):\n    pass  # no docstring` : undefined,
+      after: undocumented.length > 0
+        ? `def ${undocumented[0]}(...):\n    """Brief description.\n\n    Args:\n        ...\n\n    Returns:\n        ...\n    """\n    pass`
+        : undefined,
+      explanation: `Documentation coverage is ${Math.round(docCoverage * 100)}% (grade: ${r.docs.grade}). Add docstrings to all public functions, classes, and modules.`,
+    });
+  }
+
   const PRI_CLS: Record<string, string> = {
     critical: "bg-destructive/20 text-destructive border border-destructive/40",
     high:     "bg-orange-500/20 text-orange-400 border border-orange-500/40",
@@ -1014,8 +1292,31 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
     return (order[a.priority] ?? 4) - (order[b.priority] ?? 4);
   });
 
+  // Derive the top complexity driver for the insight banner
+  const cxInsight = (() => {
+    if (!cx || (cx.grade !== "C" && cx.grade !== "D" && cx.grade !== "F")) return null;
+    const candidates: Array<{ label: string; value: string; score: number }> = [];
+    if (cx.cyclomatic > 10)         candidates.push({ label: "cyclomatic complexity",      value: `${cx.cyclomatic}`,         score: cx.cyclomatic / 10 });
+    if (cx.cognitive > 15)          candidates.push({ label: "cognitive complexity",        value: `${cx.cognitive}`,          score: cx.cognitive / 15 });
+    if (cx.n_complex_functions > 0) candidates.push({ label: "functions with CC > 10",     value: `${cx.n_complex_functions}`, score: cx.n_complex_functions * 1.5 });
+    if (cx.n_long_functions > 0)    candidates.push({ label: "functions over 50 lines",    value: `${cx.n_long_functions}`,   score: cx.n_long_functions * 1.2 });
+    if (cx.halstead_bugs > 0.5)     candidates.push({ label: "estimated bug density",      value: `${cx.halstead_bugs.toFixed(2)}`, score: cx.halstead_bugs * 8 });
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] ?? null;
+  })();
+
   return (
     <div className="space-y-4">
+      {cxInsight && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-orange-500/8 border border-orange-500/25 rounded-xl">
+          <span className="text-orange-400 mt-0.5 shrink-0 text-base">~</span>
+          <p className="text-sm text-orange-300">
+            <span className="font-semibold">Primary complexity driver:</span>{" "}
+            {cxInsight.label} = <span className="font-mono font-semibold">{cxInsight.value}</span>.{" "}
+            The fixes below are ordered by their expected impact on your complexity score (grade: {cx!.grade}).
+          </p>
+        </div>
+      )}
       <p className="text-sm text-muted-foreground">{sorted.length} fix recommendation{sorted.length !== 1 ? "s" : ""} — sorted by priority</p>
       {sorted.map((fix, i) => (
         <div key={i} className="bg-card border border-border rounded-xl overflow-hidden">

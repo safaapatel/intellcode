@@ -131,50 +131,50 @@ const ROWS: Array<{
 }> = [
   {
     label: "Overall Score",
-    getValue: (r) => ({ display: `${r.overall_score}/100`, num: r.overall_score }),
+    getValue: (r) => ({ display: `${r.overall_score ?? "—"}/100`, num: r.overall_score ?? 0 }),
     higherBetter: true,
   },
   {
     label: "Complexity",
-    getValue: (r) => ({ display: `${Math.round(r.complexity.score)}/100`, num: r.complexity.score }),
+    getValue: (r) => ({ display: `${Math.round(r.complexity?.score ?? 0)}/100`, num: r.complexity?.score ?? 0 }),
     higherBetter: true,
   },
   {
     label: "Security Issues",
-    getValue: (r) => ({ display: String(r.security.summary.total), num: r.security.summary.total }),
+    getValue: (r) => ({ display: String(r.security?.summary?.total ?? 0), num: r.security?.summary?.total ?? 0 }),
     higherBetter: false,
   },
   {
     label: "Critical Findings",
-    getValue: (r) => ({ display: String(r.security.summary.critical), num: r.security.summary.critical }),
+    getValue: (r) => ({ display: String(r.security?.summary?.critical ?? 0), num: r.security?.summary?.critical ?? 0 }),
     higherBetter: false,
   },
   {
     label: "Bug Probability",
     getValue: (r) => ({
-      display: `${Math.round(r.bug_prediction.bug_probability * 100)}%`,
-      num: Math.round(r.bug_prediction.bug_probability * 100),
+      display: r.bug_prediction ? `${Math.round(r.bug_prediction.bug_probability * 100)}%` : "—",
+      num: Math.round((r.bug_prediction?.bug_probability ?? 0) * 100),
     }),
     higherBetter: false,
   },
   {
     label: "Clone Rate",
     getValue: (r) => ({
-      display: `${(r.clones.clone_rate * 100).toFixed(0)}%`,
-      num: r.clones.clone_rate * 100,
+      display: r.clones ? `${(r.clones.clone_rate * 100).toFixed(0)}%` : "—",
+      num: (r.clones?.clone_rate ?? 0) * 100,
     }),
     higherBetter: false,
   },
   {
     label: "Dead Lines",
-    getValue: (r) => ({ display: String(r.dead_code.dead_line_count), num: r.dead_code.dead_line_count }),
+    getValue: (r) => ({ display: String(r.dead_code?.dead_line_count ?? 0), num: r.dead_code?.dead_line_count ?? 0 }),
     higherBetter: false,
   },
   {
     label: "Tech Debt (min)",
     getValue: (r) => ({
-      display: `${r.technical_debt.total_debt_minutes}m`,
-      num: r.technical_debt.total_debt_minutes,
+      display: r.technical_debt ? `${r.technical_debt.total_debt_minutes}m` : "—",
+      num: r.technical_debt?.total_debt_minutes ?? 0,
     }),
     higherBetter: false,
   },
@@ -182,7 +182,7 @@ const ROWS: Array<{
     label: "Debt Rating",
     getValue: (r) => {
       const grades: Record<string, number> = { A: 5, B: 4, C: 3, D: 2, E: 1, F: 0 };
-      const rating = r.technical_debt.overall_rating;
+      const rating = r.technical_debt?.overall_rating ?? "—";
       return { display: rating, num: grades[rating] ?? 3 };
     },
     higherBetter: true,

@@ -77,13 +77,13 @@ const ALL_MODELS = [
     useCase: "Maintainability score, refactoring priority",
     techStack: ["XGBoost", "NumPy", "Python"],
     metrics: [
-      { label: "Test R²",   value: "1.000",  pct: 100 },
-      { label: "Test RMSE", value: "0.064",  pct: 94 },
-      { label: "Test MAE",  value: "0.030",  pct: 97 },
-      { label: "CV R²",     value: "0.9999", pct: 100 },
+      { label: "Test R²",       value: "0.692", pct: 69 },
+      { label: "Test RMSE",     value: "23.39", pct: 55 },
+      { label: "Spearman rho",  value: "0.865", pct: 87 },
+      { label: "Multi-seed R²", value: "0.685", pct: 69 },
     ],
     description:
-      "XGBoost regressor predicting maintainability from Halstead volume, cyclomatic complexity, SLOC, and 17 other features.",
+      "XGBoost regressor predicting cognitive complexity from Halstead volume, cyclomatic complexity, SLOC, and 12 other code metrics.",
     endpoint: "POST /analyze/complexity",
   },
   {
@@ -280,7 +280,7 @@ const Models = () => {
           {[
             { icon: CheckCircle2, color: "text-green-400", label: "Production Models", value: "12" },
             { icon: Database,     color: "text-primary",   label: "Training Samples",  value: "4 500+" },
-            { icon: TrendingUp,   color: "text-orange-400",label: "Avg AUC / R²",      value: "1.000" },
+            { icon: TrendingUp,   color: "text-orange-400",label: "Avg AUC / R²",      value: "0.82" },
             { icon: Layers,       color: "text-yellow-400",label: "Endpoints",          value: "13" },
           ].map(({ icon: Icon, color, label, value }) => (
             <div key={label} className="bg-card border border-border rounded-xl p-4 flex items-center gap-3">

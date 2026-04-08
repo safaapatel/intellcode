@@ -7,6 +7,7 @@ import {
   type GitHubUser,
 } from "@/services/github";
 import { applyTheme, getTheme, type Theme } from "@/lib/theme";
+import { getSession } from "@/services/auth";
 import { useNavigate } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,6 @@ import {
   AlertTriangle,
   Loader2,
 } from "lucide-react";
-import { mockUser } from "@/data/mockData";
 import { toast } from "sonner";
 
 const SETTINGS_KEY = "intellcode_settings";
@@ -84,9 +84,10 @@ const Settings = () => {
   const saved = loadSettings();
 
   // Profile state
-  const [name, setName] = useState<string>(saved.name ?? mockUser.name);
-  const [email, setEmail] = useState<string>(saved.email ?? mockUser.email);
-  const [role, setRole] = useState<string>(saved.role ?? mockUser.role);
+  const session = getSession();
+  const [name, setName] = useState<string>(saved.name ?? session?.name ?? "");
+  const [email, setEmail] = useState<string>(saved.email ?? session?.email ?? "");
+  const [role, setRole] = useState<string>(saved.role ?? session?.role ?? "developer");
   const [bio, setBio] = useState<string>(saved.bio ?? "Software engineer focused on code quality and ML systems.");
   const [timezone, setTimezone] = useState<string>(saved.timezone ?? "America/Los_Angeles");
   const [photoUrl, setPhotoUrl] = useState<string>(saved.photoUrl ?? "");
@@ -385,7 +386,7 @@ const Settings = () => {
                       <img src={photoUrl} alt="Profile" className="w-20 h-20 rounded-full object-cover" />
                     ) : (
                       <div className="w-20 h-20 rounded-full bg-gradient-primary flex items-center justify-center text-2xl font-bold text-background">
-                        {mockUser.avatar}
+                        {name.split(" ").filter(Boolean).map(w => w[0]).join("").toUpperCase().slice(0, 2) || "?"}
                       </div>
                     )}
                     <div>

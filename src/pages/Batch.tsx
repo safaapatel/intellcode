@@ -184,8 +184,8 @@ const Batch = () => {
               entryId: savedIds[f.name],
             };
           }
-          const err = batchResult.errors.find((_, i) => batchResult.results.length + i < inputs.length);
-          return { ...f, status: "error" as const, error: err?.error ?? "Analysis failed" };
+          // Backend doesn't return which filename failed, so use first error message
+          return { ...f, status: "error" as const, error: batchResult.errors[0]?.error ?? "Analysis failed" };
         })
       );
 

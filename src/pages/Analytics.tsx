@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Download, Lightbulb, TrendingUp, BarChart3, PieChart as PieIcon, AlertTriangle, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { Download, Lightbulb, TrendingUp, TrendingDown, BarChart3, PieChart as PieIcon, AlertTriangle, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -31,6 +31,37 @@ import {
 } from "@/data/mockData";
 import { getEntries } from "@/services/reviewHistory";
 import { toast } from "sonner";
+
+// ─── Linear trend forecast ────────────────────────────────────────────────────
+
+/**
+ * Fit a least-squares line to `scores` (x = index) and project when the score
+ * will fall below `threshold`. Returns the number of additional data points
+ * until that crossing, or null if the trend is non-declining or already below.
+ */
+function linearForecast(scores: number[], threshold = 60): { slope: number; commitsToThreshold: number | null } {
+  const n = scores.length;
+  if (n < 2) return { slope: 0, commitsToThreshold: null };
+
+  const xMean = (n - 1) / 2;
+  const yMean = scores.reduce((s, v) => s + v, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - xMean) * (scores[i] - yMean);
+    den += (i - xMean) * (i - xMean);
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = yMean - slope * xMean;
+
+  const latest = scores[n - 1];
+  // Only forecast if trend is declining and current score is still above threshold
+  if (slope >= 0 || latest <= threshold) return { slope, commitsToThreshold: null };
+
+  // x at which y = threshold
+  const xThreshold = (threshold - intercept) / slope;
+  const remaining = Math.round(xThreshold - (n - 1));
+  return { slope, commitsToThreshold: remaining > 0 ? remaining : null };
+}
 
 // ─── Derive real analytics from localStorage history ─────────────────────────
 
@@ -129,12 +160,18 @@ function buildAnalytics(range: number, repoFilter = "") {
     .filter(([, runs]) => runs.length >= 2)
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 5)
-    .map(([filename, runs]) => ({
-      filename,
-      runs,
-      delta: runs[runs.length - 1].score - runs[0].score,
-      latest: runs[runs.length - 1].score,
-    }));
+    .map(([filename, runs]) => {
+      const scores = runs.map((r) => r.score);
+      const { slope, commitsToThreshold } = linearForecast(scores);
+      return {
+        filename,
+        runs,
+        delta: scores[scores.length - 1] - scores[0],
+        latest: scores[scores.length - 1],
+        slope,
+        commitsToThreshold,
+      };
+    });
 
   // Regression alerts: files whose latest score is at least 10 pts below their best
   const regressions = Object.entries(byFile)
@@ -227,7 +264,7 @@ const Analytics = () => {
 
   const totalReviews   = real?.count          ?? mockAnalyticsStats.totalReviews;
   const avgScore       = real?.avgScore       ?? mockAnalyticsStats.avgQualityScore;
-  const totalIssues    = real?.totalIssues    ?? 312;
+  const totalIssues    = real?.totalIssues    ?? 0;
   const usingReal      = !!real;
   const usedFallback   = real?.usedFallback ?? false;
 
@@ -298,8 +335,8 @@ const Analytics = () => {
 
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <StatCard title="Total Reviews" value={totalReviews} change={usingReal ? (usedFallback ? "all-time" : `last ${timeRange} days`) : "+23% vs prev period"} changeType="positive" />
-          <StatCard title="Avg Quality Score" value={avgScore} suffix="/100" change={usingReal ? "across all analyses" : "+4.2 vs baseline"} changeType="positive" />
+          <StatCard title="Total Reviews" value={totalReviews} change={usingReal ? (usedFallback ? "all-time" : `last ${timeRange} days`) : "sample data"} changeType={usingReal ? "positive" : "neutral"} />
+          <StatCard title="Avg Quality Score" value={avgScore} suffix="/100" change={usingReal ? "across all analyses" : "sample data"} changeType={usingReal ? "positive" : "neutral"} />
           <StatCard title="Total Issues Found" value={totalIssues} change={usingReal ? "across all analyses" : "sample data"} changeType="neutral" />
         </div>
 
@@ -419,16 +456,22 @@ const Analytics = () => {
               <span className="text-xs text-muted-foreground ml-1">files analyzed 2+ times</span>
             </div>
             <div className="space-y-5">
-              {fileTimelines.map(({ filename, runs, delta, latest }) => {
-                const improved = delta > 0;
+              {fileTimelines.map(({ filename, runs, delta, latest, commitsToThreshold }) => {
+                const isImproved = delta > 0;
                 const unchanged = delta === 0;
                 return (
                   <div key={filename}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-mono text-foreground truncate max-w-[60%]">{filename}</span>
+                      <span className="text-sm font-mono text-foreground truncate max-w-[55%]">{filename}</span>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs font-semibold ${improved ? "text-emerald-400" : unchanged ? "text-muted-foreground" : "text-red-400"}`}>
-                          {improved ? `+${delta}` : delta} pts
+                        {commitsToThreshold !== null && (
+                          <span className="flex items-center gap-1 text-xs font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-2 py-0.5 rounded-full">
+                            <TrendingDown className="w-3 h-3" />
+                            risk in ~{commitsToThreshold} run{commitsToThreshold !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                        <span className={`text-xs font-semibold ${isImproved ? "text-emerald-400" : unchanged ? "text-muted-foreground" : "text-red-400"}`}>
+                          {isImproved ? `+${delta}` : delta} pts
                         </span>
                         <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${latest >= 80 ? "bg-emerald-500/20 text-emerald-400" : latest >= 60 ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}>
                           {latest}/100
@@ -441,11 +484,17 @@ const Analytics = () => {
                           <XAxis dataKey="date" fontSize={9} stroke="hsl(var(--muted-foreground))" />
                           <YAxis domain={[0, 100]} fontSize={9} stroke="hsl(var(--muted-foreground))" />
                           <Tooltip {...TOOLTIP_STYLE} />
-                          <Line type="monotone" dataKey="score" stroke={improved ? "hsl(142,76%,36%)" : unchanged ? "hsl(var(--primary))" : "hsl(0,85%,60%)"}
-                            strokeWidth={2} dot={{ r: 3 }} />
+                          <Line type="monotone" dataKey="score"
+                            stroke={commitsToThreshold !== null ? "hsl(38,92%,50%)" : isImproved ? "hsl(142,76%,36%)" : unchanged ? "hsl(var(--primary))" : "hsl(0,85%,60%)"}
+                            strokeWidth={2} dot={{ r: 3 }} strokeDasharray={commitsToThreshold !== null ? "4 2" : undefined} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
+                    {commitsToThreshold !== null && (
+                      <p className="text-xs text-orange-400/80 mt-1">
+                        Trending down — projected to cross quality threshold in ~{commitsToThreshold} more analysis run{commitsToThreshold !== 1 ? "s" : ""} if trend continues
+                      </p>
+                    )}
                   </div>
                 );
               })}
