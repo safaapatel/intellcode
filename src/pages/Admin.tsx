@@ -421,6 +421,38 @@ const Admin = () => {
                   </tbody>
                 </table>
               </div>
+              {/* OOD Detectors */}
+              {(health.models.ood_detector_security || health.models.ood_detector_bug) && (
+                <div className="border-t border-border px-4 py-3 bg-secondary/10">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">Out-of-Distribution Detectors</p>
+                  <div className="flex gap-4">
+                    {[
+                      { key: "ood_detector_security", label: "Security OOD" },
+                      { key: "ood_detector_bug", label: "Bug OOD" },
+                    ].map(({ key, label }) => {
+                      const status = health.models[key];
+                      return (
+                        <div key={key} className="flex items-center gap-1.5">
+                          {status === "ready" ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                          ) : (
+                            <AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />
+                          )}
+                          <span className={`text-xs ${status === "ready" ? "text-green-400" : "text-yellow-400"}`}>
+                            {label}: {status === "ready" ? "fitted" : "no checkpoint"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    OOD detectors flag predictions on inputs far from the training distribution.
+                    Train them by running <code className="font-mono">training/train_security.py</code> and{" "}
+                    <code className="font-mono">training/train_bugs.py</code>.
+                  </p>
+                </div>
+              )}
+
               {Object.keys(health.errors ?? {}).length > 0 && (
                 <div className="border-t border-border px-4 py-3 bg-destructive/5">
                   <p className="text-xs font-semibold text-destructive mb-1">Load Errors</p>
