@@ -1,0 +1,49 @@
+# IntelliCode Review Configuration
+# This file is read by the GitHub Actions workflow (.github/workflows/intellicode-review.yml)
+# and by any local run of backend/github_action_review.py.
+#
+# All settings are optional — missing keys fall back to defaults.
+
+# Quality score threshold (0-100). PRs with avg score below this get
+# a REQUEST_CHANGES review; above it get a COMMENT review.
+threshold: 60
+
+# Set to true to make the CI step exit with code 1 when below threshold,
+# blocking the PR from being merged (requires branch protection rules).
+fail_on_issues: false
+
+# Glob patterns for Python files to skip entirely.
+# Useful for generated code, migrations, test fixtures, vendored code.
+ignore_paths:
+  - "migrations/**"
+  - "tests/fixtures/**"
+  - "**/conftest.py"
+  - "backend/evaluation/**"
+
+# Rule IDs to suppress globally across all files.
+# Useful for findings that are intentional in this project.
+# Common IDs: insecure_deserialization, too_long, too_many_params,
+#             high_complexity, sql_injection, path_traversal
+suppress_rules: []
+
+# Maximum number of inline review comments per PR review (default 30).
+# GitHub allows up to 30 per review API call.
+max_inline_comments: 30
+
+# Delta gating: fail the CI step if a PR drops overall quality by more
+# than this many points compared to the base branch.
+# Set to ~ (null) or omit to disable. Example: 5 blocks any 5-point regression.
+max_score_drop: ~
+
+# Confidence-gated fail rules. Each entry specifies conditions under which
+# to fail CI regardless of the overall score.
+# severity:             critical | high | medium | low
+# confidence_threshold: minimum model confidence (0.0-1.0) to trigger
+# count_threshold:      minimum number of findings needed to trigger (default 1)
+#
+# Example: fail if any critical finding has model confidence >= 0.75
+# fail_on:
+#   - severity: critical
+#     confidence_threshold: 0.75
+#     count_threshold: 1
+fail_on: []
