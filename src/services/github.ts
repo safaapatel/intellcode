@@ -7,6 +7,10 @@
 const TOKEN_KEY = "intellcode_github_token";
 const USER_KEY = "intellcode_github_user";
 
+// GitHub OAuth tokens are stored in sessionStorage (cleared on tab close) rather than
+// localStorage so they are not accessible across sessions or by other browser tabs.
+const _store = sessionStorage;
+
 export interface GitHubUser {
   login: string;
   name: string | null;
@@ -32,16 +36,16 @@ export interface GitHubRepo {
 // ─── Token storage ────────────────────────────────────────────────────────────
 
 export function getGitHubToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return _store.getItem(TOKEN_KEY);
 }
 
 export function setGitHubToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
+  _store.setItem(TOKEN_KEY, token);
 }
 
 export function clearGitHubToken() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  _store.removeItem(TOKEN_KEY);
+  _store.removeItem(USER_KEY);
 }
 
 export function isGitHubConnected(): boolean {
@@ -71,17 +75,17 @@ async function ghFetch<T>(url: string): Promise<T> {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
-/** Fetch the authenticated user profile. Caches in localStorage. */
+/** Fetch the authenticated user profile. Caches in sessionStorage. */
 export async function getGitHubUser(forceRefresh = false): Promise<GitHubUser | null> {
   if (!getGitHubToken()) return null;
   if (!forceRefresh) {
     try {
-      const cached = localStorage.getItem(USER_KEY);
+      const cached = _store.getItem(USER_KEY);
       if (cached) return JSON.parse(cached) as GitHubUser;
     } catch { /* ignore */ }
   }
   const user = await ghFetch<GitHubUser>("https://api.github.com/user");
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  _store.setItem(USER_KEY, JSON.stringify(user));
   return user;
 }
 
@@ -120,16 +124,19 @@ export async function getRawFile(
 }
 
 /**
- * Read the GitHub OAuth token from the URL query string after OAuth redirect.
- * Returns the token if found and cleans the URL, otherwise returns null.
+ * Read the GitHub OAuth token from the URL fragment after OAuth redirect.
+ * The backend sends the token as #github_token=... (fragment) so it is never
+ * transmitted to servers or recorded in proxy logs.
+ * Returns the token if found and immediately cleans the fragment from the URL.
  */
 export function consumeTokenFromHash(): string | null {
-  const params = new URLSearchParams(window.location.search);
+  const fragment = window.location.hash.slice(1); // strip leading #
+  const params = new URLSearchParams(fragment);
   const token = params.get("github_token");
   if (!token) return null;
-  // Remove github_token from query string without triggering a navigation
+  // Remove github_token from fragment without triggering a navigation.
   params.delete("github_token");
-  const newSearch = params.toString() ? `?${params.toString()}` : "";
-  window.history.replaceState(null, "", window.location.pathname + newSearch + window.location.hash);
+  const newHash = params.toString() ? `#${params.toString()}` : "";
+  window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
   return token;
 }
