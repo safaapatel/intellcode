@@ -12,25 +12,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, Github, Loader2, AlertCircle, FolderOpen, ScanLine, Braces, Settings2, CheckCircle2, Copy, Check, Zap } from "lucide-react";
-import { mockRuleSets } from "@/data/mockData";
+import { Upload, Github, Loader2, AlertCircle, AlertTriangle, X, FolderOpen, ScanLine, Braces, Settings2, CheckCircle2, Copy, Check, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { analyzeCode, analyzeCodeStream, analyzeCodeQuick } from "@/services/api";
 import { authHeaders } from "@/services/github";
 
+import { STORAGE_KEYS } from "@/constants/storage";
+
 function loadRuleSets() {
   try {
-    const raw = localStorage.getItem("intellcode_rules");
+    const raw = localStorage.getItem(STORAGE_KEYS.rules);
     const saved = raw ? JSON.parse(raw) : null;
-    return saved?.ruleSets ?? mockRuleSets;
+    return saved?.ruleSets ?? [];
   } catch {
-    return mockRuleSets;
+    return [];
   }
 }
 
 function loadConnectedRepos(): Array<{ id: string; fullName: string; defaultBranch: string; language: string }> {
   try {
-    const raw = localStorage.getItem("intellcode_repositories");
+    const raw = localStorage.getItem(STORAGE_KEYS.repositories);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -157,21 +158,27 @@ const Submit = () => {
   };
   const [analysisMode, setAnalysisMode] = useState<"full" | "quick">("full");
   const [submissionMethod, setSubmissionMethod] = useState<"upload" | "github">("upload");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const ruleSets = useMemo(() => loadRuleSets(), []);
+  const [ruleSets, setRuleSets] = useState(loadRuleSets);
   const [connectedRepos, setConnectedRepos] = useState(loadConnectedRepos);
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === "intellcode_repositories") setConnectedRepos(loadConnectedRepos());
+      if (e.key === STORAGE_KEYS.repositories) setConnectedRepos(loadConnectedRepos());
+      if (e.key === STORAGE_KEYS.rules) setRuleSets(loadRuleSets());
     };
     window.addEventListener("storage", onStorage);
-    // Reload on tab focus (user coming back from Repositories page)
-    const onVisible = () => { if (document.visibilityState === "visible") setConnectedRepos(loadConnectedRepos()); };
+    // Reload on tab focus (user coming back from Repositories / Rules page)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        setConnectedRepos(loadConnectedRepos());
+        setRuleSets(loadRuleSets());
+      }
+    };
     document.addEventListener("visibilitychange", onVisible);
     return () => { window.removeEventListener("storage", onStorage); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
 
   // GitHub mode state
+  const [ghAuthError, setGhAuthError] = useState(false); // true when token is expired/invalid
   const [selectedRepo, setSelectedRepo] = useState("");
   const [selectedBranch, setSelectedBranch] = useState("main");
   const [branches, setBranches] = useState<string[]>([]);
@@ -224,7 +231,8 @@ const Submit = () => {
       })
       .catch((e: Error) => {
         setBranches([repo.defaultBranch || "main"]);
-        if (e.message) toast.error(e.message);
+        if (e.message?.includes("token expired") || e.message?.includes("401")) setGhAuthError(true);
+        else toast.error(e.message);
       })
       .finally(() => setLoadingBranches(false));
   }, [selectedRepo, connectedRepos]);
@@ -265,7 +273,8 @@ const Submit = () => {
       })
       .catch((e: Error) => {
         setGhFiles([]);
-        if (e.message) toast.error(e.message);
+        if (e.message?.includes("token expired") || e.message?.includes("401")) setGhAuthError(true);
+        else toast.error(e.message);
       })
       .finally(() => setLoadingFiles(false));
   }, [selectedRepo, selectedBranch, connectedRepos]);
@@ -312,6 +321,10 @@ const Submit = () => {
   const handleSubmit = async () => {
     if (!code.trim()) {
       toast.error("Please paste some code to analyze.");
+      return;
+    }
+    if (code.length > 500_000) {
+      toast.error("File too large", { description: "Maximum code size is 500 KB. Please trim or split the file." });
       return;
     }
     setIsAnalyzing(true);
@@ -591,6 +604,27 @@ const Submit = () => {
               <Github className="w-4 h-4 text-primary" />
               <h2 className="text-base font-semibold text-foreground">Repository Selection</h2>
             </div>
+            {ghAuthError && (
+              <div className="flex items-start gap-3 mb-4 px-4 py-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+                <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-destructive">GitHub token expired</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Your access token is no longer valid.{" "}
+                    <span
+                      className="text-primary underline cursor-pointer"
+                      onClick={() => navigate("/repositories", { state: { from: "submit" } })}
+                    >
+                      Reconnect in Repositories
+                    </span>{" "}
+                    to continue.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setGhAuthError(false)} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {connectedRepos.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-6 text-center">
                 <Github className="w-10 h-10 text-muted-foreground opacity-50" />
