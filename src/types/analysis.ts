@@ -10,6 +10,7 @@ export interface SecurityFinding {
   confidence: number;
   cwe: string;
   source: string;
+  decision?: Decision;  // injected by backend decision layer
 }
 
 export interface SecurityResult {
@@ -253,6 +254,32 @@ export interface ReadabilityResult {
 
 // ─── Full Combined Result ─────────────────────────────────────────────────────
 
+// ─── Decision Layer ───────────────────────────────────────────────────────────
+
+export type DecisionAction = "fix_now" | "review_manually" | "low_priority" | "unreliable";
+
+export interface Decision {
+  action: DecisionAction;
+  label: string;
+  explanation: string;
+  priority: number;
+  color: "red" | "yellow" | "blue" | "gray";
+}
+
+export interface TrustSummaryItem {
+  model: string;
+  reliability: "high" | "medium" | "low";
+  message: string;
+}
+
+export interface TrustSummary {
+  overall_reliable: boolean;
+  language_in_distribution: boolean;
+  items: TrustSummaryItem[];
+}
+
+// ─── Full Combined Result ─────────────────────────────────────────────────────
+
 export interface FullAnalysisResult {
   filename: string;
   language: string;
@@ -268,6 +295,8 @@ export interface FullAnalysisResult {
   overall_score: number;
   status: "clean" | "action_required" | "critical";
   summary: string;
+  trust_summary?: TrustSummary;
+  model_version?: string;
   // Added by frontend after parallel calls:
   docs?: DocQualityResult;
   performance?: PerformanceResult;

@@ -5,6 +5,7 @@
  */
 
 import type { FullAnalysisResult } from "@/types/analysis";
+import { STORAGE_KEYS } from "@/constants/storage";
 
 export interface HistoryEntry {
   id: string;
@@ -20,9 +21,10 @@ export interface HistoryEntry {
   resolvedIssues: string[];     // issue keys that user marked resolved
   falsePositives: string[];     // issue keys marked false positive
   repoName?: string;            // e.g. "safaapatel/intellcode" — undefined for manual submissions
+  modelVersion?: string;        // e.g. "1.1.0" — backend model version at time of analysis
 }
 
-const KEY = "intellcode_review_history";
+const KEY = STORAGE_KEYS.reviewHistory;
 const MAX_ENTRIES = 50;
 
 function load(): HistoryEntry[] {
@@ -87,7 +89,7 @@ function overallScore(result: FullAnalysisResult): number {
   if (result.docs?.average_quality != null) scores.push(result.docs.average_quality);
   if (result.security?.vulnerability_score != null)
     scores.push(Math.max(0, 100 - result.security.vulnerability_score * 10));
-  if (scores.length === 0) return 75;
+  if (scores.length === 0) return 0;
   return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
 
@@ -114,6 +116,7 @@ export function addEntry(
     resolvedIssues: [],
     falsePositives: [],
     repoName,
+    modelVersion: result.model_version,
   };
   const updated = [entry, ...entries].slice(0, MAX_ENTRIES);
   save(updated);

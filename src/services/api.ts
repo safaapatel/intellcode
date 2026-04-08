@@ -37,6 +37,7 @@ async function post<T>(path: string, body: AnalyzeRequest, signal?: AbortSignal)
     signal,
   });
   if (!res.ok) {
+    if (res.status === 429) throw new Error("Rate limited — maximum 20 analyses per minute. Please wait and try again.");
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
   }
@@ -92,7 +93,7 @@ export async function analyzeCodeStream(
   const req: AnalyzeRequest = { code, filename, language, git_metadata: gitMetadata };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60_000);
+  const timeoutId = setTimeout(() => controller.abort(), 120_000);
 
   const res = await fetch(`${BASE_URL}/analyze/stream`, {
     method: "POST",
@@ -107,7 +108,8 @@ export async function analyzeCodeStream(
     throw new Error(`API error ${res.status}: ${text}`);
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) throw new Error("Response body is empty — streaming not supported");
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 

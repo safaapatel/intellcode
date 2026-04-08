@@ -89,8 +89,10 @@ export default {
         "float": "float 3s ease-in-out infinite",
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        // System font stack — no external CDN required.
+        // Covers: Segoe UI (Windows), SF Pro (macOS/iOS), Roboto (Android/ChromeOS).
+        sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', 'monospace'],
       },
     },
   },

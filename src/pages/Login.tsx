@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getUsers, saveSession, getSession } from "@/services/auth";
+import { verifyLogin, saveSession, getSession } from "@/services/auth";
 
 type LegalModal = null | "terms" | "privacy";
 
@@ -46,30 +46,30 @@ const Login = () => {
     }, 1800);
   };
 
-  const handleEmailLogin = (e: React.FormEvent) => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
     if (!email.trim() || !password.trim()) {
       setLoginError("Please enter both email and password.");
       return;
     }
-    const users = getUsers();
-    const user = users.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-    if (!user) {
-      setLoginError("Invalid email or password.");
-      return;
+    setLoading(true);
+    try {
+      const user = await verifyLogin(email, password);
+      if (!user) {
+        setLoginError("Invalid email or password.");
+        return;
+      }
+      saveSession(user);
+      toast.success(`Welcome back, ${user.name.split(" ")[0]}!`, {
+        description: `Signed in as ${user.role}`,
+      });
+      navigate(from ?? "/dashboard");
+    } catch {
+      setLoginError("An error occurred during sign in. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    if (!user.active) {
-      setLoginError("Your account has been deactivated. Contact an admin.");
-      return;
-    }
-    saveSession(user);
-    toast.success(`Welcome back, ${user.name.split(" ")[0]}!`, {
-      description: `Signed in as ${user.role}`,
-    });
-    navigate("/dashboard");
   };
 
   return (

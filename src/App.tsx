@@ -3,10 +3,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, Component, type ErrorInfo, type ReactNode } from "react";
 import { ProtectedRoute } from "@/components/app/ProtectedRoute";
 import { OnboardingModal } from "@/components/app/OnboardingModal";
 import { CommandPalette } from "@/components/app/CommandPalette";
+import { KeyboardShortcuts } from "@/components/app/KeyboardShortcuts";
 import { consumeTokenFromHash, setGitHubToken, getGitHubUser } from "@/services/github";
 import { toast } from "sonner";
 import Index from "./pages/Index";
@@ -28,6 +29,49 @@ import Batch from "./pages/Batch";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+// ─── Error Boundary ───────────────────────────────────────────────────────────
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[AppErrorBoundary]", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center p-8">
+          <div className="max-w-md w-full text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto">
+              <span className="text-3xl">!</span>
+            </div>
+            <h1 className="text-xl font-bold text-foreground">Something went wrong</h1>
+            <p className="text-sm text-muted-foreground">
+              An unexpected error occurred. Your analysis history is safe.
+            </p>
+            <pre className="text-left text-xs bg-secondary/40 rounded-lg p-3 overflow-x-auto text-muted-foreground">
+              {this.state.error.message}
+            </pre>
+            <button
+              type="button"
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
+              onClick={() => { this.setState({ error: null }); window.location.hash = "/dashboard"; }}
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /** Reads #github_token=... from URL after OAuth redirect, stores token, shows welcome toast. */
 function GitHubOAuthHandler() {
@@ -55,9 +99,11 @@ const App = () => (
       <Toaster />
       <Sonner />
       <HashRouter>
+        <AppErrorBoundary>
         <GitHubOAuthHandler />
         <OnboardingModal />
         <CommandPalette />
+        <KeyboardShortcuts />
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
@@ -79,6 +125,7 @@ const App = () => (
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </AppErrorBoundary>
       </HashRouter>
     </TooltipProvider>
   </QueryClientProvider>
