@@ -10,7 +10,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { mockUser } from "@/data/mockData";
 import { getSession, clearSession } from "@/services/auth";
 import { getEntries, type HistoryEntry } from "@/services/reviewHistory";
 
@@ -122,7 +121,7 @@ export const AppNavigation = () => {
     return () => clearInterval(id);
   }, []);
 
-  const displayName: string = profile.name ?? mockUser.name;
+  const displayName: string = profile.name ?? getSession()?.name ?? "User";
   const photoUrl: string = profile.photoUrl ?? "";
   const initials = displayName
     .split(" ")
