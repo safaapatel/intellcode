@@ -3,13 +3,19 @@ name: IntelliCode PR Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    # Only run when Python files are touched
     paths:
       - "**.py"
+      - "**.js"
+      - "**.ts"
+      - "**.jsx"
+      - "**.tsx"
+      - "**.java"
 
 permissions:
   contents: read
-  pull-requests: write  # needed to post review comments
+  pull-requests: write    # post review comments
+  checks: write           # post Check Run (required for Checks API)
+  security-events: write  # upload SARIF to Code Scanning
 
 jobs:
   intellicode-review:
@@ -39,21 +45,17 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 3. Install IntelliCode dependencies
-      #    We install a CPU-only torch to keep the image small and fast.
-      #    The security CNN falls back to RF-only when torch is unavailable,
-      #    so full functionality is preserved.
+      #    CPU-only torch keeps the image small and fast.
+      #    The security CNN falls back to RF-only when torch is unavailable.
       # -----------------------------------------------------------------------
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          # CPU-only PyTorch (much smaller download, no GPU in CI)
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r backend/requirements.txt
 
       # -----------------------------------------------------------------------
-      # 4. Restore model checkpoints from cache
-      #    The checkpoints are committed to the repo (they are small .pkl/.pt
-      #    files).  This step is a no-op if they are already present.
+      # 4. Check model checkpoints
       # -----------------------------------------------------------------------
       - name: Check model checkpoints
         run: |
@@ -79,18 +81,27 @@ jobs:
       - name: Run IntelliCode review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Set quality threshold (0-100). PRs below this score get
-          # REQUEST_CHANGES; above it get a COMMENT review.
           INTELLICODE_THRESHOLD: ${{ vars.INTELLICODE_THRESHOLD || '60' }}
-          # Set to "true" to fail the CI step when quality is below threshold.
-          # Leave as "false" (default) to report without blocking merges.
           INTELLICODE_FAIL_ON_ISSUES: ${{ vars.INTELLICODE_FAIL_ON_ISSUES || 'false' }}
         run: |
           cd /
           python $GITHUB_WORKSPACE/backend/github_action_review.py
 
       # -----------------------------------------------------------------------
-      # 6. Upload full analysis JSON as workflow artifact (for debugging)
+      # 6. Upload SARIF to GitHub Code Scanning (Security tab)
+      #    Findings appear as Code Scanning alerts on the PR and in the repo
+      #    Security tab. Dismissed alerts are remembered across PRs.
+      # -----------------------------------------------------------------------
+      - name: Upload SARIF to Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: backend/evaluation/results/intellicode.sarif.json
+          category: intellicode
+        continue-on-error: true   # don't fail if SARIF is missing (no findings)
+
+      # -----------------------------------------------------------------------
+      # 7. Upload full analysis JSON as workflow artifact (for debugging)
       # -----------------------------------------------------------------------
       - name: Save analysis results artifact
         if: always()
