@@ -613,6 +613,11 @@ those failures---multi-seed variance, LOPO benchmarks, temporal splits, and conf
 intervals---rather than paper over them with a single held-out test split. The models are
 not individually state-of-the-art. The protocol is the point.
 
+Put differently: this thesis argues that rigorous evaluation---not model sophistication---is
+the central challenge in deploying reliable ML-based code analysis. Building the system
+is the easy part; knowing what it actually does under realistic conditions is harder
+and, for a practitioner, more useful.
+
 The design rests on one observation: coverage and speed only matter if
 developers actually consult the results. A finding that takes thirty seconds to arrive
 gets ignored. A security alert that requires switching tools gets dismissed. The system
