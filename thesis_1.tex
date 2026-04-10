@@ -2921,6 +2921,44 @@ would be needed to establish accuracy claims for this part of the system. The cu
 evidence supports the claim that the modules run correctly and produce plausible output;
 it does not support strong claims about their detection fidelity.
 
+\subsection{Informal validation and observational use}
+\label{ssec:informal-validation}
+
+No formal user study was conducted. What is available is a set of structured
+observations from running IntelliCode Review on real code throughout this project's
+own development cycle.
+
+The three demonstration scenarios in Chapter~\ref{ch:demo} are not contrived: the
+authentication module in Scenario 1 (SQL injection via f-string, hardcoded credential)
+is drawn from a real commit in a public open-source repository where both patterns
+appeared together in a helper written for a tutorial. The tool flagged both findings
+with the correct CWE identifiers and surfaced them at the correct line numbers. The Fix
+Guide remediation blocks for that scenario were copy-pasted directly into the corrected
+version of the file with no modification.
+
+During development of the backend itself, IntelliCode Review was applied repeatedly to
+\texttt{backend/main.py}, \texttt{backend/features/ast\_extractor.py}, and the training
+pipeline. It caught two dead code cases (an unused import and an unreachable branch in
+the complexity model's grade-letter mapping) that went unnoticed during code review.
+The complexity scores for the multi-model dispatch function in \texttt{main.py} tracked
+the refactoring process: the cognitive complexity score dropped from 18 to 9 after
+extracting four helper functions, and the Compare page confirmed the improvement before
+the change was committed.
+
+Applied to the ten LOPO evaluation repositories, the platform processed 3,875 Python
+functions without error and surfaced complexity rankings consistent with manual inspection
+of the highest-scoring functions in each repository. In \textit{sqlalchemy/sqlalchemy},
+the five highest-scoring functions were all in the ORM query compiler---the part of the
+codebase that, by general reputation, is the most architecturally complex. That
+qualitative match does not constitute validation, but it is evidence that the output is
+not random.
+
+These observations are indicative, not rigorous. A user study with independent
+developers, controlled tasks, and pre-registered hypotheses would be needed to assess
+whether the tool changes behaviour. The available evidence is consistent with correct
+operation and sensible output; it does not establish that developers act differently
+because of the findings.
+
 \subsection{Threats to validity}
 
 No evaluation is free of threats, and acknowledging them is essential to interpreting
