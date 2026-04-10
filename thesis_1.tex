@@ -2836,6 +2836,62 @@ a temporal split that reveals the anti-learning effect, the evaluation gives
 practitioners a more complete picture of what the models actually provide in deployment
 than benchmark numbers alone would suggest.
 
+\subsection{Why ML-based code analysis fails at the boundary}
+\label{ssec:why-ml-fails}
+
+The cross-project and temporal failures documented in Section~\ref{sec:model-results}
+are not incidental. They point to structural reasons why ML models struggle with code
+quality tasks that do not apply to other domains where machine learning has been more
+straightforwardly successful.
+
+\textbf{Dataset bias and vocabulary mismatch.} All four models here are trained on
+popular, well-maintained Python web frameworks---Flask, Django, requests, pip---written
+by experienced engineers who share naming conventions, API idioms, and review culture.
+Code written by a solo contributor, in a scientific computing context, or in a legacy
+enterprise system will not share these surface patterns. The vocabulary of variable
+names, function signatures, and control structures that the Random Forest and XGBoost
+models implicitly rely on differs enough to break the feature distributions, even when
+the underlying structural patterns are the same. This is not a data quantity problem;
+it is a distribution coverage problem that more samples from the same sources cannot fix.
+
+\textbf{Feature scope and semantic blindness.} Every model in this platform operates
+on single-function features: cyclomatic complexity, line counts, Halstead volume, token
+sequences within one function body. Real vulnerabilities and design problems are often
+interprocedural. A SQL injection requires an untrusted input to travel through several
+call boundaries before reaching a database sink. A god-class smell requires understanding
+what a module does relative to the rest of the system. Single-function features are blind
+to both. The model will assign a low vulnerability probability to a function that
+safely formats a query string, unaware that the argument arrives unsanitised from a
+route handler three files away. This is not a limitation of any specific architecture;
+it is a fundamental mismatch between the granularity of the analysis and the granularity
+of the problem.
+
+\textbf{Label noise and proxy targets.} SZZ-style commit labels---marking a commit as
+buggy if a future commit's message contains ``fix'' or ``bug''---introduce noise that
+sets a practical ceiling on classification performance regardless of model capacity.
+Many ``fix'' commits repair documentation, configuration, or test infrastructure rather
+than code defects. Cognitive complexity as a regression target is better-grounded than
+the Maintainability Index but still a proxy: it measures structural nesting penalties,
+not the genuine difficulty a developer will experience reading the code. Oracle labels
+derived from heuristic thresholds---function length and parameter count for code
+smells---measure whether functions exceed an arbitrary size limit, not whether they
+genuinely violate a design principle. Every result in this thesis is constrained by
+its weakest link, which is usually the label quality.
+
+\textbf{Temporal and distributional shift.} Code quality patterns evolve. A model
+trained on commits from 2018--2022 will encounter different idioms, dependency versions,
+and design conventions than code written in 2025. The temporal anti-learning result
+in the bug predictor is the sharpest illustration: a model that learned that high-metric
+files are buggy becomes slightly wrong once most of those files have been cleaned up.
+Deployment does not pause for retraining, but the training distribution drifts continuously.
+
+These four failure modes are not unique to IntelliCode Review. They appear across the
+software engineering ML literature and are well documented in the defect prediction
+community~\cite{lessmann2008, kamei2013}. The value of naming them here is not to excuse
+the failures, but to give practitioners a framework for deciding which modules to trust,
+under what conditions, and when to fall back on the deterministic analysers that do not
+share these limitations.
+
 \subsection{Strengths and design goal fulfilment}
 
 The evaluated system meets all five design goals stated in Section~\ref{sec:goals}.
