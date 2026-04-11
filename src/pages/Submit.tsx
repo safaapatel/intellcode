@@ -264,7 +264,6 @@ const Submit = () => {
         const tooLarge = eligible.filter((f) => (f.size ?? 0) >= sizeLimit(f));
         const files = eligible
           .filter((f) => (f.size ?? 0) < sizeLimit(f))
-          .slice(0, 30)
           .map((f) => ({ path: f.path, size: f.size ?? 0 }));
         setGhFiles(files);
         if (files.length > 0) setSelectedFile(files[0].path);
@@ -692,7 +691,7 @@ const Submit = () => {
                       {loadingFiles && <span className="ml-2 text-xs text-muted-foreground">Loading files…</span>}
                       {!loadingFiles && ghFiles.length > 0 && (
                         <span className="ml-2 text-xs text-muted-foreground">
-                          {ghFiles.length} files{ghFiles.length === 30 ? " (first 30 shown)" : ""}
+                          {ghFiles.length} files
                         </span>
                       )}
                     </Label>
