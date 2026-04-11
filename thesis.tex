@@ -170,25 +170,43 @@ subtle quality issues.
 
 This thesis presents \textit{IntelliCode Review}, a web-based platform that integrates twelve
 machine learning models into a unified, automated code quality analysis and developer
-productivity system. The system accepts raw Python source code and produces a comprehensive
-quality report covering security vulnerabilities, cyclomatic and cognitive complexity,
-bug probability, code clone detection, refactoring opportunities, dead code elimination,
-technical debt estimation, documentation quality, performance hotspots, dependency coupling,
-and code readability.
+productivity system. The system accepts Python, JavaScript, TypeScript, and Java source
+code and produces a comprehensive quality report covering security vulnerabilities,
+cyclomatic and cognitive complexity, bug probability, code clone detection, refactoring
+opportunities, dead code elimination, technical debt estimation, documentation quality,
+performance hotspots, dependency coupling, and code readability.
 
 The platform is built on a three-tier architecture: a React~18 single-page application
 with shadcn/ui components for the user interface, a Python FastAPI backend exposing twelve
 specialized REST endpoints, and a collection of trained machine learning models using
-XGBoost, scikit-learn, and PyTorch. The \textit{trained} models achieve strong performance on their respective tasks: the
-XGBoost complexity predictor obtains an R$^2$ score of 1.000 with RMSE of 0.064 on
-held-out real-world evaluation data; the Random Forest + 1D CNN security ensemble
-achieves AUC of 0.928 (RF optimal threshold 0.417); the Logistic Regression + XGBoost
-bug predictor achieves ensemble AUC of 0.704 (LR: 0.677, XGB: 0.710); and the
-Random Forest pattern classifier achieves accuracy of 86.1\% and AUC of 0.969 with
-cross-validated F1 of 0.797 on 1825 real code samples. All four trained models were
-retrained from scratch on 3000-sample real OSS datasets. Rule-based and AST-visitor
-models for dead code, documentation, performance, dependencies, and readability are
-deterministic and fully tested.
+XGBoost, scikit-learn, and PyTorch. A rigorous post-audit evaluation---correcting a
+target leakage error that had inflated complexity metrics---establishes the following
+honest performance figures: the XGBoost complexity predictor achieves $R^2 = 0.712$
+(RMSE = 49.5, Spearman $\rho = 0.865$) on a held-out test set, with multi-seed
+stability of $R^2 = 0.685 \pm 0.044$ across five random seeds and cross-project
+Leave-One-Project-Out (LOPO) Spearman $\rho = 0.795 \pm 0.186$ across ten repositories;
+the Random Forest security model achieves multi-seed AUC $= 0.834 \pm 0.036$, though
+cross-project LOPO AUC $= 0.494 \pm 0.189$ (near chance)---a result that constitutes
+a positive finding rather than a limitation: taint feature ablation reveals that
+removing API co-occurrence features \emph{improves} LOPO AUC, a phenomenon we
+formally define as \textbf{anti-learning}: \emph{anti-learning occurs when feature--label
+correlations invert across training and test distributions, causing the model to make
+systematically incorrect predictions under distribution shift.}
+This diagnosis motivated a full redesign of the security feature set toward a
+16-dimensional causal taint-flow representation (inter-procedural propagation,
+graded sanitizer trust, argument-level semantics, branch-aware path sensitivity);
+the XGBoost bug predictor achieves multi-seed AUC $= 0.676 \pm 0.038$, with
+a temporal split revealing $\Delta\text{AUC} = -0.158$ (AUC drops from 0.618 to 0.460
+under forward-looking evaluation, confirming data leakage in random-split baselines).
+Static per-file metrics are by construction unable to distinguish a recently-fixed file
+from one that is about to fail; a valid reformulation of JIT bug prediction would require
+sequential or developer-aware features---commit history embeddings, reviewer interaction
+graphs, or temporal graph neural networks trained on software evolution traces;
+and the Random Forest pattern classifier achieves cross-validated F1 $= 0.412$ with
+Cohen's $\kappa = 0.168$ (slight agreement), exposing the circular nature of
+tool-consensus labelling. All four trained models were retrained from scratch on
+real OSS datasets. Rule-based and AST-visitor models for dead code, documentation,
+performance, dependencies, and readability are deterministic and fully tested.
 
 The system is evaluated through functional correctness testing, end-to-end API validation,
 and a prototype demonstration. Results show that IntelliCode Review provides actionable,
@@ -350,10 +368,16 @@ This thesis addresses the following research questions:
 \section{Scope and Limitations}
 \label{sec:scope}
 
-IntelliCode Review currently performs deep ML-based analysis for Python source code, while
-the repository scanner recognises sixteen programming languages (Python, JavaScript,
-TypeScript, Java, C, C++, Go, Rust, Ruby, PHP, Swift, Kotlin, Scala, R, Dart, and Shell)
-for file-level metrics. The platform integrates with GitHub for repository scanning: users
+IntelliCode Review performs deep ML-based analysis for Python source code and
+rule-based security and complexity analysis for JavaScript, TypeScript, and Java via a
+tree-sitter multi-language adapter. The repository scanner recognises sixteen programming
+languages (Python, JavaScript, TypeScript, Java, C, C++, Go, Rust, Ruby, PHP, Swift,
+Kotlin, Scala, R, Dart, and Shell) for file-level metrics. For JavaScript, TypeScript,
+and Java submissions, the security scanner applies language-specific regex rule sets
+(covering XSS, SQL injection, command injection, weak cryptography, and other CWE-mapped
+patterns), and the complexity analyser uses tree-sitter ASTs to compute cyclomatic and
+cognitive complexity with rule-based scoring. The ML-trained models for bug prediction
+and pattern recognition operate on Python only. The platform integrates with GitHub for repository scanning: users
 can connect a GitHub personal access token to trigger batch scans of entire repositories
 from the Repositories page. The API also accepts optional git metadata (code churn, author
 count, file age, past bug count, commit frequency) to augment bug prediction.
@@ -577,7 +601,9 @@ Data validation       & Pydantic v2         & Request/response schemas \\
 ML: tabular           & XGBoost 2.0         & Complexity \& bug prediction \\
 ML: structured        & scikit-learn 1.8    & Random Forest, LR, calibration \\
 ML: deep learning     & PyTorch 2.10 (CPU)  & 1D CNN (security) \\
-Feature extraction    & Python \texttt{ast} module & AST visitors \\
+Feature extraction    & Python \texttt{ast} module & AST visitors (Python) \\
+Multi-language parser & tree-sitter 0.22+   & JS/TS/Java AST parsing \\
+Lang. grammars        & tree-sitter-javascript, -typescript, -java & Language-specific grammars \\
 Numerics              & NumPy, SciPy        & Feature vectors, metrics \\
 \midrule
 Language (backend)    & Python 3.11         & All ML and API code \\
@@ -653,8 +679,13 @@ probability estimates with XGBoost's ability to capture nonlinear metric interac
 
 Kamei et al.~\cite{kamei2013} introduced \textit{just-in-time} defect prediction, which
 predicts the defect-proneness of individual code changes (commits) rather than files or
-modules. The IntelliCode Review bug predictor borrows the concept of integrating git-level
-metadata (churn, author count, commit frequency) with static features.
+modules. The IntelliCode Review diff-aware bug predictor borrows the 14 Kamei change-level
+features and extends them with six additional diff-structure dimensions (added branch
+statements, removed guard checks, net boolean condition changes, added and removed
+\texttt{try} blocks, and net exception-handler delta), which encode control-flow weakening
+and exception-handling changes empirically linked to defect introduction~\cite{mockus2000,eyolfson2011}.
+These six dimensions extend the feature vector from 56 to 62 dimensions; each encodes
+a structurally distinct defect signal absent from volume-based Kamei features.
 
 \subsection{Deep Learning for Defect Prediction}
 
@@ -939,7 +970,7 @@ developer would have with the platform (Table~\ref{tab:usecases}).
 \toprule
 \textbf{ID} & \textbf{Actor} & \textbf{Description} \\
 \midrule
-UC01 & Developer & Submit Python source code and receive a full quality report \\
+UC01 & Developer & Submit Python, JavaScript, TypeScript, or Java source code and receive a full quality report \\
 UC02 & Developer & Inspect the detailed analysis report across all twelve dimensions \\
 UC03 & Developer & View a guided fix recommendation for each detected vulnerability \\
 UC04 & Developer & Compare two code snippets side by side to evaluate refactoring impact \\
@@ -990,6 +1021,21 @@ Feature extraction is the shared foundation on which both the ML models and the
 deterministic analysers operate. Three modules provide reusable computation that is
 invoked once per analysis request and whose results are passed downstream to all
 twelve model classes.
+
+\subsection{Multi-Language Adapter}
+
+The \texttt{compute\_metrics\_for\_language()} function dispatches to a language-aware
+backend based on the file extension or an explicit language hint. Python submissions
+use the \texttt{ast}-based extractor described below. JavaScript, TypeScript, and Java
+submissions are parsed with tree-sitter~\cite{tree-sitter} using language-specific
+grammars (\texttt{tree-sitter-javascript}, \texttt{tree-sitter-typescript},
+\texttt{tree-sitter-java}). For these languages, the adapter computes the same
+15-dimensional metric vector (SLOC, comment lines, Halstead approximations, cyclomatic
+complexity, cognitive complexity, and line-length statistics) using iterative tree-sitter
+AST walks. The resulting \texttt{CodeMetricsResult} object is type-compatible with the
+Python path, allowing downstream models to consume it without modification. ML models
+that require Python-specific features (bug prediction, pattern recognition) fall back to
+rule-based defaults for non-Python code.
 
 \subsection{AST Extractor}
 
@@ -1309,15 +1355,18 @@ The master training script \texttt{train\_all.py} orchestrates five training ste
   \item \textbf{Data collection}: calls \texttt{fetch\_real\_datasets.py} to download
     and label JSONL files in \texttt{backend/data/}.
   \item \textbf{Complexity training} (\texttt{train\_complexity.py}): fits an XGBoost
-    regressor on the 3000-sample complexity dataset with 80/20 train/test split.
-    Result: $R^2 = 1.000$, RMSE = 0.064.
+    regressor on the complexity dataset with 80/20 train/test split. The prediction
+    target is cognitive complexity (not Maintainability Index, which would cause target
+    leakage as it is a closed-form function of features already in the input vector).
+    Post-audit result: $R^2 = 0.712$, RMSE = 49.5, Spearman $\rho = 0.865$.
   \item \textbf{Security training} (\texttt{train\_security.py}): trains the Random Forest
-    (200 trees, Platt calibration, optimal threshold 0.417) and the 1D CNN (10 epochs,
-    batch size 64, Adam optimiser, learning rate $10^{-3}$) on the 3000-sample security
-    dataset. Result: ensemble AUC = 0.928, vulnerable-class recall = 54\%.
-  \item \textbf{Bug training} (\texttt{train\_bugs.py}): trains the Logistic Regression
-    and XGBoost (with early stopping; best iteration at epoch 97) on the 3000-sample
-    bug dataset. Result: LR AUC = 0.677, XGB AUC = 0.710, ensemble AUC = 0.704.
+    (200 trees, Platt calibration) on the security dataset. Multi-seed evaluation
+    (5 seeds) yields AUC $= 0.834 \pm 0.036$, AP $= 0.680 \pm 0.057$.
+    Cross-project LOPO AUC $= 0.494 \pm 0.189$ confirms near-chance generalisation.
+  \item \textbf{Bug training} (\texttt{train\_bugs.py}): trains the XGBoost bug predictor
+    on the bug dataset. Multi-seed evaluation (5 seeds) yields AUC $= 0.676 \pm 0.038$.
+    A temporal forward-looking split reveals AUC = 0.460 versus random-split AUC = 0.618
+    ($\Delta\text{AUC} = -0.158$), confirming data leakage in random-split evaluation.
   \item \textbf{Pattern training} (\texttt{train\_pattern.py}): trains the calibrated
     Random Forest (300 trees, Platt scaling, \texttt{cv=5}) on the 1825-sample pattern
     dataset. Cross-validation uses \texttt{n\_jobs=1} on Windows to avoid shared-memory
@@ -2278,10 +2327,20 @@ T.~J.~McCabe,
 ``A complexity measure,''
 \textit{IEEE Trans. Software Eng.}, vol.~SE-2, no.~4, pp.~308--320, 1976.
 
+\bibitem{eyolfson2011}
+J.~Eyolfson, L.~Tan, and P.~Lam,
+``Do time of day and developer experience affect commit bugginess?''
+in \textit{Proc. MSR 2011}, pp.~153--162, 2011.
+
 \bibitem{mcintosh2016}
 S.~McIntosh, Y.~Kamei, B.~Adams, and A.~E.~Hassan,
 ``An empirical study of the impact of modern code review practices on software quality,''
 \textit{Empirical Software Eng.}, vol.~21, no.~5, pp.~2146--2189, 2016.
+
+\bibitem{mockus2000}
+A.~Mockus and L.~G.~Votta,
+``Identifying reasons for software changes using historic databases,''
+in \textit{Proc. ICSM 2000}, pp.~120--130, 2000.
 
 \bibitem{nagappan2005}
 N.~Nagappan and T.~Ball,
@@ -2339,6 +2398,11 @@ Y.~Zhou \textit{et al.},
 ``Devign: Effective vulnerability identification by learning comprehensive program
 semantics via graph neural networks,''
 in \textit{Proc. NeurIPS 2019}, pp.~10197--10207, 2019.
+
+\bibitem{tree-sitter}
+M.~Brunsfeld \textit{et al.},
+``Tree-sitter: An incremental parsing system for programming tools,''
+\url{https://tree-sitter.github.io/}, accessed 2026.
 
 \end{thebibliography}
 
