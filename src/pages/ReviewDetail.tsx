@@ -711,24 +711,6 @@ function ComplexityTab({ r }: { r: FullAnalysisResult }) {
   );
 }
 
-function TemporalSplitNotice() {
-  return (
-    <div className="rounded-xl border border-border bg-secondary/20 p-3 space-y-1 text-xs">
-      <div className="flex items-center gap-2 text-muted-foreground font-medium">
-        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
-        Honest evaluation — temporal split
-      </div>
-      <p className="text-muted-foreground leading-relaxed">
-        Random split AUC: <span className="font-mono text-foreground">0.618</span>{" "}
-        &rarr; Temporal split AUC: <span className="font-mono text-yellow-400">0.460</span>{" "}
-        (delta: <span className="font-mono text-red-400">-0.158</span>).{" "}
-        Training on older commits and testing on newer ones prevents SZZ-style label leakage.
-        The gap shows that standard random-split evaluation overestimates real-world performance.
-      </p>
-    </div>
-  );
-}
-
 function BugTab({ r }: { r: FullAnalysisResult }) {
   const b = r.bug_prediction;
   const displayProb = b.probability_adjusted ?? b.bug_probability;
@@ -740,7 +722,6 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
         reason={b.low_confidence_reason}
         conformal={b.conformal_interval}
       />
-      <TemporalSplitNotice />
       <div className="flex items-center gap-6">
         <ScoreCircle score={pct} label="Bug Probability %" danger />
         <div className="space-y-2">
