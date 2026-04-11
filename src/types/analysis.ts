@@ -13,6 +13,23 @@ export interface SecurityFinding {
   decision?: Decision;  // injected by backend decision layer
 }
 
+export interface ConformalInterval {
+  lower: number;
+  upper: number;
+  point_estimate: number;
+  coverage_level: number;  // e.g. 0.90
+  quantile: number;
+  n_cal: number;
+  is_fallback: boolean;
+}
+
+export interface OODInfo {
+  raw_probability: number;
+  low_confidence: boolean;
+  confidence_factor: number;
+  sigma_distance: number;
+}
+
 export interface SecurityResult {
   findings: SecurityFinding[];
   vulnerability_score: number;
@@ -23,6 +40,10 @@ export interface SecurityResult {
     medium: number;
     low: number;
   };
+  ood?: OODInfo;
+  low_confidence?: boolean;
+  low_confidence_reason?: string;
+  conformal_interval?: ConformalInterval;
 }
 
 // ─── Complexity ───────────────────────────────────────────────────────────────
@@ -51,6 +72,11 @@ export interface BugPredictionResult {
   confidence: number;
   static_score: number;
   git_score: number | null;
+  ood?: OODInfo;
+  low_confidence?: boolean;
+  low_confidence_reason?: string;
+  probability_adjusted?: number;
+  conformal_interval?: ConformalInterval;
 }
 
 // ─── Pattern Recognition ──────────────────────────────────────────────────────

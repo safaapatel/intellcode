@@ -33,7 +33,7 @@ import {
 import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
 import { toast } from "sonner";
-import type { FullAnalysisResult } from "@/types/analysis";
+import type { FullAnalysisResult, OODInfo, ConformalInterval } from "@/types/analysis";
 import { submitAnalysisFeedback, explainAnalysis, type ExplainResult } from "@/services/api";
 
 // ─── Feedback types ────────────────────────────────────────────────────────────
@@ -489,6 +489,55 @@ function DecisionBadge({ decision }: { decision?: { action: string; label: strin
   );
 }
 
+// ─── OOD / Conformal Uncertainty Banner ───────────────────────────────────────
+
+function OODBanner({ ood, reason, conformal }: {
+  ood?: OODInfo;
+  reason?: string;
+  conformal?: ConformalInterval;
+}) {
+  const isLow = ood?.low_confidence ?? false;
+  if (!isLow && !conformal) return null;
+  return (
+    <div className="rounded-xl border border-blue-500/30 bg-blue-500/8 p-3 space-y-2 mb-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Brain className="w-4 h-4 text-blue-400 shrink-0" />
+        <span className="text-xs font-semibold text-blue-400">Uncertainty estimate</span>
+        {isLow && (
+          <span className="text-[10px] bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded-full font-medium">
+            Low confidence — OOD input ({ood!.sigma_distance.toFixed(1)}&sigma;)
+          </span>
+        )}
+      </div>
+      {reason && (
+        <p className="text-xs text-muted-foreground italic">{reason}</p>
+      )}
+      {conformal && (
+        <div className="text-xs text-muted-foreground space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span>
+              {Math.round(conformal.coverage_level * 100)}% prediction interval:
+            </span>
+            <span className="font-mono text-foreground">
+              [{(conformal.lower * 100).toFixed(0)}%, {(conformal.upper * 100).toFixed(0)}%]
+            </span>
+            {conformal.is_fallback && (
+              <span className="text-[10px] text-muted-foreground/60 italic">
+                (default quantile — run calibration for tighter bounds)
+              </span>
+            )}
+            {!conformal.is_fallback && (
+              <span className="text-[10px] text-muted-foreground/60 italic">
+                calibrated on {conformal.n_cal} held-out samples
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Trust Banner ─────────────────────────────────────────────────────────────
 
 function TrustBanner({ r }: { r: FullAnalysisResult }) {
@@ -543,6 +592,11 @@ function SecurityTab({
   return (
     <div className="space-y-4">
       <TrustBanner r={r} />
+      <OODBanner
+        ood={r.security.ood}
+        reason={r.security.low_confidence_reason}
+        conformal={r.security.conformal_interval}
+      />
       <div className="flex gap-3 text-sm flex-wrap mb-2">
         {(["critical", "high", "medium", "low"] as const).map((sev) => (
           <span key={sev} className="flex items-center gap-1">
@@ -657,11 +711,36 @@ function ComplexityTab({ r }: { r: FullAnalysisResult }) {
   );
 }
 
+function TemporalSplitNotice() {
+  return (
+    <div className="rounded-xl border border-border bg-secondary/20 p-3 space-y-1 text-xs">
+      <div className="flex items-center gap-2 text-muted-foreground font-medium">
+        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
+        Honest evaluation — temporal split
+      </div>
+      <p className="text-muted-foreground leading-relaxed">
+        Random split AUC: <span className="font-mono text-foreground">0.618</span>{" "}
+        &rarr; Temporal split AUC: <span className="font-mono text-yellow-400">0.460</span>{" "}
+        (delta: <span className="font-mono text-red-400">-0.158</span>).{" "}
+        Training on older commits and testing on newer ones prevents SZZ-style label leakage.
+        The gap shows that standard random-split evaluation overestimates real-world performance.
+      </p>
+    </div>
+  );
+}
+
 function BugTab({ r }: { r: FullAnalysisResult }) {
   const b = r.bug_prediction;
-  const pct = Math.round(b.bug_probability * 100);
+  const displayProb = b.probability_adjusted ?? b.bug_probability;
+  const pct = Math.round(displayProb * 100);
   return (
     <div className="space-y-6">
+      <OODBanner
+        ood={b.ood}
+        reason={b.low_confidence_reason}
+        conformal={b.conformal_interval}
+      />
+      <TemporalSplitNotice />
       <div className="flex items-center gap-6">
         <ScoreCircle score={pct} label="Bug Probability %" danger />
         <div className="space-y-2">
@@ -673,6 +752,12 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
           <p className="text-sm text-muted-foreground">Static score: {Math.round(b.static_score * 100)}%</p>
           {b.git_score !== null && (
             <p className="text-sm text-muted-foreground">Git score: {Math.round((b.git_score ?? 0) * 100)}%</p>
+          )}
+          {b.ood?.low_confidence && b.probability_adjusted !== undefined && (
+            <p className="text-xs text-muted-foreground italic">
+              Adjusted probability: {Math.round(b.probability_adjusted * 100)}%
+              (raw: {Math.round(b.bug_probability * 100)}%)
+            </p>
           )}
         </div>
       </div>

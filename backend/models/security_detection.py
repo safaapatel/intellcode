@@ -456,15 +456,19 @@ class EnsembleSecurityModel:
 
     def __init__(
         self,
-        rf_weight: float = 0.55,
-        cnn_weight: float = 0.45,
+        rf_weight: float = 0.50,
+        cnn_weight: float = 0.35,
+        contrastive_weight: float = 0.15,
         checkpoint_dir: str = "checkpoints/security",
     ):
         self._rf_weight = rf_weight
         self._cnn_weight = cnn_weight
+        self._contrastive_weight = contrastive_weight
         self._checkpoint_dir = Path(checkpoint_dir)
         self._rf = RandomForestSecurityModel()
         self._cnn = CNNSecurityModel()
+        self._contrastive = None          # ContrastiveSecurityEncoder (optional)
+        self._contrastive_ready = False
         self._rf_ready = False
         self._cnn_ready = False
         self._rf_threshold: float = 0.5   # loaded from metrics.json if available
@@ -594,9 +598,22 @@ class EnsembleSecurityModel:
             except Exception:
                 pass
 
+        # Contrastive encoder component — adds a third signal when trained
+        contrastive_p = 0.0
+        if self._contrastive_ready and self._contrastive is not None:
+            try:
+                contrastive_p = self._contrastive.predict_proba(source)
+                weight_sum += self._contrastive_weight
+            except Exception:
+                pass
+
         if weight_sum == 0:
             return 0.0
-        raw = (rf_p * self._rf_weight + cnn_p * self._cnn_weight) / weight_sum
+        raw = (
+            rf_p * self._rf_weight
+            + cnn_p * self._cnn_weight
+            + contrastive_p * (self._contrastive_weight if self._contrastive_ready else 0.0)
+        ) / weight_sum
 
         # Apply isotonic calibration if available
         if self._calibrator is not None:
@@ -669,6 +686,21 @@ class EnsembleSecurityModel:
                     self._calibrator = cal
             except Exception:
                 pass
+
+        # Load contrastive security encoder if checkpoint available
+        contrastive_dir = self._checkpoint_dir.parent / "security_contrastive"
+        try:
+            from models.contrastive_security import ContrastiveSecurityEncoder
+            encoder = ContrastiveSecurityEncoder(checkpoint_dir=str(contrastive_dir))
+            if encoder._clf is not None:
+                self._contrastive = encoder
+                self._contrastive_ready = True
+                logger.info(
+                    "ContrastiveSecurityEncoder loaded from %s (adds %.0f%% ensemble weight)",
+                    contrastive_dir, self._contrastive_weight * 100,
+                )
+        except Exception as e:
+            logger.debug("Contrastive encoder not loaded: %s", e)
 
         # Load OOD detector if available
         ood_path = self._checkpoint_dir / "ood_detector.pkl"
