@@ -75,6 +75,7 @@ from models.readability_scorer import ReadabilityScorer
 from models.multi_task_model import MultiTaskCodeModel, MultiTaskPrediction
 from features.ood_detector import OODDetector, make_abstention_prediction
 from features.code_metrics import metrics_to_feature_vector
+from features.conformal_predictor import ResidualConformalPredictor
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +98,9 @@ class ModelRegistry:
     multi_task: MultiTaskCodeModel | None = None
     ood_security: OODDetector | None = None   # OOD detector fitted on security training features
     ood_bug: OODDetector | None = None        # OOD detector fitted on bug predictor training features
+    conformal_security: ResidualConformalPredictor | None = None
+    conformal_bug: ResidualConformalPredictor | None = None
+    conformal_complexity: ResidualConformalPredictor | None = None
     load_errors: dict[str, str] = {}
 
 
@@ -289,6 +293,23 @@ async def lifespan(app: FastAPI):
             logger.info("  [--] OOD detector (bug predictor) — checkpoint not found, OOD checks disabled")
     except Exception as e:
         logger.warning("  [WARN] OOD detector (bug predictor): %s", e)
+
+    # Conformal predictors — load calibrated quantiles (fall back to defaults if not found)
+    registry.conformal_security = ResidualConformalPredictor.load(
+        "checkpoints/security/conformal.json", task="security"
+    )
+    registry.conformal_bug = ResidualConformalPredictor.load(
+        "checkpoints/bug_predictor/conformal.json", task="bug"
+    )
+    registry.conformal_complexity = ResidualConformalPredictor.load(
+        "checkpoints/complexity/conformal.json", task="complexity"
+    )
+    logger.info(
+        "  [OK] Conformal predictors loaded (security fallback=%s, bug fallback=%s, complexity fallback=%s)",
+        registry.conformal_security._is_fallback,
+        registry.conformal_bug._is_fallback,
+        registry.conformal_complexity._is_fallback,
+    )
 
     # Restore persisted feedback so stats survive restarts
     _feedback_store.extend(_load_feedback_from_disk())
@@ -721,6 +742,59 @@ def list_models():
             },
         ],
         "multi_task": registry.multi_task is not None,
+    }
+
+
+@app.get("/models/evaluation", tags=["meta"])
+def models_evaluation():
+    """
+    Cross-project generalisation evaluation results (LOPO benchmarks).
+
+    Returns per-task LOPO results loaded from evaluation/results/lopo_*.json.
+    Also includes the temporal split degradation result for bug prediction
+    (random-split AUC vs temporal-split AUC).
+    """
+    results_dir = Path("evaluation/results")
+
+    def _load(name: str) -> dict:
+        p = results_dir / name
+        if not p.exists():
+            return {}
+        try:
+            return json.load(open(p))
+        except Exception:
+            return {}
+
+    security  = _load("lopo_security.json")
+    bug       = _load("lopo_bug.json")
+    complexity = _load("lopo_complexity.json")
+
+    # Temporal split results for bug prediction (from baseline_comparison.json)
+    temporal_bug: dict = {}
+    baseline = _load("baseline_comparison.json")
+    if baseline:
+        bugs_eval = baseline.get("bugs", {})
+        halstead_random = bugs_eval.get("halstead_lr", {})
+        halstead_temporal = bugs_eval.get("halstead_lr_temporal", {})
+        temporal_bug = {
+            "random_split_auc":   halstead_random.get("auc"),
+            "temporal_split_auc": halstead_temporal.get("auc"),
+            "delta_auc":          halstead_temporal.get("vs_random_split_auc_delta"),
+            "protocol":           halstead_temporal.get("protocol"),
+            "n_train":            halstead_temporal.get("n_train"),
+            "n_test":             halstead_temporal.get("n_test"),
+            "note": (
+                "Temporal split trains on older commits and tests on newer ones, "
+                "preventing SZZ-style label leakage. The AUC drop from random to "
+                "temporal split quantifies overestimation from data leakage."
+            ),
+        }
+
+    return {
+        "security":    security,
+        "bug":         bug,
+        "complexity":  complexity,
+        "temporal_bug": temporal_bug,
     }
 
 
@@ -1171,12 +1245,43 @@ def analyze_security(req: AnalyzeRequest):
             # ml_disabled=True means the ML ensemble is off (LOPO AUC below threshold)
             # and the score comes from the pattern scanner only.
             "ml_disabled": ml_disabled,
-            "ml_source": "pattern_scanner_only" if ml_disabled else "rf_cnn_ensemble",
+            "ml_source": (
+                "pattern_scanner_only" if ml_disabled
+                else "rf_cnn_contrastive_ensemble" if getattr(registry.security, "_contrastive_ready", False)
+                else "rf_cnn_ensemble"
+            ),
         }
+
+        # OOD check for security
+        try:
+            import numpy as _np
+            from features.code_metrics import compute_all_metrics as _cam
+            _metrics = _cam(req.code)
+            _feat = _np.array(metrics_to_feature_vector(_metrics))
+            ood_meta = make_abstention_prediction(
+                vuln_score, _feat, registry.ood_security, task="security"
+            )
+            result["ood"] = {k: v for k, v in ood_meta.items() if k != "probability"}
+            if ood_meta.get("low_confidence"):
+                result["low_confidence"] = True
+                result["low_confidence_reason"] = (
+                    f"Input is {ood_meta.get('sigma_distance', 0):.1f} sigma from training "
+                    "distribution — vulnerability score may not be reliable."
+                )
+        except Exception:
+            pass
+
+        # Conformal prediction interval for vulnerability_score
+        if registry.conformal_security:
+            result["conformal_interval"] = registry.conformal_security.to_dict(vuln_score)
     else:
         result = scan_security_patterns_for_language(req.code, language).to_dict()
         result["ml_disabled"] = True
         result["ml_source"] = "pattern_scanner_only"
+        # Conformal interval still available for pattern-based score
+        if registry.conformal_security:
+            score = result.get("vulnerability_score", 0.0)
+            result["conformal_interval"] = registry.conformal_security.to_dict(float(score))
 
     result["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return result
@@ -1197,6 +1302,12 @@ def analyze_complexity(req: AnalyzeRequest):
         raise HTTPException(status_code=503, detail="Complexity model unavailable")
     result = registry.complexity.predict(req.code)
     out = result.to_dict()
+
+    # Conformal prediction interval for predicted cognitive complexity
+    if registry.conformal_complexity:
+        predicted_cc = float(out.get("predicted_complexity", out.get("cognitive_complexity", 0.0)))
+        out["conformal_interval"] = registry.conformal_complexity.to_dict(predicted_cc)
+
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return out
 
@@ -1255,6 +1366,11 @@ def analyze_bugs(req: AnalyzeRequest):
             out["probability_adjusted"] = ood_meta.get("probability")
     except Exception:
         pass
+
+    # Conformal prediction interval for bug_probability
+    if registry.conformal_bug:
+        prob = float(out.get("bug_probability", out.get("probability", 0.0)))
+        out["conformal_interval"] = registry.conformal_bug.to_dict(prob)
 
     out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
     return out
@@ -1951,6 +2067,142 @@ class BatchAnalyzeRequest(BaseModel):
     fail_fast: bool = False  # stop after first error
 
 
+# ---------------------------------------------------------------------------
+# Effort-aware triage endpoint
+# ---------------------------------------------------------------------------
+
+class TriageFileRequest(BaseModel):
+    filename: str = Field(..., description="File path or name")
+    code: str = Field(..., description="Source code content")
+    loc: int = Field(0, description="Lines of code (estimated from code if 0)")
+
+
+class TriageRequest(BaseModel):
+    files: list[TriageFileRequest] = Field(..., min_length=1, max_length=50)
+    top_k: int = Field(5, ge=1, le=20, description="How many top-risk files to highlight")
+
+
+@app.post("/analyze/triage", tags=["analysis"])
+def analyze_triage(req: TriageRequest):
+    """
+    Effort-aware triage ranking for a set of files.
+
+    Runs lightweight security + bug prediction on each file and ranks them
+    by a combined risk score weighted by lines of code (inspection effort).
+
+    Returns the ranked file list, Precision@K, PofB@20 (what fraction of
+    predicted-buggy files appear in the top 20%), and Effort@80 (what
+    fraction of files you must inspect to cover 80% of the risk).
+
+    Metrics follow Yang et al. 2016 (effort-aware JIT defect prediction)
+    and Kamei et al. 2013 (JIT quality assurance).
+
+    Body: { "files": [{"filename": ..., "code": ..., "loc": ...}], "top_k": 5 }
+    """
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    t_start = time.perf_counter()
+
+    from evaluation.precision_at_k import (
+        pofb_at_effort,
+        effort_at_recall,
+        precision_at_k as pak,
+    )
+
+    scored: list[dict] = []
+    for f in req.files:
+        loc = f.loc if f.loc > 0 else max(1, f.code.count("\n") + 1)
+        language = detect_language(f.filename, None)
+
+        # --- Bug probability (lightweight: metrics-based, no git) ---
+        bug_prob = 0.0
+        if registry.bug_predictor:
+            try:
+                bug_res = registry.bug_predictor.predict(f.code, None)
+                bug_prob = float(bug_res.to_dict().get("bug_probability", 0.0))
+            except Exception:
+                pass
+
+        # --- Security score ---
+        sec_score = 0.0
+        n_findings = 0
+        if registry.security and language == "python" and not getattr(registry.security, "_ml_disabled", True):
+            try:
+                sec_score = registry.security.vulnerability_score(f.code)
+                n_findings = len(registry.security.predict(f.code))
+            except Exception:
+                pass
+        else:
+            try:
+                scan = scan_security_patterns_for_language(f.code, language)
+                n_findings = scan.to_dict().get("summary", {}).get("total", 0)
+                sec_score = min(0.95, n_findings * 0.15)
+            except Exception:
+                pass
+
+        # Combined risk: security + bug weighted equally, then penalty for LOC
+        # (larger files carry more absolute risk — effort-aware weighting)
+        risk_score = 0.5 * sec_score + 0.5 * bug_prob
+        # Effort-weighted: normalise by log(LOC) so a 1000-line file ranks
+        # above a 10-line file with the same density (inspection prioritisation)
+        effort_weighted_score = risk_score * (1.0 + 0.3 * (loc / 100.0) ** 0.5)
+
+        scored.append({
+            "filename": f.filename,
+            "loc": loc,
+            "bug_probability": round(bug_prob, 4),
+            "vulnerability_score": round(sec_score, 4),
+            "n_security_findings": n_findings,
+            "risk_score": round(risk_score, 4),
+            "effort_weighted_score": round(effort_weighted_score, 4),
+            "language": language,
+        })
+
+    # Sort by effort-weighted score descending
+    scored.sort(key=lambda x: x["effort_weighted_score"], reverse=True)
+
+    # Assign triage rank
+    for i, s in enumerate(scored):
+        s["rank"] = i + 1
+        s["triage_label"] = (
+            "inspect_now" if i < req.top_k and s["risk_score"] >= 0.4
+            else "review" if i < req.top_k
+            else "low_priority"
+        )
+
+    # Effort-aware metrics over the ranked list
+    import numpy as _np
+    scores_arr = _np.array([s["effort_weighted_score"] for s in scored])
+    bug_labels  = _np.array([1 if s["bug_probability"] >= 0.5 else 0 for s in scored])
+    sec_labels  = _np.array([1 if s["vulnerability_score"] >= 0.4 else 0 for s in scored])
+    combined_labels = _np.array([
+        1 if (s["bug_probability"] >= 0.5 or s["vulnerability_score"] >= 0.4) else 0
+        for s in scored
+    ])
+
+    k = min(req.top_k, len(scored))
+    metrics: dict = {
+        "n_files": len(scored),
+        "top_k": k,
+        "precision_at_k": round(pak(combined_labels, scores_arr, k), 4),
+        "pofb_at_20pct": round(pofb_at_effort(bug_labels, scores_arr, effort=0.20), 4),
+        "effort_at_80pct_recall": round(effort_at_recall(bug_labels, scores_arr, recall_target=0.80), 4),
+        "n_high_risk": int((combined_labels == 1).sum()),
+        "note": (
+            "precision_at_k: fraction of top-K files that are genuinely risky. "
+            "pofb_at_20pct: fraction of buggy files found when inspecting top 20%. "
+            "effort_at_80pct_recall: how much of the list to inspect to find 80% of bugs."
+        ),
+    }
+
+    return {
+        "ranked_files": scored,
+        "metrics": metrics,
+        "duration_seconds": round(time.perf_counter() - t_start, 3),
+    }
+
+
 @app.post("/analyze/batch", tags=["analysis"])
 async def analyze_batch(req: BatchAnalyzeRequest, request: Request):
     """
@@ -2351,6 +2603,9 @@ def _verdict_to_label(verdict: str) -> int:
 
 _AL_TRIGGER_THRESHOLD = int(os.environ.get("AL_TRIGGER_THRESHOLD", "50"))
 _al_feedback_counts: dict[str, int] = {}
+# History of active learning rounds for the /feedback/al_status endpoint.
+# Each entry: {task, triggered_at, pre_auc, post_auc, pre_ece, post_ece, deployed, reason}
+_al_history: list[dict] = []
 
 
 def _maybe_trigger_active_learning(task: str) -> None:
@@ -2375,10 +2630,27 @@ def _maybe_trigger_active_learning(task: str) -> None:
     )
 
     def _run_al():
+        import datetime as _dt
+        entry: dict = {
+            "task": task,
+            "triggered_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "deployed": False,
+            "reason": None,
+            "pre_auc": None,
+            "post_auc": None,
+            "pre_ece": None,
+            "post_ece": None,
+        }
         try:
             from training.active_learning import ActiveLearner
             learner = ActiveLearner(task=task, min_feedback_samples=_AL_TRIGGER_THRESHOLD)
             result = learner.run()
+            entry["deployed"] = bool(result.deployed)
+            entry["reason"] = getattr(result, "reason", None)
+            entry["pre_ece"] = getattr(result, "pre_ece", None)
+            entry["post_ece"] = getattr(result, "post_ece", None)
+            entry["pre_auc"] = getattr(result, "pre_auc", None)
+            entry["post_auc"] = getattr(result, "temporal_auc", None)
             if result.deployed:
                 logger.info(
                     "Active learning deployed for task=%s: ECE %.4f -> %.4f  AUC=%.3f",
@@ -2390,6 +2662,33 @@ def _maybe_trigger_active_learning(task: str) -> None:
                 )
         except Exception as exc:
             logger.warning("Active learning run failed for task=%s: %s", task, exc)
+            entry["reason"] = str(exc)
+        finally:
+            _al_history.append(entry)
+
+        # After a successful security AL round, run hard negative mining to
+        # tighten the model on false positives (completes the feedback loop).
+        if entry.get("deployed") and task == "security":
+            try:
+                from training.hard_negative_miner import mine_hard_negatives
+                dataset = "data/security_dataset.jsonl"
+                hn_output = "data/security_dataset_hn.jsonl"
+                if Path(dataset).exists():
+                    n_hn = mine_hard_negatives(
+                        clean_dirs=["data/clean_repos"] if Path("data/clean_repos").exists() else [],
+                        dataset_path=dataset,
+                        output_path=hn_output,
+                        threshold=0.5,
+                        max_hn=200,
+                    )
+                    if n_hn > 0:
+                        logger.info(
+                            "Hard negative mining: added %d false-positive samples to %s",
+                            n_hn, hn_output,
+                        )
+                        entry["hard_negatives_mined"] = n_hn
+            except Exception as hn_exc:
+                logger.debug("Hard negative mining skipped: %s", hn_exc)
 
     # Submit to background executor (non-blocking, won't delay the /feedback response)
     try:
@@ -2408,6 +2707,33 @@ def feedback_stats():
         "helpful": counts.get("helpful", 0),
         "not_helpful": counts.get("not_helpful", 0),
         "false_positive": counts.get("false_positive", 0),
+    }
+
+
+@app.get("/feedback/al_status", tags=["meta"])
+def al_status():
+    """
+    Active learning loop status.
+
+    Returns per-task feedback progress toward next retrain trigger, the
+    configured trigger threshold, and a history of past retrain rounds
+    (deployed/skipped, AUC before/after, ECE before/after).
+    """
+    per_task: dict[str, dict] = {}
+    all_tasks = {"security", "bug", "complexity", "pattern"}
+    for t in all_tasks:
+        count = _al_feedback_counts.get(t, 0)
+        per_task[t] = {
+            "feedback_since_last_trigger": count,
+            "needed_for_next_trigger": max(0, _AL_TRIGGER_THRESHOLD - count),
+            "progress_pct": round(min(100, count / _AL_TRIGGER_THRESHOLD * 100), 1),
+        }
+
+    return {
+        "trigger_threshold": _AL_TRIGGER_THRESHOLD,
+        "per_task": per_task,
+        "total_feedback": len(_feedback_store),
+        "history": list(reversed(_al_history)),  # most recent first
     }
 
 

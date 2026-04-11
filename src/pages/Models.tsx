@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,7 +21,11 @@ import {
   Cpu,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
+  Activity,
+  AlertTriangle,
 } from "lucide-react";
+import { getALStatus, getModelsEvaluation, type ALStatus, type ModelsEvaluation, type LOPOResult } from "@/services/api";
 
 // ─── All models with real checkpoint metrics ───────────────────────────────
 
@@ -52,18 +56,18 @@ const ALL_MODELS = [
     icon: Shield,
     iconColor: "text-red-400",
     iconBg: "bg-red-500/10",
-    architecture: "Random Forest + 1D CNN ensemble (Youden-tuned threshold)",
-    trainingData: "Bandit-labelled examples + CVE security-fix commits from 8 OSS repos",
+    architecture: "RF + 1D CNN + Contrastive encoder (NT-Xent pre-trained, 3-component ensemble)",
+    trainingData: "Bandit-labelled examples + CVE security-fix commits + CVEFixes (vulnerable/fixed pairs)",
     useCase: "SQL injection, XSS, hardcoded secrets, path traversal",
-    techStack: ["scikit-learn", "PyTorch", "Python"],
+    techStack: ["scikit-learn", "PyTorch", "NT-Xent", "Python"],
     metrics: [
-      { label: "Ensemble AUC",    value: "0.928", pct: 93 },
-      { label: "RF Threshold",    value: "0.417", pct: 52 },
-      { label: "Vuln Recall",     value: "54%",   pct: 54 },
-      { label: "Train / Test",    value: "1 275 / 225", pct: 85 },
+      { label: "Ensemble AUC",        value: "0.928", pct: 93 },
+      { label: "RF Threshold",        value: "0.417", pct: 52 },
+      { label: "Vuln Recall",         value: "54%",   pct: 54 },
+      { label: "Contrastive (target)", value: "0.65+ LOPO", pct: 65 },
     ],
     description:
-      "Ensemble of Random Forest and 1D CNN trained on AST + Bandit features and CVE commit data. Optimal RF threshold (0.417) found via Youden's J statistic, improving vulnerable recall from 42% → 54%.",
+      "Three-component ensemble: Random Forest (50%) + 1D CNN (35%) + NT-Xent contrastive encoder (15%). The contrastive component is pre-trained on (vulnerable, fixed) pairs from CVEFixes using SimCLR-style loss, targeting LOPO AUC improvement from 0.494 to 0.65+. Youden-tuned threshold (0.417) improves vulnerable recall from 42% to 54%.",
     endpoint: "POST /analyze/security",
   },
   {
@@ -254,6 +258,263 @@ const ALL_MODELS = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const TASK_LABELS: Record<string, string> = {
+  security: "Security",
+  bug: "Bug Prediction",
+  complexity: "Complexity",
+  pattern: "Pattern",
+};
+
+function ALStatusPanel() {
+  const [al, setAl] = useState<ALStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    getALStatus()
+      .then(setAl)
+      .catch(() => setAl(null))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading) {
+    return (
+      <div className="bg-card border border-border rounded-xl p-5 mb-8 animate-pulse h-40" />
+    );
+  }
+  if (!al) return null;
+
+  const latestRound = al.history[0];
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-primary/10 rounded-lg">
+            <Activity className="w-4 h-4 text-primary" />
+          </div>
+          <span className="text-sm font-semibold text-foreground">Active Learning Loop</span>
+          <span className="text-xs text-muted-foreground ml-1">
+            — triggers retrain every {al.trigger_threshold} corrections
+          </span>
+        </div>
+        <button
+          onClick={load}
+          className="p-1.5 rounded-lg hover:bg-secondary/50 transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
+        </button>
+      </div>
+
+      {/* Per-task progress */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        {Object.entries(al.per_task).map(([task, info]) => (
+          <div key={task} className="bg-secondary/30 rounded-lg p-3">
+            <div className="text-xs font-semibold text-foreground mb-1">
+              {TASK_LABELS[task] ?? task}
+            </div>
+            <div className="h-1.5 bg-secondary rounded-full overflow-hidden mb-1">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-primary to-primary/60 transition-all"
+                style={{ width: `${info.progress_pct}%` }}
+              />
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              {info.feedback_since_last_trigger} / {al.trigger_threshold} corrections
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Total + last round */}
+      <div className="flex items-center gap-6 text-xs text-muted-foreground flex-wrap">
+        <span>Total feedback: <strong className="text-foreground">{al.total_feedback}</strong></span>
+        <span>Retrain rounds: <strong className="text-foreground">{al.history.length}</strong></span>
+        {latestRound && (
+          <>
+            <span>
+              Last run:{" "}
+              <strong className="text-foreground">
+                {new Date(latestRound.triggered_at).toLocaleString()}
+              </strong>
+            </span>
+            <span className={`font-medium ${latestRound.deployed ? "text-green-400" : "text-muted-foreground"}`}>
+              {latestRound.deployed ? "Deployed" : `Skipped — ${latestRound.reason ?? "below quality gate"}`}
+            </span>
+            {latestRound.pre_auc !== null && latestRound.post_auc !== null && (
+              <span>
+                AUC: {latestRound.pre_auc.toFixed(3)} &rarr;{" "}
+                <strong className={latestRound.post_auc > latestRound.pre_auc ? "text-green-400" : "text-red-400"}>
+                  {latestRound.post_auc.toFixed(3)}
+                </strong>
+              </span>
+            )}
+            {latestRound.pre_ece !== null && latestRound.post_ece !== null && (
+              <span>
+                ECE: {latestRound.pre_ece.toFixed(4)} &rarr;{" "}
+                <strong className={latestRound.post_ece < latestRound.pre_ece ? "text-green-400" : "text-red-400"}>
+                  {latestRound.post_ece.toFixed(4)}
+                </strong>
+              </span>
+            )}
+            {latestRound.hard_negatives_mined !== undefined && latestRound.hard_negatives_mined > 0 && (
+              <span className="text-blue-400">
+                +{latestRound.hard_negatives_mined} hard negatives mined
+              </span>
+            )}
+          </>
+        )}
+        {al.history.length === 0 && (
+          <span className="italic">No retrains yet — submit corrections to start the loop.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LOPOTable({ data, metric }: { data: LOPOResult; metric: "auc" | "spearman" }) {
+  if (!data?.project_results?.length) return null;
+  const rows = data.project_results.filter(r => r[metric] !== null && r[metric] !== undefined);
+  if (!rows.length) return null;
+  const mean = metric === "auc" ? data.mean_auc : data.mean_spearman;
+  const std  = metric === "auc" ? data.std_auc  : data.std_spearman;
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          {metric === "auc" ? "AUC" : "Spearman"} per held-out repo
+        </span>
+        {mean !== null && mean !== undefined && (
+          <span className="text-xs text-foreground font-mono">
+            mean={mean.toFixed(3)} ±{std?.toFixed(3) ?? "–"}
+          </span>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r) => {
+          const val = r[metric] as number;
+          const pct = Math.round(Math.abs(val) * 100);
+          const isWeak = metric === "auc" ? val < 0.55 : val < 0.6;
+          return (
+            <div key={r.held_out_repo} className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground w-40 truncate shrink-0" title={r.held_out_repo}>
+                {r.held_out_repo.split("/").pop()}
+              </span>
+              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${isWeak ? "bg-yellow-500/70" : "bg-green-500/70"}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className={`text-[11px] font-mono w-12 text-right ${isWeak ? "text-yellow-400" : "text-green-400"}`}>
+                {val.toFixed(3)}
+              </span>
+              <span className="text-[10px] text-muted-foreground/50">n={r.n_test}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LOPOPanel() {
+  const [eval_, setEval] = useState<ModelsEvaluation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    getModelsEvaluation()
+      .then(setEval)
+      .catch(() => setEval(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div className="bg-card border border-border rounded-xl p-5 mb-8 animate-pulse h-24" />
+  );
+  if (!eval_) return null;
+
+  const tb = eval_.temporal_bug;
+
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden mb-8">
+      <button
+        className="w-full flex items-center justify-between p-5 hover:bg-secondary/20 transition-colors"
+        onClick={() => setOpen(v => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-yellow-500/10 rounded-lg">
+            <TrendingUp className="w-4 h-4 text-yellow-400" />
+          </div>
+          <span className="text-sm font-semibold text-foreground">Cross-Project Generalisation (LOPO)</span>
+          <span className="text-xs text-muted-foreground ml-1">— leave-one-project-out evaluation</span>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-6 border-t border-border pt-4">
+          {/* Temporal split callout */}
+          {tb?.delta_auc !== null && tb?.delta_auc !== undefined && (
+            <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/8 p-3 text-xs space-y-1">
+              <div className="flex items-center gap-2 font-semibold text-yellow-400">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                Temporal evaluation — bug prediction
+              </div>
+              <p className="text-muted-foreground">
+                Random split AUC: <span className="text-foreground font-mono">{tb.random_split_auc?.toFixed(3)}</span>
+                {" "}&rarr; Temporal split AUC: <span className={`font-mono ${(tb.temporal_split_auc ?? 0) < 0.55 ? "text-yellow-400" : "text-foreground"}`}>{tb.temporal_split_auc?.toFixed(3)}</span>
+                {" "}(delta: <span className="text-red-400 font-mono">{tb.delta_auc.toFixed(3)}</span>).
+                {" "}Trains on older commits, tests on newer — prevents SZZ-style label leakage.
+              </p>
+            </div>
+          )}
+
+          {/* Security LOPO */}
+          {eval_.security?.project_results && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span className="text-xs font-semibold text-foreground">Security — {eval_.security.n_projects} repos</span>
+                <span className="text-[10px] text-muted-foreground italic ml-1">
+                  (mean AUC {eval_.security.mean_auc?.toFixed(3) ?? "–"} — near chance; contrastive pre-training targets 0.65+)
+                </span>
+              </div>
+              <LOPOTable data={eval_.security} metric="auc" />
+            </div>
+          )}
+
+          {/* Bug LOPO */}
+          {eval_.bug?.project_results && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Bug className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                <span className="text-xs font-semibold text-foreground">Bug Prediction — {eval_.bug.n_projects} repos</span>
+              </div>
+              <LOPOTable data={eval_.bug} metric="auc" />
+            </div>
+          )}
+
+          {/* Complexity LOPO */}
+          {eval_.complexity?.project_results && (
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart2 className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+                <span className="text-xs font-semibold text-foreground">Complexity — {eval_.complexity.n_projects} repos</span>
+              </div>
+              <LOPOTable data={eval_.complexity} metric="spearman" />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const Models = () => {
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -294,6 +555,12 @@ const Models = () => {
             </div>
           ))}
         </div>
+
+        {/* Cross-project generalisation panel */}
+        <LOPOPanel />
+
+        {/* Active learning loop status */}
+        <ALStatusPanel />
 
         {/* Model list */}
         <div className="space-y-3">

@@ -303,6 +303,89 @@ export async function explainAnalysis(
   return res.json() as Promise<ExplainResult>;
 }
 
+// ─── Active Learning Status ──────────────────────────────────────────────────
+
+export interface ALTaskStatus {
+  feedback_since_last_trigger: number;
+  needed_for_next_trigger: number;
+  progress_pct: number;
+}
+
+export interface ALRound {
+  task: string;
+  triggered_at: string;
+  deployed: boolean;
+  reason: string | null;
+  pre_auc: number | null;
+  post_auc: number | null;
+  pre_ece: number | null;
+  post_ece: number | null;
+  hard_negatives_mined?: number;
+}
+
+export interface ALStatus {
+  trigger_threshold: number;
+  per_task: Record<string, ALTaskStatus>;
+  total_feedback: number;
+  history: ALRound[];
+}
+
+export async function getALStatus(): Promise<ALStatus> {
+  const res = await fetch(`${BASE_URL}/feedback/al_status`);
+  if (!res.ok) throw new Error(`AL status failed: ${res.status}`);
+  return res.json() as Promise<ALStatus>;
+}
+
+// ─── LOPO Evaluation Results ─────────────────────────────────────────────────
+
+export interface LOPOProjectResult {
+  held_out_repo: string;
+  n_train: number;
+  n_test: number;
+  auc: number | null;
+  ap: number | null;
+  f1: number | null;
+  rmse: number | null;
+  spearman: number | null;
+}
+
+export interface LOPOResult {
+  task: string;
+  protocol: string;
+  n_projects: number;
+  mean_auc: number | null;
+  std_auc: number | null;
+  mean_ap: number | null;
+  mean_rmse: number | null;
+  std_rmse: number | null;
+  mean_spearman: number | null;
+  std_spearman: number | null;
+  project_results: LOPOProjectResult[];
+}
+
+export interface TemporalBugResult {
+  random_split_auc: number | null;
+  temporal_split_auc: number | null;
+  delta_auc: number | null;
+  protocol: string | null;
+  n_train: number | null;
+  n_test: number | null;
+  note: string;
+}
+
+export interface ModelsEvaluation {
+  security: LOPOResult;
+  bug: LOPOResult;
+  complexity: LOPOResult;
+  temporal_bug: TemporalBugResult;
+}
+
+export async function getModelsEvaluation(): Promise<ModelsEvaluation> {
+  const res = await fetch(`${BASE_URL}/models/evaluation`);
+  if (!res.ok) throw new Error(`Models evaluation failed: ${res.status}`);
+  return res.json() as Promise<ModelsEvaluation>;
+}
+
 export async function getFeedbackStats(): Promise<{
   total: number;
   positive: number;
