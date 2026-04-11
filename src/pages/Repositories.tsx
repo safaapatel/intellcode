@@ -340,10 +340,9 @@ const Repositories = () => {
           (f: { type: string; path: string; size?: number }) =>
             f.type === "blob" &&
             EXT_RE.test(f.path) &&
-            (f.size ?? 0) < 500_000 && // notebooks can be larger; we extract code cells only
+            (f.size ?? 0) < 500_000 &&
             !SCAN_SKIP.some((skip) => f.path.includes(skip))
         )
-        .slice(0, 20)
         .map((f: { path: string; size?: number }) => {
           const ext = f.path.split(".").pop()?.toLowerCase() ?? "";
           return { path: f.path, size: f.size ?? 0, lang: EXT_LANG[ext] ?? "python" };
@@ -366,17 +365,18 @@ const Repositories = () => {
 
       // 3. Fetch + analyze each file serially
       const results: Awaited<ReturnType<typeof analyzeCode>>[] = [];
+      let skipped = 0;
       for (let i = 0; i < srcFiles.length; i++) {
         const file = srcFiles[i];
         try {
           const raw = await getRawFile(fullName, branch, file.path);
           // For Jupyter notebooks extract Python code cells only
           const code = file.path.endsWith(".ipynb") ? extractNotebookCode(raw) : raw;
-          if (code.trim().length < 20) continue;
+          if (code.trim().length < 20) { skipped++; setScanProgress((prev) => ({ ...prev, [repo.id]: { done: i + 1, total: srcFiles.length } })); continue; }
           const result = await analyzeCode(code, file.path, file.lang, undefined, fullName);
           results.push(result);
         } catch {
-          // skip individual file failures silently
+          skipped++;
         }
         setScanProgress((prev) => ({ ...prev, [repo.id]: { done: i + 1, total: srcFiles.length } }));
       }
@@ -419,7 +419,8 @@ const Repositories = () => {
       });
 
       toast.success(
-        `Scanned ${results.length} files — avg score ${avgScore}/100, ${openIssues} security issue${openIssues !== 1 ? "s" : ""}`
+        `Scanned ${results.length} of ${srcFiles.length} files — avg score ${avgScore}/100, ${openIssues} security issue${openIssues !== 1 ? "s" : ""}`,
+        skipped > 0 ? { description: `${skipped} file${skipped !== 1 ? "s" : ""} skipped (empty or fetch failed)` } : undefined
       );
     } catch (e: unknown) {
       toast.error((e as Error).message || "Scan failed");
