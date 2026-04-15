@@ -1838,6 +1838,7 @@ const ReviewDetail = () => {
           branch_name: prBranch.trim() || "",
           pr_title: prTitle.trim() || `IntelliCode Review: ${result.filename}`,
           analysis_summary: summary,
+          security_findings: findings,
         }),
       });
       if (!res.ok) {
