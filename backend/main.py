@@ -3470,14 +3470,27 @@ async def analyze_pr(req: PRAnalyzeRequest):
                         "commit_id": head_sha,
                         "body": "IntelliCode security findings (inline)",
                         "event": "COMMENT",
-                        "comments": inline_comments[:10],  # GitHub caps at 10 per review
+                        "comments": inline_comments[:10],
                     },
                 )
             try:
                 review = await loop.run_in_executor(_EXECUTOR, _post_review)
                 comment_urls.append(review.get("html_url", ""))
             except Exception as e:
-                logger.warning("Failed to post inline review: %s", e)
+                logger.warning("Inline review failed (%s) — falling back to single comment", e)
+                # Fallback: post all findings as one regular PR comment
+                fallback_body = "## IntelliCode Security Findings & Suggested Fixes\n"
+                for ic in inline_comments[:10]:
+                    fallback_body += f"\n---\n\n**`{ic['path']}`** L{ic['line']}\n\n{ic['body']}\n"
+                fallback_body += "\n---\n_Posted by [IntelliCode Review](https://intellcode.onrender.com)_"
+                try:
+                    fb = _gh_api(
+                        f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
+                        token, method="POST", body={"body": fallback_body},
+                    )
+                    comment_urls.append(fb.get("html_url", ""))
+                except Exception as e2:
+                    logger.warning("Fallback comment also failed: %s", e2)
 
     # Strip internal _source field before returning
     clean_results = [{k: v for k, v in r.items() if k != "_source"} for r in file_results]
@@ -3609,14 +3622,15 @@ async def create_pr(req: CreatePRRequest):
 
     comment_url = ""
 
-    # Post inline suggestion comments for each security finding
+    # Build a single PR comment with summary + per-finding suggested fixes.
+    # We use a regular issue comment (not inline review) so it always renders
+    # regardless of whether the file diff is empty.
     source_lines = req.code.splitlines() if req.code else []
-    inline_comments = []
-    for finding in req.security_findings:
-        lineno = finding.get("lineno", 0)
-        if not lineno or lineno <= 0 or lineno > len(source_lines):
-            continue
-        code_line  = source_lines[lineno - 1]
+
+    findings_md = ""
+    for finding in req.security_findings[:10]:
+        lineno     = finding.get("lineno", 0)
+        code_line  = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
         vuln_type  = finding.get("vuln_type", "")
         title      = finding.get("title", "")
         severity   = finding.get("severity", "low").upper()
@@ -3625,56 +3639,81 @@ async def create_pr(req: CreatePRRequest):
         confidence = finding.get("confidence", 0)
         fix_block  = _generate_fix_suggestion(vuln_type, code_line, description)
 
-        inline_comments.append({
-            "path": req.filename,
-            "line": lineno,
-            "body": (
-                f"### {severity} — {title}\n\n"
-                f"{description}\n\n"
-                f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
-                f"#### Suggested fix\n\n"
-                f"{fix_block}"
-            ),
-        })
+        findings_md += (
+            f"\n---\n\n"
+            f"#### {severity} — {title} (L{lineno})\n\n"
+            f"{description}\n\n"
+            f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
+            f"**Suggested fix:**\n\n{fix_block}\n"
+        )
 
-    if inline_comments and pr_number:
-        def _post_review():
-            return _gh_api(
-                f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
-                token, method="POST",
-                body={
-                    "commit_id": head_sha,
-                    "body": "IntelliCode found security issues — suggested fixes inline below.",
-                    "event": "COMMENT",
-                    "comments": inline_comments[:10],
-                },
-            )
-        try:
-            review = await loop.run_in_executor(_EXECUTOR, _post_review)
-            comment_url = review.get("html_url", "")
-        except Exception as e:
-            logger.warning("Could not post inline suggestions: %s", e)
+    full_body = req.analysis_summary or ""
+    if findings_md:
+        full_body += f"\n\n## Security Findings & Suggested Fixes\n{findings_md}"
+    full_body += "\n\n---\n_Posted by [IntelliCode Review](https://intellcode.onrender.com)_"
 
-    # Post summary comment
-    if req.analysis_summary and pr_number:
+    if full_body and pr_number:
         def _post_comment():
             return _gh_api(
                 f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
                 token, method="POST",
-                body={"body": req.analysis_summary},
+                body={"body": full_body},
             )
         try:
             comment = await loop.run_in_executor(_EXECUTOR, _post_comment)
-            if not comment_url:
-                comment_url = comment.get("html_url", "")
+            comment_url = comment.get("html_url", "")
         except Exception as e:
             logger.warning("Could not post PR comment: %s", e)
+
+    # Create GitHub Issues for critical findings so they're tracked permanently
+    issue_urls: list[str] = []
+    critical_findings = [
+        f for f in req.security_findings
+        if f.get("severity") in ("critical",)
+    ]
+    for finding in critical_findings[:5]:  # cap at 5 issues
+        lineno      = finding.get("lineno", 0)
+        code_line   = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
+        vuln_type   = finding.get("vuln_type", "")
+        title       = finding.get("title", "")
+        description = finding.get("description", "")
+        cwe         = finding.get("cwe", "")
+        confidence  = finding.get("confidence", 0)
+        fix_block   = _generate_fix_suggestion(vuln_type, code_line, description)
+
+        issue_body = (
+            f"## Critical Security Finding\n\n"
+            f"**File:** `{req.filename}` — Line {lineno}\n"
+            f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
+            f"### Description\n\n{description}\n\n"
+            f"### Suggested Fix\n\n{fix_block}\n\n"
+            f"### Context\n\n"
+            f"Detected in PR #{pr_number}: [{pr_title}]({pr_url})\n\n"
+            f"---\n_Opened automatically by [IntelliCode Review](https://intellcode.onrender.com)_"
+        )
+
+        def _make_issue(t=title, b=issue_body):
+            return _gh_api(
+                f"/repos/{owner}/{repo}/issues",
+                token, method="POST",
+                body={
+                    "title": f"[Security] {t} in {req.filename}",
+                    "body": b,
+                    "labels": ["security", "intellcode", "critical"],
+                },
+            )
+        try:
+            issue = await loop.run_in_executor(_EXECUTOR, _make_issue)
+            issue_urls.append(issue.get("html_url", ""))
+        except Exception as e:
+            logger.warning("Could not create issue for finding '%s': %s", title, e)
 
     return {
         "pr_url": pr_url,
         "pr_number": pr_number,
         "branch": branch,
         "comment_url": comment_url,
+        "issue_urls": issue_urls,
     }
 
 
