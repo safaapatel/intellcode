@@ -1794,7 +1794,7 @@ const ReviewDetail = () => {
   const [prBranch, setPrBranch] = useState("");
   const [prTitle, setPrTitle] = useState("");
   const [prLoading, setPrLoading] = useState(false);
-  const [prResult, setPrResult] = useState<{ pr_url: string; comment_url: string } | null>(null);
+  const [prResult, setPrResult] = useState<{ pr_url: string; comment_url: string; issue_urls: string[] } | null>(null);
 
   useEffect(() => {
     if (prModal && prRepos.length === 0 && isGitHubConnected()) {
@@ -1846,8 +1846,9 @@ const ReviewDetail = () => {
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      setPrResult({ pr_url: data.pr_url, comment_url: data.comment_url });
-      toast.success("PR created on GitHub!");
+      setPrResult({ pr_url: data.pr_url, comment_url: data.comment_url, issue_urls: data.issue_urls ?? [] });
+      const issueCount = (data.issue_urls ?? []).length;
+      toast.success(`PR created on GitHub!${issueCount ? ` ${issueCount} critical issue${issueCount > 1 ? "s" : ""} opened.` : ""}`);
     } catch (e: any) {
       toast.error(e.message ?? "Failed to create PR");
     } finally {
@@ -2307,15 +2308,23 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
                 <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
                   <CheckCircle className="w-4 h-4" /> PR created successfully!
                 </div>
-                <a
-                  href={prResult.pr_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-sm text-primary hover:underline"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  {prResult.pr_url}
+                <a href={prResult.pr_url} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-primary hover:underline">
+                  <ExternalLink className="w-3.5 h-3.5" /> View Pull Request
                 </a>
+                {prResult.issue_urls.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-destructive">
+                      {prResult.issue_urls.length} critical finding{prResult.issue_urls.length > 1 ? "s" : ""} opened as GitHub Issues:
+                    </p>
+                    {prResult.issue_urls.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:underline">
+                        <ExternalLink className="w-3 h-3" /> Issue #{i + 1}
+                      </a>
+                    ))}
+                  </div>
+                )}
                 <Button size="sm" variant="outline" className="w-full" onClick={() => setPrModal(false)}>
                   Close
                 </Button>
