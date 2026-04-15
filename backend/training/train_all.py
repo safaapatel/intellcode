@@ -200,6 +200,45 @@ def step_pattern(data_path: str, out_dir: str):
     return mod.train(data_path=data_path, output_dir=out_dir)
 
 
+def step_cgam(data_path: str, out_dir: str):
+    import importlib.util, sys
+    from pathlib import Path as P
+    backend_dir = P(__file__).resolve().parent.parent
+    sys.path.insert(0, str(backend_dir))
+    spec = importlib.util.spec_from_file_location(
+        "train_cgam", backend_dir / "training" / "train_cgam.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.train(sources=mod.load_sources_from_dataset(data_path), output_dir=out_dir)
+
+
+def step_apcr(data_path: str, out_dir: str):
+    import importlib.util, sys
+    from pathlib import Path as P
+    backend_dir = P(__file__).resolve().parent.parent
+    sys.path.insert(0, str(backend_dir))
+    spec = importlib.util.spec_from_file_location(
+        "train_apcr", backend_dir / "training" / "train_apcr.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.train(data_path=data_path, output_dir=out_dir)
+
+
+def step_dre(data_path: str, out_dir: str):
+    import importlib.util, sys
+    from pathlib import Path as P
+    backend_dir = P(__file__).resolve().parent.parent
+    sys.path.insert(0, str(backend_dir))
+    spec = importlib.util.spec_from_file_location(
+        "train_dre", backend_dir / "training" / "train_dre.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.train(data_path=data_path, output_dir=out_dir)
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
@@ -250,7 +289,8 @@ def main():
                         help="Also fine-tune CodeBERT for pattern recognition")
     parser.add_argument("--skip-datagen", action="store_true",
                         help="Skip dataset generation (use existing files)")
-    parser.add_argument("--only", choices=["datagen", "complexity", "security", "bugs", "pattern"],
+    parser.add_argument("--only", choices=["datagen", "complexity", "security", "bugs", "pattern",
+                                            "cgam", "apcr", "dre"],
                         help="Run only one step")
     args = parser.parse_args()
 
@@ -342,6 +382,39 @@ def main():
             _warn(f"Skipping pattern: {data_path} not found")
             ok, res, elapsed = False, {"error": "dataset missing"}, 0.0
         report["steps"]["pattern"] = {"success": ok, "result": res, "elapsed_seconds": elapsed}
+
+    # ── 6. CGAM — trains on complexity dataset (clean code sources) ──────────
+    if args.only in (None, "cgam"):
+        data_path = f"{data_dir}/complexity_dataset.jsonl"
+        if Path(data_path).exists():
+            ok, res, elapsed = run_step("Train CGAM (grammar anomaly)",
+                step_cgam, data_path=data_path, out_dir=f"{ckpt_dir}/cgam")
+        else:
+            _warn("Skipping CGAM: complexity dataset not found")
+            ok, res, elapsed = False, {"error": "dataset missing"}, 0.0
+        report["steps"]["cgam"] = {"success": ok, "result": res, "elapsed_seconds": elapsed}
+
+    # ── 7. APCR — trains on complexity dataset ────────────────────────────────
+    if args.only in (None, "apcr"):
+        data_path = f"{data_dir}/complexity_dataset.jsonl"
+        if Path(data_path).exists():
+            ok, res, elapsed = run_step("Train APCR (asymmetric regressor)",
+                step_apcr, data_path=data_path, out_dir=f"{ckpt_dir}/apcr")
+        else:
+            _warn("Skipping APCR: complexity dataset not found")
+            ok, res, elapsed = False, {"error": "dataset missing"}, 0.0
+        report["steps"]["apcr"] = {"success": ok, "result": res, "elapsed_seconds": elapsed}
+
+    # ── 8. DRE — trains on bug dataset ───────────────────────────────────────
+    if args.only in (None, "dre"):
+        data_path = f"{data_dir}/bug_dataset.jsonl"
+        if Path(data_path).exists():
+            ok, res, elapsed = run_step("Train DRE (differential risk encoder)",
+                step_dre, data_path=data_path, out_dir=f"{ckpt_dir}/dre")
+        else:
+            _warn("Skipping DRE: bug dataset not found")
+            ok, res, elapsed = False, {"error": "dataset missing"}, 0.0
+        report["steps"]["dre"] = {"success": ok, "result": res, "elapsed_seconds": elapsed}
 
     # ── Summary ──────────────────────────────────────────────────────────────
     report["total_seconds"] = time.time() - t_start

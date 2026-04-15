@@ -1,0 +1,239 @@
+{
+  "method": "Simplicity_Baselines",
+  "description": "Compares unsupervised threshold-based heuristics (LOC, CC, Halstead, Churn, Composite) against trained ML models (XGBoost, Logistic Regression) under leave-one-project-out evaluation. Tests the hypothesis that simple metrics may be competitive with ML when training and test projects differ.",
+  "summaries": {
+    "LOC": {
+      "mean_auc": 0.5808922262679719,
+      "std_auc": 0.037965112828630077,
+      "mean_ap": 0.28595236858196726,
+      "std_ap": 0.0858530279778487,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.6057533519863781,
+          "ap": 0.23760626598391812
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.5441741284914939,
+          "ap": 0.17684484484643015
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.6299994744310715,
+          "ap": 0.32696081714383035
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.5436419501629441,
+          "ap": 0.4023975463536905
+        }
+      ]
+    },
+    "CC": {
+      "mean_auc": 0.5611200138449651,
+      "std_auc": 0.04215018885047962,
+      "mean_ap": 0.2827569144007398,
+      "std_ap": 0.0929667669231511,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.5268330039102943,
+          "ap": 0.21736025934210831
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.5486041555272729,
+          "ap": 0.1715320108268206
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.632890103537079,
+          "ap": 0.3369649822867417
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.5361527924052142,
+          "ap": 0.4051704051472885
+        }
+      ]
+    },
+    "Halstead": {
+      "mean_auc": 0.5855973614583743,
+      "std_auc": 0.04339108046656186,
+      "mean_ap": 0.2895688032237545,
+      "std_ap": 0.08629416656161208,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.6140317101761772,
+          "ap": 0.2449347673951787
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.543869128755074,
+          "ap": 0.175707627538722
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.641706522310401,
+          "ap": 0.3351281156789024
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.5427820845918448,
+          "ap": 0.40250470228221497
+        }
+      ]
+    },
+    "Churn": {
+      "mean_auc": 0.4678807816433128,
+      "std_auc": 0.07294977370452202,
+      "mean_ap": 0.2433340899992807,
+      "std_ap": 0.13952456352520323,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.441550940780861,
+          "ap": 0.1616028696899953
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.3747110033361699,
+          "ap": 0.11466801933245453
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.478780154517265,
+          "ap": 0.22105733556942103
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.5764810279389555,
+          "ap": 0.4760081354052519
+        }
+      ]
+    },
+    "Composite": {
+      "mean_auc": 0.574248310414955,
+      "std_auc": 0.03662642347806985,
+      "mean_ap": 0.2825736878323222,
+      "std_ap": 0.09329130109592343,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.5735982407954069,
+          "ap": 0.22699313304187
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.538034596760225,
+          "ap": 0.1679640123788181
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.6337572922688811,
+          "ap": 0.32235801821675913
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.5516031118353072,
+          "ap": 0.4129795876918414
+        }
+      ]
+    },
+    "XGBoost": {
+      "mean_auc": 0.5731249570569477,
+      "std_auc": 0.059167749654280746,
+      "mean_ap": 0.2791369969605159,
+      "std_ap": 0.07660063963558741,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.5441940258917952,
+          "ap": 0.1944312825036049
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.6592381031275653,
+          "ap": 0.23412040863314573
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.5898985651968256,
+          "ap": 0.2898911120070736
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.4991691340116048,
+          "ap": 0.39810518469823947
+        }
+      ]
+    },
+    "LogReg": {
+      "mean_auc": 0.49071090926492966,
+      "std_auc": 0.048331600716055446,
+      "mean_ap": 0.24101297902107163,
+      "std_ap": 0.09516593929153902,
+      "per_project": [
+        {
+          "held_out": "django",
+          "auc": 0.5226189559428772,
+          "ap": 0.20714512204197125
+        },
+        {
+          "held_out": "flask",
+          "auc": 0.4118701378900043,
+          "ap": 0.11848602832883759
+        },
+        {
+          "held_out": "requests",
+          "auc": 0.5366321543070374,
+          "ap": 0.25661377476415625
+        },
+        {
+          "held_out": "sqlalchemy",
+          "auc": 0.4917223889197997,
+          "ap": 0.38180699094932147
+        }
+      ]
+    }
+  },
+  "ranking": [
+    [
+      "Halstead",
+      0.5855973614583743
+    ],
+    [
+      "LOC",
+      0.5808922262679719
+    ],
+    [
+      "Composite",
+      0.574248310414955
+    ],
+    [
+      "XGBoost",
+      0.5731249570569477
+    ],
+    [
+      "CC",
+      0.5611200138449651
+    ],
+    [
+      "LogReg",
+      0.49071090926492966
+    ],
+    [
+      "Churn",
+      0.4678807816433128
+    ]
+  ],
+  "finding": "Best simple baseline (Halstead, AUC=0.5856) vs XGBoost (AUC=0.5731): delta=+0.0125. Simple heuristics are competitive with learned ML under LOPO, suggesting that cross-project generalisation is limited by distribution shift, not model capacity.",
+  "best_simple_baseline": {
+    "name": "Halstead",
+    "mean_auc": 0.5855973614583743
+  },
+  "xgboost_lopo_auc": 0.5731249570569477,
+  "delta_simple_vs_xgb": 0.012472404401426607
+}

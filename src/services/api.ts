@@ -1,5 +1,5 @@
 import type { FullAnalysisResult } from "@/types/analysis";
-import { addEntry } from "@/services/reviewHistory";
+import { addEntry, getPrevFeatures } from "@/services/reviewHistory";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
 
@@ -50,6 +50,27 @@ async function post<T>(path: string, body: AnalyzeRequest, signal?: AbortSignal)
  * in wave 2 of the same request — no extra round trips needed.
  * Rapid resubmits automatically cancel the previous in-flight request.
  */
+/** Run DRE in the background using prev features from history, patch result in place. */
+async function _enrichWithDRE(
+  result: FullAnalysisResult,
+  code: string,
+  filename: string,
+): Promise<void> {
+  try {
+    const prevFeatures = getPrevFeatures(filename);
+    if (!prevFeatures) return; // no history for this file yet
+    const dreResult = await post<Record<string, unknown>>("/analyze/dre", {
+      code,
+      filename,
+      prev_features: prevFeatures,
+    });
+    // Patch the already-returned result so the UI can react if it re-reads the entry
+    Object.assign(result, { dre: dreResult });
+  } catch {
+    // DRE enrichment is best-effort — never fail the main analysis
+  }
+}
+
 export async function analyzeCode(
   code: string,
   filename = "snippet.py",
@@ -69,6 +90,12 @@ export async function analyzeCode(
   const result = await post<FullAnalysisResult>("/analyze", req, signal);
 
   _currentAnalysisController = null;
+
+  // Attach original code so ReviewDetail can use it for "Create PR"
+  result.code = code;
+
+  // Fire-and-forget DRE delta enrichment using previous analysis of same file
+  _enrichWithDRE(result, code, filename);
 
   // Persist to localStorage so Reviews + Dashboard show real data
   const entry = addEntry(result, filename, language, repoName);
@@ -130,6 +157,7 @@ export async function analyzeCodeStream(
           if (payload.status === "complete") {
             clearTimeout(timeoutId);
             const result = payload.result as FullAnalysisResult;
+            result.code = code;
             const entry = addEntry(result, filename, language, repoName);
             notifyIfCritical(result);
             return { ...result, _entryId: entry.id };

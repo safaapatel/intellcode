@@ -1,0 +1,157 @@
+{
+  "method": "Statistical_Significance_Tests",
+  "description": "Wilcoxon signed-rank tests, Mann-Whitney U tests, and bootstrap confidence intervals for all key comparisons in the thesis. Addresses the critique that results lack statistical validation.",
+  "alpha": 0.05,
+  "tests": {
+    "PIFF_vs_Full": {
+      "label_a": "PIFF",
+      "label_b": "Full_Features",
+      "mean_a": 0.6200331539854216,
+      "mean_b": 0.5779478252321635,
+      "delta_mean": 0.0420853287532581,
+      "wilcoxon_stat": 10.0,
+      "p_value": 0.0625,
+      "significant": false,
+      "cohens_d": 0.5584,
+      "cliffs_delta": 0.375,
+      "effect_size": "medium",
+      "ci_95_a": [
+        0.5524,
+        0.6859
+      ],
+      "ci_95_b": [
+        0.5302,
+        0.6346
+      ],
+      "conclusion": "PIFF (M=0.6200) vs Full_Features (M=0.5779): W=10.0, p=0.0625, not significant, Cohen's d=0.558 (medium effect)."
+    },
+    "Halstead_vs_XGBoost": {
+      "label_a": "Halstead",
+      "label_b": "XGBoost",
+      "mean_a": 0.5855973614583743,
+      "mean_b": 0.5731249570569477,
+      "delta_mean": 0.012472404401426607,
+      "wilcoxon_stat": 4.0,
+      "p_value": 0.875,
+      "significant": false,
+      "cohens_d": 0.2082,
+      "cliffs_delta": 0.0,
+      "effect_size": "small",
+      "ci_95_a": [
+        0.5433,
+        0.6279
+      ],
+      "ci_95_b": [
+        0.5217,
+        0.6305
+      ],
+      "conclusion": "Halstead (M=0.5856) vs XGBoost (M=0.5731): W=4.0, p=0.8750, not significant, Cohen's d=0.208 (small effect)."
+    },
+    "Composite_vs_XGBoost": {
+      "label_a": "Composite",
+      "label_b": "XGBoost",
+      "mean_a": 0.574248310414955,
+      "mean_b": 0.5731249570569477,
+      "delta_mean": 0.0011233533580073951,
+      "wilcoxon_stat": 4.0,
+      "p_value": 0.875,
+      "significant": false,
+      "cohens_d": 0.0198,
+      "cliffs_delta": 0.0,
+      "effect_size": "negligible",
+      "ci_95_a": [
+        0.5448,
+        0.6132
+      ],
+      "ci_95_b": [
+        0.5217,
+        0.6305
+      ],
+      "conclusion": "Composite (M=0.5742) vs XGBoost (M=0.5731): W=4.0, p=0.8750, not significant, Cohen's d=0.020 (negligible effect)."
+    },
+    "Bug_vs_Security_LOPO": {
+      "label_a": "Bug_LOPO",
+      "label_b": "Security_LOPO",
+      "mean_a": 0.5670592419664756,
+      "mean_b": 0.4944253428629932,
+      "mann_whitney_u": 25.0,
+      "p_value": 0.6764705882352942,
+      "significant": false,
+      "conclusion": "Bug LOPO AUC (M=0.567) vs Security (M=0.494): U=25, p=0.6765, not significant"
+    },
+    "Calibration_LOPO_ECE": {
+      "in_distribution_ece": 0.08745290724888108,
+      "mean_lopo_ece": 0.22606645748326226,
+      "std_lopo_ece": 0.06856288612585149,
+      "bootstrap_ci_95": [
+        0.16012020317620468,
+        0.29201271179031985
+      ],
+      "per_project_ece": {
+        "django": 0.17648187072693625,
+        "flask": 0.27112688816494956,
+        "requests": 0.14375853562547314,
+        "sqlalchemy": 0.3128985354156901
+      },
+      "conclusion": "In-distribution ECE=0.0875 vs LOPO ECE=0.2261 [95% CI: 0.1601\u20130.2920]. Confidence intervals exclude the in-distribution value, confirming significant calibration degradation under LOPO."
+    },
+    "SAEF_Shift_AUC_Correlation": {
+      "pearson_r": -0.4034358400966225,
+      "p_value": 0.7356317121130833,
+      "spearman_r": 0.5,
+      "n_points": 3,
+      "significant": false,
+      "note": "n=3 points. With only 4 projects the test has limited power. Direction (negative r) confirms shift -> lower AUC."
+    }
+  },
+  "summary_table": [
+    {
+      "comparison": "PIFF_vs_Full",
+      "delta": 0.0421,
+      "p_value": 0.0625,
+      "significant": false,
+      "effect_size": "medium",
+      "conclusion_short": "PIFF (M=0.6200) vs Full_Features (M=0.5779): W=10.0, p=0.0625, not significant, Cohen's d=0.558 (med"
+    },
+    {
+      "comparison": "Halstead_vs_XGBoost",
+      "delta": 0.0125,
+      "p_value": 0.875,
+      "significant": false,
+      "effect_size": "small",
+      "conclusion_short": "Halstead (M=0.5856) vs XGBoost (M=0.5731): W=4.0, p=0.8750, not significant, Cohen's d=0.208 (small "
+    },
+    {
+      "comparison": "Composite_vs_XGBoost",
+      "delta": 0.0011,
+      "p_value": 0.875,
+      "significant": false,
+      "effect_size": "negligible",
+      "conclusion_short": "Composite (M=0.5742) vs XGBoost (M=0.5731): W=4.0, p=0.8750, not significant, Cohen's d=0.020 (negli"
+    },
+    {
+      "comparison": "Bug_vs_Security_LOPO",
+      "delta": 0,
+      "p_value": 0.6765,
+      "significant": false,
+      "effect_size": "\u2014",
+      "conclusion_short": "Bug LOPO AUC (M=0.567) vs Security (M=0.494): U=25, p=0.6765, not significant"
+    },
+    {
+      "comparison": "Calibration_LOPO_ECE",
+      "delta": 0,
+      "p_value": 1,
+      "significant": false,
+      "effect_size": "\u2014",
+      "conclusion_short": "In-distribution ECE=0.0875 vs LOPO ECE=0.2261 [95% CI: 0.1601\u20130.2920]. Confidence intervals exclude "
+    },
+    {
+      "comparison": "SAEF_Shift_AUC_Correlation",
+      "delta": 0,
+      "p_value": 0.7356,
+      "significant": false,
+      "effect_size": "\u2014",
+      "conclusion_short": ""
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import Reviews from "./pages/Reviews";
 import Analytics from "./pages/Analytics";
 import Rules from "./pages/Rules";
 import Repositories from "./pages/Repositories";
+import PRReview from "./pages/PRReview";
 import Settings from "./pages/Settings";
 import Models from "./pages/Models";
 import Admin from "./pages/Admin";
@@ -115,6 +116,7 @@ const App = () => (
           <Route path="/rules"        element={<ProtectedRoute><Rules /></ProtectedRoute>} />
           <Route path="/reviews"      element={<ProtectedRoute><Reviews /></ProtectedRoute>} />
           <Route path="/repositories" element={<ProtectedRoute><Repositories /></ProtectedRoute>} />
+          <Route path="/pr-review" element={<ProtectedRoute><PRReview /></ProtectedRoute>} />
           <Route path="/settings"     element={<ProtectedRoute><Settings /></ProtectedRoute>} />
           <Route path="/models"       element={<ProtectedRoute><Models /></ProtectedRoute>} />
           <Route path="/admin"        element={<ProtectedRoute requireRole="admin"><Admin /></ProtectedRoute>} />

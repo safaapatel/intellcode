@@ -73,6 +73,12 @@ from models.performance_analyzer import PerformanceAnalyzer
 from models.dependency_analyzer import DependencyAnalyzer
 from models.readability_scorer import ReadabilityScorer
 from models.multi_task_model import MultiTaskCodeModel, MultiTaskPrediction
+from models.cross_task_meta_learner import CrossTaskMetaLearner
+from models.function_risk_localizer import FunctionRiskLocalizer
+from models.complexity_trajectory import ComplexityTrajectoryPredictor
+from models.code_grammar_anomaly import CodeGrammarAnomalyModel
+from models.asymmetric_complexity_regressor import AsymmetricComplexityRegressor
+from models.differential_risk_encoder import DifferentialRiskEncoder
 from features.ood_detector import OODDetector, make_abstention_prediction
 from features.code_metrics import metrics_to_feature_vector
 from features.conformal_predictor import ResidualConformalPredictor
@@ -96,6 +102,12 @@ class ModelRegistry:
     dependency_analyzer: DependencyAnalyzer | None = None
     readability_scorer: ReadabilityScorer | None = None
     multi_task: MultiTaskCodeModel | None = None
+    meta_learner: CrossTaskMetaLearner | None = None
+    function_localizer: FunctionRiskLocalizer | None = None
+    trajectory_predictor: ComplexityTrajectoryPredictor | None = None
+    grammar_anomaly: CodeGrammarAnomalyModel | None = None
+    apcr: AsymmetricComplexityRegressor | None = None
+    dre: DifferentialRiskEncoder | None = None
     ood_security: OODDetector | None = None   # OOD detector fitted on security training features
     ood_bug: OODDetector | None = None        # OOD detector fitted on bug predictor training features
     conformal_security: ResidualConformalPredictor | None = None
@@ -274,6 +286,61 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("  [WARN] Multi-task model failed to load: %s", e)
         registry.multi_task = None
+
+    # Novel models: CTSL, FLRL, CTP
+    try:
+        registry.meta_learner = CrossTaskMetaLearner()
+        if registry.meta_learner.load():
+            logger.info("  [OK] Cross-task meta-learner (CTSL)")
+        else:
+            logger.info("  [--] Cross-task meta-learner — no checkpoint, using heuristic fallback")
+    except Exception as e:
+        logger.warning("  [WARN] Cross-task meta-learner: %s", e)
+        registry.meta_learner = None
+
+    try:
+        registry.function_localizer = FunctionRiskLocalizer(top_k=5)
+        logger.info("  [OK] Function-level risk localizer (FLRL)")
+    except Exception as e:
+        logger.warning("  [WARN] Function risk localizer: %s", e)
+        registry.function_localizer = None
+
+    try:
+        registry.trajectory_predictor = ComplexityTrajectoryPredictor()
+        logger.info("  [OK] Complexity trajectory predictor (CTP)")
+    except Exception as e:
+        logger.warning("  [WARN] Complexity trajectory predictor: %s", e)
+        registry.trajectory_predictor = None
+
+    try:
+        registry.grammar_anomaly = CodeGrammarAnomalyModel()
+        if registry.grammar_anomaly.load("checkpoints/cgam"):
+            logger.info("  [OK] Code Grammar Anomaly Model (CGAM)")
+        else:
+            logger.info("  [--] CGAM — no checkpoint, predict() returns null score until trained")
+    except Exception as e:
+        logger.warning("  [WARN] CGAM: %s", e)
+        registry.grammar_anomaly = None
+
+    try:
+        registry.apcr = AsymmetricComplexityRegressor()
+        if registry.apcr.load("checkpoints/apcr"):
+            logger.info("  [OK] Asymmetric Complexity Regressor (APCR)")
+        else:
+            logger.info("  [--] APCR — no checkpoint, will use heuristic fallback")
+    except Exception as e:
+        logger.warning("  [WARN] APCR: %s", e)
+        registry.apcr = None
+
+    try:
+        registry.dre = DifferentialRiskEncoder()
+        if registry.dre.load("checkpoints/dre"):
+            logger.info("  [OK] Differential Risk Encoder (DRE)")
+        else:
+            logger.info("  [--] DRE — no checkpoint, will use heuristic fallback")
+    except Exception as e:
+        logger.warning("  [WARN] DRE: %s", e)
+        registry.dre = None
 
     # OOD detectors — fitted once during training; loaded here for inference
     try:
@@ -491,6 +558,12 @@ class BugPredictionOut(BaseModel):
     confidence: float
     static_score: float
     git_score: Optional[float]
+    abstained: bool = False
+    low_confidence: bool = False
+    low_confidence_reason: Optional[str] = None
+    probability_adjusted: Optional[float] = None
+    top_feature_importances: list[dict] = Field(default_factory=list)
+    reliability_context: dict = Field(default_factory=dict)
 
 
 class PatternOut(BaseModel):
@@ -519,6 +592,10 @@ class FullAnalysisResponse(BaseModel):
     performance: Optional[dict] = None
     dependencies: Optional[dict] = None
     readability: Optional[dict] = None
+    # Novel model results (always included, may be null if untrained)
+    grammar_anomaly: Optional[dict] = None
+    apcr: Optional[dict] = None
+    function_risk: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1151,13 +1228,16 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
                     ],
                 )
 
-    # --- Wave 2: debt (needs wave-1 results) + specialists (independent) in parallel ---
+    # --- Wave 2: debt (needs wave-1 results) + specialists + novel models (independent) ---
     (
         (debt_out, debt_result),
         docs_out,
         perf_out,
         deps_out,
         read_out,
+        grammar_out,
+        apcr_out,
+        func_risk_out,
     ) = await asyncio.gather(
         _run(functools.partial(
             _step_debt, source, security_out,
@@ -1167,6 +1247,9 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
         _run(_step_performance, source),
         _run(_step_dependencies, source),
         _run(_step_readability, source),
+        _run(_step_grammar_anomaly, source),
+        _run(_step_apcr, source),
+        _run(_step_function_risk, source),
     )
 
     # Cache specialist results too
@@ -1197,7 +1280,7 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
     summary = (
         f"Found {total_issues} security issue(s). "
         f"Code quality: {complexity_out.score}/100 ({complexity_out.grade}). "
-        f"Bug risk: {bug_out.risk_level}. "
+        f"Bug risk: {bug_out.risk_level if bug_out is not None else 'unknown'}. "
         f"Clones: {len(clone_out.get('clones', []))}. "
         f"Debt: {debt_result.total_debt_minutes} min (Rating {debt_result.overall_rating})."
     )
@@ -1223,6 +1306,9 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
         performance=perf_out or None,
         dependencies=deps_out or None,
         readability=read_out or None,
+        grammar_anomaly=grammar_out or None,
+        apcr=apcr_out or None,
+        function_risk=func_risk_out or None,
     )
     _cache_put(_analysis_cache, cache_key, response.model_dump())
     return response
@@ -1351,7 +1437,7 @@ def analyze_bugs(req: AnalyzeRequest):
         metrics = compute_all_metrics(req.code)
         feat_vec = metrics_to_feature_vector(metrics)
         ood_meta = make_abstention_prediction(
-            float(out.get("probability", 0.0)),
+            float(out.get("bug_probability", 0.0)),
             np.array(feat_vec),
             registry.ood_bug,
             task="bug",
@@ -1378,7 +1464,7 @@ def analyze_bugs(req: AnalyzeRequest):
 
 class DiffBugRequest(BaseModel):
     """Request body for diff-aware bug prediction."""
-    diff: str = Field(..., description="Unified diff text (git diff output)")
+    diff: str = Field(..., min_length=1, max_length=500_000, description="Unified diff text (git diff output)")
     filename: str = Field("unknown", description="Primary file being changed")
 
 
@@ -1717,7 +1803,7 @@ def _step_bug(source: str, git_metadata: Optional[dict]):
         metrics = compute_all_metrics(source)
         feat_vec = metrics_to_feature_vector(metrics)
         ood_meta = make_abstention_prediction(
-            float(out_dict.get("probability", 0.0)),
+            float(out_dict.get("bug_probability", 0.0)),
             np.array(feat_vec),
             registry.ood_bug,
             task="bug",
@@ -1734,7 +1820,7 @@ def _step_bug(source: str, git_metadata: Optional[dict]):
     except Exception:
         pass
 
-    return BugPredictionOut(**r.to_dict()), r
+    return BugPredictionOut(**out_dict), r
 
 
 def _step_pattern(source: str):
@@ -1793,6 +1879,42 @@ def _step_dependencies(source: str):
 def _step_readability(source: str):
     r = registry.readability_scorer.score(source)
     return r.to_dict() if r else {}
+
+
+def _step_grammar_anomaly(source: str) -> dict:
+    """Run CGAM — returns empty dict if untrained."""
+    if not registry.grammar_anomaly or not registry.grammar_anomaly.ready:
+        return {}
+    try:
+        return registry.grammar_anomaly.predict(source).to_dict()
+    except Exception as e:
+        logger.warning("CGAM predict failed: %s", e)
+        return {}
+
+
+def _step_apcr(source: str) -> dict:
+    """Run APCR — uses heuristic fallback if untrained."""
+    if not registry.apcr:
+        return {}
+    try:
+        import numpy as np
+        metrics = compute_all_metrics(source)
+        feat_vec = metrics_to_feature_vector(metrics)
+        return registry.apcr.predict(np.asarray(feat_vec, dtype=np.float32)).to_dict()
+    except Exception as e:
+        logger.warning("APCR predict failed: %s", e)
+        return {}
+
+
+def _step_function_risk(source: str) -> dict:
+    """Run FLRL function-level risk localizer."""
+    if not registry.function_localizer:
+        return {}
+    try:
+        return registry.function_localizer.localize(source).to_dict()
+    except Exception as e:
+        logger.warning("FLRL predict failed: %s", e)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -1914,7 +2036,7 @@ async def analyze_stream(req: AnalyzeRequest):
         summary = (
             f"Found {total_issues} security issue(s). "
             f"Code quality: {complexity_out.score}/100 ({complexity_out.grade}). "
-            f"Bug risk: {bug_out.risk_level}. "
+            f"Bug risk: {bug_out.risk_level if bug_out is not None else 'unknown'}. "
             f"Clones: {len(clone_out.get('clones', []))}. "
             f"Debt: {debt_result.total_debt_minutes} min (Rating {debt_result.overall_rating})."
         )
@@ -2031,6 +2153,217 @@ def analyze_quick(req: AnalyzeRequest):
     return result
 
 
+@app.post("/analyze/meta-risk", tags=["analysis"])
+def analyze_meta_risk(req: AnalyzeRequest):
+    """
+    Cross-Task Stacking Meta-Learner (CTSL) — unified risk score.
+
+    Runs all four base models, constructs domain-interaction features
+    (security*bug, complexity_deficit*bug, pattern_risk*bug, etc.) and
+    produces a calibrated joint risk score that outperforms any single model.
+
+    Returns unified_risk [0,1], per-task calibrated scores, the dominant
+    contributing signal, and the top-3 interaction feature contributions.
+    """
+    if not registry.meta_learner:
+        raise HTTPException(503, "Cross-task meta-learner unavailable")
+    if not registry.bug_predictor or not registry.complexity or not registry.security:
+        raise HTTPException(503, "Base models not loaded — cannot compute meta-risk")
+
+    source = req.code
+    t_start = time.perf_counter()
+
+    bug_res = registry.bug_predictor.predict(source, None)
+    cpx_res = registry.complexity.predict(source)
+    findings = registry.security.predict(source)
+    sec_score = registry.security.vulnerability_score(source)
+    n_critical = sum(1 for f in findings if f.severity == "critical")
+
+    pattern_label, pattern_conf = "clean", 0.5
+    if registry.pattern_model and registry.pattern_model.ready:
+        try:
+            pat = registry.pattern_model.predict(source)
+            pattern_label = pat.label
+            pattern_conf  = pat.confidence
+        except Exception:
+            pass
+
+    result = registry.meta_learner.predict(
+        security_score=sec_score,
+        complexity_score=float(cpx_res.score),
+        bug_probability=float(bug_res.bug_probability),
+        pattern_label=pattern_label,
+        pattern_confidence=pattern_conf,
+        n_security_findings=len(findings),
+        n_critical=n_critical,
+    )
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/function-risk", tags=["analysis"])
+def analyze_function_risk(req: AnalyzeRequest):
+    """
+    Function-Level Risk Localizer (FLRL) — decomposes file risk to functions.
+
+    Scores each function individually using complexity-weighted attribution
+    and ranks functions by their attributed risk score (raw_score * share
+    of file's total cognitive complexity).
+
+    Returns a ranked list of functions with raw_score, complexity_weight,
+    attributed_score, risk_level, and a plain-English reason.
+    """
+    if not registry.function_localizer:
+        raise HTTPException(503, "Function risk localizer unavailable")
+
+    t_start = time.perf_counter()
+    result = registry.function_localizer.localize(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+class TrajectoryRequest(BaseModel):
+    snapshots: list[tuple[float, float]] = Field(
+        ...,
+        description="List of [unix_timestamp, cognitive_complexity] pairs, oldest-first",
+        min_length=2,
+    )
+    current_complexity: Optional[float] = Field(
+        None, description="Override for current complexity (defaults to last snapshot)"
+    )
+
+
+@app.post("/analyze/trajectory", tags=["analysis"])
+def analyze_trajectory(req: TrajectoryRequest):
+    """
+    Complexity Trajectory Predictor (CTP) — predicts complexity trend direction.
+
+    Given a sequence of (timestamp, cognitive_complexity) snapshots from git
+    history, fits a time-decay weighted linear regression and predicts whether
+    complexity is increasing, stable, or decreasing.
+
+    Returns slope, trajectory, risk_multiplier (for adjusting bug probability),
+    30-day forecast, and fit confidence (R^2).
+
+    Body: { "snapshots": [[ts, cog], ...], "current_complexity": 14.0 }
+    """
+    if not registry.trajectory_predictor:
+        raise HTTPException(503, "Trajectory predictor unavailable")
+
+    t_start = time.perf_counter()
+    result = registry.trajectory_predictor.predict(
+        snapshots=[(float(ts), float(cog)) for ts, cog in req.snapshots],
+        current_complexity=req.current_complexity,
+    )
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 3)
+    return out
+
+
+@app.post("/analyze/grammar-anomaly", tags=["analysis"])
+def analyze_grammar_anomaly(req: AnalyzeRequest):
+    """
+    Code Grammar Anomaly Model (CGAM) — detects anomalous code structure.
+
+    Trains a Variable-Order Markov Model over DFS-order AST node-type
+    sequences on unlabeled clean code, then flags files whose AST grammar
+    has high perplexity under the learned model.
+
+    Requires the CGAM checkpoint to be trained first (POST /train/cgam or
+    via training/train_cgam.py).  Without a checkpoint, returns a null
+    result with is_anomalous=false.
+
+    Returns: perplexity, anomaly_score [0-1], is_anomalous, top_anomalous_ngrams,
+             grammar_coverage (fraction of file's trigrams seen in training).
+    """
+    if not registry.grammar_anomaly:
+        raise HTTPException(503, "Grammar Anomaly Model unavailable")
+
+    t_start = time.perf_counter()
+    result = registry.grammar_anomaly.predict(req.code)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 4)
+    return out
+
+
+class DRERequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=500_000)
+    filename: str = "snippet.py"
+    prev_features: Optional[list[float]] = Field(
+        None,
+        description="Static feature vector from the previous commit (15-dim). "
+                    "If omitted, treated as zero vector (first commit).",
+    )
+
+
+@app.post("/analyze/apcr", tags=["analysis"])
+def analyze_apcr(req: AnalyzeRequest):
+    """
+    Asymmetric Complexity Regressor (APCR) — predicts cognitive complexity
+    with an asymmetric pinball loss that penalises underestimation 3x more
+    than overestimation.
+
+    Returns: prediction, lower/upper bounds, asymmetry_penalty (how much
+    the asymmetric loss raised the estimate vs RMSE), risk_flag (>= 12),
+    and model confidence.
+
+    Falls back to cyclomatic complexity if no checkpoint is available.
+    """
+    if not registry.apcr:
+        raise HTTPException(503, "APCR unavailable")
+
+    t_start = time.perf_counter()
+    try:
+        metrics = compute_all_metrics(req.code)
+        feat_vec = metrics_to_feature_vector(metrics)
+    except Exception as e:
+        raise HTTPException(400, f"Feature extraction failed: {e}")
+
+    import numpy as np
+    result = registry.apcr.predict(np.asarray(feat_vec, dtype=np.float32))
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 4)
+    return out
+
+
+@app.post("/analyze/dre", tags=["analysis"])
+def analyze_dre(req: DRERequest):
+    """
+    Differential Risk Encoder (DRE) — predicts bug risk from feature
+    DIFFERENCES between the current commit and the previous one.
+
+    Novel: no JIT-SDP paper uses delta features as input representation.
+    DRE encodes [delta, absolute, magnitude, direction] for each feature.
+
+    Body:
+        code:          Current commit source code
+        prev_features: 15-dim static feature vector from the previous commit
+                       (omit for first-commit or single-file analysis)
+
+    Returns: risk_score, delta_contribution (how much delta features changed
+    the score vs static-only), top_delta_features (most-changed features),
+    static_score (absolute-only baseline), and model_type (mlp/logistic/heuristic).
+    """
+    if not registry.dre:
+        raise HTTPException(503, "DRE unavailable")
+
+    t_start = time.perf_counter()
+    import numpy as np
+    try:
+        metrics = compute_all_metrics(req.code)
+        x_curr = np.asarray(metrics_to_feature_vector(metrics), dtype=np.float32)
+    except Exception as e:
+        raise HTTPException(400, f"Feature extraction failed: {e}")
+
+    x_prev = np.asarray(req.prev_features, dtype=np.float32) if req.prev_features else None
+    result = registry.dre.predict(x_curr, x_prev)
+    out = result.to_dict()
+    out["duration_seconds"] = round(time.perf_counter() - t_start, 4)
+    return out
+
+
 @app.post("/analyze/multi-task", tags=["analysis"])
 async def analyze_multi_task(req: AnalyzeRequest):
     """
@@ -2056,7 +2389,7 @@ async def analyze_multi_task(req: AnalyzeRequest):
 # ---------------------------------------------------------------------------
 
 class BatchFileRequest(BaseModel):
-    code: str
+    code: str = Field(..., min_length=1, max_length=500_000)
     filename: str = "snippet.py"
     language: Optional[str] = None
     git_metadata: Optional[dict] = None
@@ -2073,7 +2406,7 @@ class BatchAnalyzeRequest(BaseModel):
 
 class TriageFileRequest(BaseModel):
     filename: str = Field(..., description="File path or name")
-    code: str = Field(..., description="Source code content")
+    code: str = Field(..., min_length=1, max_length=500_000, description="Source code content")
     loc: int = Field(0, description="Lines of code (estimated from code if 0)")
 
 
@@ -2842,6 +3175,362 @@ async def github_webhook(request: Request):
         "changed_files": len(changed),
         "analyzable_files": len(src_files),
         "files": src_files,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GitHub PR analysis + comment posting
+# ---------------------------------------------------------------------------
+
+class PRAnalyzeRequest(BaseModel):
+    pr_url: str = Field(..., description="Full GitHub PR URL e.g. https://github.com/owner/repo/pull/123")
+    github_token: str = Field(..., description="GitHub personal access token or OAuth token")
+    post_comments: bool = Field(True, description="Whether to post review comments to GitHub")
+    max_files: int = Field(10, ge=1, le=20, description="Max files to analyze")
+
+
+def _gh_api(path: str, token: str, method: str = "GET", body: dict | None = None) -> dict:
+    """Make a GitHub API call. Raises on HTTP error."""
+    url = f"https://api.github.com{path}"
+    data = _json.dumps(body).encode() if body else None
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return _json.loads(resp.read())
+    except urllib.request.HTTPError as e:
+        body_text = e.read().decode(errors="replace")[:300]
+        raise HTTPException(status_code=e.code, detail=f"GitHub API error: {body_text}")
+
+
+def _parse_pr_url(url: str) -> tuple[str, str, int]:
+    """Parse https://github.com/owner/repo/pull/123 → (owner, repo, pr_number)."""
+    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)", url.strip())
+    if not m:
+        raise HTTPException(400, "Invalid PR URL. Expected: https://github.com/owner/repo/pull/123")
+    return m.group(1), m.group(2), int(m.group(3))
+
+
+def _fetch_pr_file_content(owner: str, repo: str, path: str, ref: str, token: str) -> str:
+    """Fetch raw file content at a specific git ref."""
+    try:
+        data = _gh_api(f"/repos/{owner}/{repo}/contents/{path}?ref={ref}", token)
+        import base64
+        return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+@app.post("/github/analyze-pr", tags=["github"])
+async def analyze_pr(req: PRAnalyzeRequest):
+    """
+    Fetch a GitHub PR's changed files, run analysis, and optionally post
+    review comments inline on risky lines + a summary comment.
+
+    Returns the full analysis results per file plus GitHub comment URLs.
+    """
+    owner, repo, pr_number = _parse_pr_url(req.pr_url)
+    token = req.github_token
+
+    loop = asyncio.get_running_loop()
+
+    # 1. Fetch PR metadata + file list
+    def _fetch_pr():
+        pr   = _gh_api(f"/repos/{owner}/{repo}/pulls/{pr_number}", token)
+        files = _gh_api(f"/repos/{owner}/{repo}/pulls/{pr_number}/files", token)
+        return pr, files
+
+    pr_data, files_data = await loop.run_in_executor(_EXECUTOR, _fetch_pr)
+
+    head_sha = pr_data.get("head", {}).get("sha", "HEAD")
+    pr_title = pr_data.get("title", "")
+
+    # 2. Filter to analyzable files
+    EXT_RE = re.compile(r"\.(py|js|ts|jsx|tsx|java|go|rs|cpp|c|cs|rb|php|kt|swift)$")
+    changed_files = [
+        f for f in files_data
+        if EXT_RE.search(f.get("filename", "")) and f.get("status") != "removed"
+    ][:req.max_files]
+
+    if not changed_files:
+        return {"status": "no_analyzable_files", "pr_title": pr_title, "files": []}
+
+    # 3. Fetch + analyze each file in parallel
+    async def _analyze_file(file_info: dict) -> dict:
+        filename = file_info["filename"]
+        language = detect_language(filename, "python")
+        source = await loop.run_in_executor(
+            _EXECUTOR,
+            lambda: _fetch_pr_file_content(owner, repo, filename, head_sha, token)
+        )
+        if not source or len(source) < 10:
+            return {"filename": filename, "skipped": True}
+
+        # Truncate large files
+        lines = source.splitlines()
+        if len(lines) > _MAX_SLOC:
+            source = "\n".join(lines[:_MAX_SLOC])
+
+        def _run_analysis():
+            sec   = _step_security(source, language)
+            cpx, _= _step_complexity(source)
+            bug, _= _step_bug(source, None)
+            fr    = _step_function_risk(source)
+            return sec, cpx, bug, fr
+
+        sec_out, cpx_out, bug_out, fr_out = await loop.run_in_executor(_EXECUTOR, _run_analysis)
+
+        return {
+            "filename": filename,
+            "patch": file_info.get("patch", "")[:500],
+            "security": {
+                "findings": sec_out.get("findings", []),
+                "summary":  sec_out.get("summary", {}),
+            },
+            "complexity": cpx_out.model_dump() if cpx_out else {},
+            "bug_prediction": bug_out.model_dump() if bug_out else {},
+            "function_risk": fr_out,
+            "skipped": False,
+        }
+
+    file_results = await asyncio.gather(*[_analyze_file(f) for f in changed_files])
+
+    # 4. Post GitHub review comments if requested
+    comment_urls = []
+    if req.post_comments:
+        # Build review body (summary comment)
+        n_sec = sum(
+            len(r.get("security", {}).get("findings", []))
+            for r in file_results if not r.get("skipped")
+        )
+        high_bug = [
+            r["filename"] for r in file_results
+            if not r.get("skipped") and r.get("bug_prediction", {}).get("risk_level") in ("high", "critical")
+        ]
+
+        summary_body = (
+            f"## IntelliCode Review\n\n"
+            f"Analyzed **{len([r for r in file_results if not r.get('skipped')])}** file(s) "
+            f"in PR #{pr_number}: _{pr_title}_\n\n"
+        )
+        if n_sec:
+            summary_body += f"- **{n_sec} security finding(s)** detected\n"
+        if high_bug:
+            summary_body += f"- High bug risk: {', '.join(f'`{f}`' for f in high_bug)}\n"
+
+        # Add per-file function risk summary
+        for r in file_results:
+            if r.get("skipped"):
+                continue
+            fr = r.get("function_risk") or {}
+            top_k = fr.get("top_k", [])
+            if top_k:
+                summary_body += f"\n**`{r['filename']}`** — top risk functions:\n"
+                for fn in top_k[:3]:
+                    summary_body += (
+                        f"- `{fn['name']}()` L{fn['lineno']}–{fn['end_lineno']} "
+                        f"({fn['risk_level']}) — {fn['reason']}\n"
+                    )
+
+        summary_body += "\n---\n_Posted by [IntelliCode](https://github.com/safaapatel/intellcode)_"
+
+        def _post_summary():
+            return _gh_api(
+                f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
+                token, method="POST",
+                body={"body": summary_body},
+            )
+
+        try:
+            comment = await loop.run_in_executor(_EXECUTOR, _post_summary)
+            comment_urls.append(comment.get("html_url", ""))
+        except Exception as e:
+            logger.warning("Failed to post PR summary comment: %s", e)
+
+        # Post inline review comments for security findings with line numbers
+        inline_comments = []
+        for r in file_results:
+            if r.get("skipped"):
+                continue
+            for finding in r.get("security", {}).get("findings", []):
+                lineno = finding.get("lineno", 1)
+                if lineno and lineno > 0:
+                    inline_comments.append({
+                        "path": r["filename"],
+                        "line": lineno,
+                        "body": (
+                            f"**{finding.get('severity','').upper()} — {finding.get('title','')}**\n\n"
+                            f"{finding.get('description','')}\n\n"
+                            f"CWE: `{finding.get('cwe','')}`  Confidence: {finding.get('confidence',0):.0%}"
+                        ),
+                    })
+
+        if inline_comments:
+            def _post_review():
+                return _gh_api(
+                    f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+                    token, method="POST",
+                    body={
+                        "commit_id": head_sha,
+                        "body": "IntelliCode security findings (inline)",
+                        "event": "COMMENT",
+                        "comments": inline_comments[:10],  # GitHub caps at 10 per review
+                    },
+                )
+            try:
+                review = await loop.run_in_executor(_EXECUTOR, _post_review)
+                comment_urls.append(review.get("html_url", ""))
+            except Exception as e:
+                logger.warning("Failed to post inline review: %s", e)
+
+    return {
+        "status": "ok",
+        "pr_url": req.pr_url,
+        "pr_title": pr_title,
+        "files_analyzed": len([r for r in file_results if not r.get("skipped")]),
+        "comment_urls": comment_urls,
+        "results": list(file_results),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /github/create-pr  — commit code + open a PR with analysis findings
+# ---------------------------------------------------------------------------
+
+class CreatePRRequest(BaseModel):
+    github_token: str
+    repo_full_name: str          # "owner/repo"
+    filename: str                # path inside the repo, e.g. "src/utils.py"
+    code: str
+    branch_name: str = ""        # auto-generated if empty
+    pr_title: str = ""
+    base_branch: str = ""        # defaults to repo default branch
+    analysis_summary: str = ""   # pre-built markdown summary to post as comment
+
+
+def _b64encode(s: str) -> str:
+    import base64
+    return base64.b64encode(s.encode()).decode()
+
+
+@app.post("/github/create-pr", tags=["github"])
+async def create_pr(req: CreatePRRequest):
+    """
+    1. Create a new branch off the repo's default branch
+    2. Commit `code` to `filename` on that branch
+    3. Open a pull request
+    4. Post `analysis_summary` as a PR comment
+    Returns { pr_url, pr_number, comment_url, branch }
+    """
+    token = req.github_token
+    owner, repo = req.repo_full_name.split("/", 1)
+    loop = asyncio.get_running_loop()
+
+    def _setup():
+        # Get repo default branch if not supplied
+        repo_info = _gh_api(f"/repos/{owner}/{repo}", token)
+        base = req.base_branch or repo_info.get("default_branch", "main")
+
+        # Get SHA of tip of base branch
+        ref_data = _gh_api(f"/repos/{owner}/{repo}/git/ref/heads/{base}", token)
+        base_sha = ref_data["object"]["sha"]
+        return base, base_sha
+
+    base_branch, base_sha = await loop.run_in_executor(_EXECUTOR, _setup)
+
+    # Generate branch name if not provided
+    import time as _time
+    ts = int(_time.time())
+    branch = req.branch_name.strip() or f"intellcode/review-{ts}"
+    # Sanitize branch name
+    branch = re.sub(r"[^a-zA-Z0-9._/-]", "-", branch)
+
+    def _create_branch():
+        return _gh_api(
+            f"/repos/{owner}/{repo}/git/refs",
+            token, method="POST",
+            body={"ref": f"refs/heads/{branch}", "sha": base_sha},
+        )
+
+    try:
+        await loop.run_in_executor(_EXECUTOR, _create_branch)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not create branch: {e}")
+
+    # Check if file already exists (need its SHA to update)
+    def _get_existing():
+        try:
+            existing = _gh_api(f"/repos/{owner}/{repo}/contents/{req.filename}?ref={branch}", token)
+            return existing.get("sha")
+        except Exception:
+            return None
+
+    existing_sha = await loop.run_in_executor(_EXECUTOR, _get_existing)
+
+    def _commit_file():
+        body: dict = {
+            "message": f"Add {req.filename} via IntelliCode Review",
+            "content": _b64encode(req.code),
+            "branch": branch,
+        }
+        if existing_sha:
+            body["sha"] = existing_sha
+        return _gh_api(
+            f"/repos/{owner}/{repo}/contents/{req.filename}",
+            token, method="PUT", body=body,
+        )
+
+    await loop.run_in_executor(_EXECUTOR, _commit_file)
+
+    # Create the PR
+    pr_title = req.pr_title.strip() or f"IntelliCode Review: {req.filename}"
+
+    def _open_pr():
+        return _gh_api(
+            f"/repos/{owner}/{repo}/pulls",
+            token, method="POST",
+            body={
+                "title": pr_title,
+                "head": branch,
+                "base": base_branch,
+                "body": (
+                    f"## IntelliCode Automated Review\n\n"
+                    f"This PR was created automatically by [IntelliCode](https://intellcode.onrender.com) "
+                    f"after analysing `{req.filename}`.\n\n"
+                    f"{req.analysis_summary or '_No analysis summary provided._'}"
+                ),
+            },
+        )
+
+    pr_data = await loop.run_in_executor(_EXECUTOR, _open_pr)
+    pr_url    = pr_data.get("html_url", "")
+    pr_number = pr_data.get("number")
+
+    # Post analysis as a follow-up comment if summary is long
+    comment_url = ""
+    if req.analysis_summary and pr_number:
+        def _post_comment():
+            return _gh_api(
+                f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
+                token, method="POST",
+                body={"body": req.analysis_summary},
+            )
+        try:
+            comment = await loop.run_in_executor(_EXECUTOR, _post_comment)
+            comment_url = comment.get("html_url", "")
+        except Exception as e:
+            logger.warning("Could not post PR comment: %s", e)
+
+    return {
+        "pr_url": pr_url,
+        "pr_number": pr_number,
+        "branch": branch,
+        "comment_url": comment_url,
     }
 
 

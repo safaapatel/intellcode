@@ -36,49 +36,47 @@ MAX_LENGTH = 512
 # Lightweight RF-based classifier (no GPU/HuggingFace required)
 # ---------------------------------------------------------------------------
 
+"""
+Debiased RF feature set — 12 structural AST features.
+Matches training/train_pattern.py FEATURE_NAMES exactly.
+
+Excluded (leaky — encode label rules directly):
+  CC, cog, maxCC, avgCC, sloc, comments, comment_ratio,
+  halstead_volume, halstead_difficulty, halstead_bugs, MI,
+  n_long_functions, n_complex_functions, n_lines_over_80
+"""
+_RF_FEATURE_NAMES = [
+    "n_functions", "n_classes", "n_try_blocks", "n_raises", "n_with_blocks",
+    "max_nesting_depth", "max_params", "avg_params",
+    "n_decorated_functions", "n_imports",
+    "max_function_body_lines", "avg_function_body_lines",
+]
+_RF_N_FEATURES = len(_RF_FEATURE_NAMES)  # 12
+
+
 def _rf_extract_features(source: str):
-    """Extract code metrics + AST features for the RF pattern model."""
+    """Extract debiased structural AST feature vector (12-dim) for the RF pattern model."""
     import numpy as np
     try:
-        from features.code_metrics import compute_all_metrics
         from features.ast_extractor import ASTExtractor
-
-        m = compute_all_metrics(source)
         ast_feats = ASTExtractor().extract(source)
-        sloc = max(m.lines.sloc, 1)
-        comment_ratio = m.lines.comments / sloc
-
         return np.array([
-            float(m.cyclomatic_complexity),       # 0
-            float(m.cognitive_complexity),         # 1
-            float(m.max_function_complexity),      # 2
-            float(m.avg_function_complexity),      # 3
-            float(m.lines.sloc),                   # 4
-            float(m.lines.comments),               # 5
-            float(comment_ratio),                  # 6
-            float(m.halstead.volume),              # 7
-            float(m.halstead.difficulty),          # 8
-            float(m.halstead.bugs_delivered),      # 9
-            # maintainability_index removed (data leakage — MI is derived from CC/volume)
-            float(m.n_long_functions),             # 10
-            float(m.n_complex_functions),          # 11
-            float(m.n_lines_over_80),              # 12
-            float(ast_feats.get("n_functions", 0)),             # 13
-            float(ast_feats.get("n_classes", 0)),               # 14
-            float(ast_feats.get("n_try_blocks", 0)),            # 15
-            float(ast_feats.get("n_raises", 0)),                # 16
-            float(ast_feats.get("n_with_blocks", 0)),           # 17
-            float(ast_feats.get("max_nesting_depth", 0)),       # 18
-            float(ast_feats.get("max_params", 0)),              # 19
-            float(ast_feats.get("avg_params", 0.0)),            # 20
-            float(ast_feats.get("n_decorated_functions", 0)),   # 21
-            float(ast_feats.get("n_imports", 0)),               # 22
-            float(ast_feats.get("max_function_body_lines", 0)), # 23
-            float(ast_feats.get("avg_function_body_lines", 0.0)), # 24
+            float(ast_feats.get("n_functions", 0)),
+            float(ast_feats.get("n_classes", 0)),
+            float(ast_feats.get("n_try_blocks", 0)),
+            float(ast_feats.get("n_raises", 0)),
+            float(ast_feats.get("n_with_blocks", 0)),
+            float(ast_feats.get("max_nesting_depth", 0)),
+            float(ast_feats.get("max_params", 0)),
+            float(ast_feats.get("avg_params", 0.0)),
+            float(ast_feats.get("n_decorated_functions", 0)),
+            float(ast_feats.get("n_imports", 0)),
+            float(ast_feats.get("max_function_body_lines", 0)),
+            float(ast_feats.get("avg_function_body_lines", 0.0)),
         ], dtype=np.float32)
     except Exception:
         import numpy as np
-        return np.zeros(25, dtype=np.float32)
+        return np.zeros(_RF_N_FEATURES, dtype=np.float32)
 
 
 class PatternRFModel:

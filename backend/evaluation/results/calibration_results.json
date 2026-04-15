@@ -1,0 +1,276 @@
+{
+  "method": "CACM",
+  "description": "Calibration Analysis of Code ML Models: reliability diagrams and Expected Calibration Error (ECE) measured under both in-distribution random-split and cross-project (LOPO) evaluation protocols. Demonstrates that calibration degrades significantly under project transfer.",
+  "results": {
+    "in_distribution": {
+      "ece": 0.08745290724888108,
+      "brier": 0.106757253408432,
+      "reliability_diagram": [
+        {
+          "bin_lo": 0.0,
+          "bin_hi": 0.1,
+          "n": 2283,
+          "fraction_positive": 0.001314060446780552,
+          "mean_prob": 0.03010568395256996
+        },
+        {
+          "bin_lo": 0.1,
+          "bin_hi": 0.2,
+          "n": 907,
+          "fraction_positive": 0.03638368246968027,
+          "mean_prob": 0.15063074231147766
+        },
+        {
+          "bin_lo": 0.2,
+          "bin_hi": 0.30000000000000004,
+          "n": 883,
+          "fraction_positive": 0.08380520951302378,
+          "mean_prob": 0.24998816847801208
+        },
+        {
+          "bin_lo": 0.30000000000000004,
+          "bin_hi": 0.4,
+          "n": 833,
+          "fraction_positive": 0.17046818727490998,
+          "mean_prob": 0.35078737139701843
+        },
+        {
+          "bin_lo": 0.4,
+          "bin_hi": 0.5,
+          "n": 707,
+          "fraction_positive": 0.29985855728429983,
+          "mean_prob": 0.4502248466014862
+        },
+        {
+          "bin_lo": 0.5,
+          "bin_hi": 0.6000000000000001,
+          "n": 656,
+          "fraction_positive": 0.42073170731707316,
+          "mean_prob": 0.5484738945960999
+        },
+        {
+          "bin_lo": 0.6000000000000001,
+          "bin_hi": 0.7000000000000001,
+          "n": 605,
+          "fraction_positive": 0.5735537190082645,
+          "mean_prob": 0.6478961110115051
+        },
+        {
+          "bin_lo": 0.7000000000000001,
+          "bin_hi": 0.8,
+          "n": 490,
+          "fraction_positive": 0.689795918367347,
+          "mean_prob": 0.74906986951828
+        },
+        {
+          "bin_lo": 0.8,
+          "bin_hi": 0.9,
+          "n": 402,
+          "fraction_positive": 0.8631840796019901,
+          "mean_prob": 0.8497750759124756
+        },
+        {
+          "bin_lo": 0.9,
+          "bin_hi": 1.0,
+          "n": 902,
+          "fraction_positive": 0.9966740576496674,
+          "mean_prob": 0.9720361828804016
+        }
+      ],
+      "n_samples": 8668,
+      "positive_rate": 0.3081449007844947
+    },
+    "in_distribution_platt": {
+      "ece": 0.1616909569303877,
+      "brier": 0.19800239937585712,
+      "reliability_diagram": [
+        {
+          "bin_lo": 0.0,
+          "bin_hi": 0.1,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.1,
+          "bin_hi": 0.2,
+          "n": 2,
+          "fraction_positive": 0.0,
+          "mean_prob": 0.19455376492924492
+        },
+        {
+          "bin_lo": 0.2,
+          "bin_hi": 0.30000000000000004,
+          "n": 5543,
+          "fraction_positive": 0.15406819411870828,
+          "mean_prob": 0.266159504564611
+        },
+        {
+          "bin_lo": 0.30000000000000004,
+          "bin_hi": 0.4,
+          "n": 3123,
+          "fraction_positive": 0.5818123599103426,
+          "mean_prob": 0.3321082378030409
+        },
+        {
+          "bin_lo": 0.4,
+          "bin_hi": 0.5,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.5,
+          "bin_hi": 0.6000000000000001,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.6000000000000001,
+          "bin_hi": 0.7000000000000001,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.7000000000000001,
+          "bin_hi": 0.8,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.8,
+          "bin_hi": 0.9,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        },
+        {
+          "bin_lo": 0.9,
+          "bin_hi": 1.0,
+          "n": 0,
+          "fraction_positive": null,
+          "mean_prob": null
+        }
+      ]
+    },
+    "cross_project_lopo": {
+      "ece": 0.2645385638070621,
+      "brier": 0.2947281002998352,
+      "reliability_diagram": [
+        {
+          "bin_lo": 0.0,
+          "bin_hi": 0.1,
+          "n": 4933,
+          "fraction_positive": 0.34177984998986416,
+          "mean_prob": 0.017505278810858727
+        },
+        {
+          "bin_lo": 0.1,
+          "bin_hi": 0.2,
+          "n": 922,
+          "fraction_positive": 0.3080260303687636,
+          "mean_prob": 0.14495226740837097
+        },
+        {
+          "bin_lo": 0.2,
+          "bin_hi": 0.30000000000000004,
+          "n": 656,
+          "fraction_positive": 0.2576219512195122,
+          "mean_prob": 0.24806632101535797
+        },
+        {
+          "bin_lo": 0.30000000000000004,
+          "bin_hi": 0.4,
+          "n": 659,
+          "fraction_positive": 0.23520485584218512,
+          "mean_prob": 0.35073962807655334
+        },
+        {
+          "bin_lo": 0.4,
+          "bin_hi": 0.5,
+          "n": 583,
+          "fraction_positive": 0.22641509433962265,
+          "mean_prob": 0.4462159276008606
+        },
+        {
+          "bin_lo": 0.5,
+          "bin_hi": 0.6000000000000001,
+          "n": 431,
+          "fraction_positive": 0.28306264501160094,
+          "mean_prob": 0.5467504262924194
+        },
+        {
+          "bin_lo": 0.6000000000000001,
+          "bin_hi": 0.7000000000000001,
+          "n": 268,
+          "fraction_positive": 0.27238805970149255,
+          "mean_prob": 0.6431497931480408
+        },
+        {
+          "bin_lo": 0.7000000000000001,
+          "bin_hi": 0.8,
+          "n": 133,
+          "fraction_positive": 0.2932330827067669,
+          "mean_prob": 0.7435988783836365
+        },
+        {
+          "bin_lo": 0.8,
+          "bin_hi": 0.9,
+          "n": 72,
+          "fraction_positive": 0.1527777777777778,
+          "mean_prob": 0.8400546908378601
+        },
+        {
+          "bin_lo": 0.9,
+          "bin_hi": 1.0,
+          "n": 11,
+          "fraction_positive": 0.0,
+          "mean_prob": 0.9158037304878235
+        }
+      ],
+      "per_project": [
+        {
+          "held_out": "django",
+          "ece": 0.17648187072693625,
+          "brier": 0.21212103962898254,
+          "n_test": 880,
+          "positive_rate": 0.18522727272727274
+        },
+        {
+          "held_out": "flask",
+          "ece": 0.27112688816494956,
+          "brier": 0.21115726232528687,
+          "n_test": 1455,
+          "positive_rate": 0.1470790378006873
+        },
+        {
+          "held_out": "requests",
+          "ece": 0.14375853562547314,
+          "brier": 0.19735117256641388,
+          "n_test": 465,
+          "positive_rate": 0.22795698924731184
+        },
+        {
+          "held_out": "sqlalchemy",
+          "ece": 0.3128985354156901,
+          "brier": 0.3355545997619629,
+          "n_test": 5868,
+          "positive_rate": 0.3728698023176551
+        }
+      ],
+      "n_samples": 8668
+    }
+  },
+  "calibration_degradation": {
+    "ece_in_distribution": 0.08745290724888108,
+    "ece_platt_calibrated": 0.1616909569303877,
+    "ece_lopo": 0.2645385638070621,
+    "ece_increase": 0.177085656558181,
+    "brier_in_distribution": 0.106757253408432,
+    "brier_lopo": 0.2947281002998352
+  },
+  "finding": "ECE increases from 0.087 (in-distribution) to 0.265 (LOPO), a degradation of +0.177. This confirms that model confidence is misleading under distribution shift: the model is overconfident on cross-project transfers, making raw probabilities unsuitable for deployment without recalibration."
+}

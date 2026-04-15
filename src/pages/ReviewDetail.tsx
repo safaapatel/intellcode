@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
@@ -29,12 +29,17 @@ import {
   Lightbulb,
   ClipboardCopy,
   Check,
+  Loader2,
+  MapPin,
+  Github,
+  ExternalLink,
 } from "lucide-react";
 import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
 import { toast } from "sonner";
 import type { FullAnalysisResult, OODInfo, ConformalInterval } from "@/types/analysis";
 import { submitAnalysisFeedback, explainAnalysis, type ExplainResult } from "@/services/api";
+import { getGitHubToken, isGitHubConnected, listUserRepos, type GitHubRepo } from "@/services/github";
 
 // ─── Feedback types ────────────────────────────────────────────────────────────
 
@@ -755,6 +760,151 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
           </ul>
         </div>
       )}
+      {b.top_feature_importances && b.top_feature_importances.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-foreground mb-2">Top Model Features (XGBoost global importance)</h3>
+          <div className="space-y-2">
+            {b.top_feature_importances.map((fi: { feature: string; importance: number }, i: number) => {
+              const maxImp = b.top_feature_importances[0]?.importance ?? 1;
+              const pctWidth = Math.round((fi.importance / maxImp) * 100);
+              return (
+                <div key={i} className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground font-mono">{fi.feature}</span>
+                    <span className="text-muted-foreground">{(fi.importance * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-orange-400 rounded-full" style={{ width: `${pctWidth}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground mt-2 italic">
+            Global feature importance from trained model — not per-prediction attribution.
+          </p>
+        </div>
+      )}
+      {b.reliability_context && (
+        <div className="rounded-md border border-border bg-muted/30 p-3 space-y-1">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Model Reliability</h3>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="text-center">
+              <div className="font-mono text-foreground">{(((b.reliability_context?.in_dist_auc ?? 0) * 100)).toFixed(0)}%</div>
+              <div className="text-muted-foreground">In-dist AUC</div>
+            </div>
+            <div className="text-center">
+              <div className="font-mono text-foreground">{(((b.reliability_context?.temporal_cv_auc ?? 0) * 100)).toFixed(0)}%</div>
+              <div className="text-muted-foreground">Temporal CV</div>
+            </div>
+            <div className="text-center">
+              <div className="font-mono text-foreground">{(((b.reliability_context?.lopo_auc ?? 0) * 100)).toFixed(0)}%</div>
+              <div className="text-muted-foreground">Cross-project</div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">{b.reliability_context?.recommended_use}</p>
+        </div>
+      )}
+      <DREDeltaPanel r={r} />
+      <HighRiskFunctions r={r} />
+    </div>
+  );
+}
+
+function DREDeltaPanel({ r }: { r: FullAnalysisResult }) {
+  const dre = r.dre;
+  if (!dre) return null;
+
+  const pct = Math.round(dre.risk_score * 100);
+  const deltaPct = Math.round(dre.delta_contribution * 100);
+  const changed = dre.top_delta_features?.filter((f) => Math.abs(f.delta) > 0.01) ?? [];
+
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">Change Risk (vs previous submission)</h3>
+        <span className="text-xs text-muted-foreground">{dre.model_type}</span>
+      </div>
+      <div className="flex items-center gap-6">
+        <div className="text-center">
+          <div className="text-2xl font-bold text-foreground">{pct}%</div>
+          <div className="text-xs text-muted-foreground">Delta risk score</div>
+        </div>
+        <div className="text-center">
+          <div className="text-lg font-semibold text-foreground">+{deltaPct}pp</div>
+          <div className="text-xs text-muted-foreground">Above static-only</div>
+        </div>
+      </div>
+      {changed.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground font-medium">Most changed features:</p>
+          {changed.slice(0, 3).map((f) => (
+            <div key={f.feature} className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground font-mono">{f.feature}</span>
+              <span className={f.delta > 0 ? "text-red-400" : "text-green-400"}>
+                {f.delta > 0 ? "+" : ""}{f.delta.toFixed(1)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const riskColors: Record<string, string> = {
+  critical: "text-red-500 bg-red-500/10 border-red-500/30",
+  high:     "text-orange-500 bg-orange-500/10 border-orange-500/30",
+  medium:   "text-yellow-500 bg-yellow-500/10 border-yellow-500/30",
+  low:      "text-blue-400 bg-blue-400/10 border-blue-400/30",
+};
+
+function HighRiskFunctions({ r }: { r: FullAnalysisResult }) {
+  const fr = r.function_risk;
+  if (!fr || !fr.localization_available || fr.total_functions === 0) return null;
+
+  const top = fr.top_k.slice(0, 3);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-foreground">High Risk Functions</h3>
+        <span className="text-xs text-muted-foreground">
+          {fr.n_high_risk} of {fr.total_functions} functions flagged
+        </span>
+      </div>
+      {top.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No high-risk functions detected.</p>
+      ) : (
+        <div className="space-y-2">
+          {top.map((fn) => (
+            <div
+              key={fn.name}
+              className={`rounded-md border p-3 ${riskColors[fn.risk_level] ?? riskColors.low}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-sm font-semibold truncate">{fn.name}()</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded border font-medium shrink-0 ${riskColors[fn.risk_level]}`}>
+                    {fn.risk_level}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+                  <MapPin className="w-3 h-3" />
+                  <span>L{fn.lineno}–{fn.end_lineno}</span>
+                </div>
+              </div>
+              <p className="text-xs mt-1.5 opacity-80">{fn.reason}</p>
+              <div className="flex gap-4 mt-2 text-xs opacity-70">
+                <span>Cognitive: {fn.cognitive_complexity}</span>
+                <span>Cyclomatic: {fn.cyclomatic_complexity}</span>
+                <span>{fn.sloc} lines</span>
+                <span>Risk share: {Math.round(fn.complexity_weight * 100)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -908,6 +1058,9 @@ function DocsTab({ r }: { r: FullAnalysisResult }) {
           </div>
         </div>
       </div>
+      {d.symbol_scores.length > 15 && (
+        <p className="text-xs text-muted-foreground mb-2">Showing 15 of {d.symbol_scores.length} symbols</p>
+      )}
       <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1477,9 +1630,11 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
         {error && <p className="text-sm text-destructive max-w-sm">{error}</p>}
         <button
           onClick={load}
-          className="px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+          disabled={loading}
+          className="px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          Generate Explanation
+          {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+          {loading ? "Generating..." : "Generate Explanation"}
         </button>
       </div>
     );
@@ -1516,6 +1671,9 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
         <div className="bg-card border border-border rounded-xl p-5">
           <p className="text-sm font-semibold text-foreground mb-1">Complexity Model (XGBoost)</p>
           <p className="text-xs text-muted-foreground mb-4">{data.models.complexity.interpretation}</p>
+          {data.models.complexity.top_features.length > 6 && (
+            <p className="text-xs text-muted-foreground mb-2">Showing top 6 of {data.models.complexity.top_features.length} features</p>
+          )}
           <div className="space-y-2">
             {data.models.complexity.top_features.slice(0, 6).map((f) => (
               <div key={f.feature} className="flex items-center gap-3">
@@ -1543,6 +1701,11 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
         <div className="bg-card border border-border rounded-xl p-5">
           <p className="text-sm font-semibold text-foreground mb-1">Security Model (RF + CNN)</p>
           <p className="text-xs text-muted-foreground mb-4">{data.models.security.interpretation}</p>
+          {(() => {
+            const allFeats = Object.entries(data.models.security!.rf_features).filter(([, v]) => v > 0);
+            if (allFeats.length > 9) return <p className="text-xs text-muted-foreground mb-2">Showing top 9 of {allFeats.length} features</p>;
+            return null;
+          })()}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {Object.entries(data.models.security.rf_features)
               .filter(([, v]) => v > 0)
@@ -1623,6 +1786,73 @@ const ReviewDetail = () => {
   // Try: router state → history by ID → null (show mock)
   const result: FullAnalysisResult | null =
     location.state?.result ?? (id ? getEntry(id)?.result ?? null : null);
+
+  // ── Create PR state ──
+  const [prModal, setPrModal] = useState(false);
+  const [prRepos, setPrRepos] = useState<GitHubRepo[]>([]);
+  const [prRepo, setPrRepo] = useState("");
+  const [prBranch, setPrBranch] = useState("");
+  const [prTitle, setPrTitle] = useState("");
+  const [prLoading, setPrLoading] = useState(false);
+  const [prResult, setPrResult] = useState<{ pr_url: string; comment_url: string } | null>(null);
+
+  useEffect(() => {
+    if (prModal && prRepos.length === 0 && isGitHubConnected()) {
+      listUserRepos(1, 50).then(setPrRepos).catch(() => {});
+    }
+  }, [prModal]);
+
+  const handleCreatePR = async () => {
+    if (!result || !prRepo) return;
+    const token = getGitHubToken();
+    if (!token) { toast.error("GitHub not connected"); return; }
+
+    setPrLoading(true);
+    try {
+      const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
+
+      // Build a short markdown summary of findings
+      const findings = result.security?.findings ?? [];
+      const bugLevel = result.bug_prediction?.risk_level ?? "unknown";
+      const score = result.overall_score ?? 0;
+      let summary = `### Analysis Summary\n\n`;
+      summary += `- Overall score: **${score}/100**\n`;
+      summary += `- Bug risk: **${bugLevel}**\n`;
+      summary += `- Security findings: **${findings.length}**\n`;
+      if (findings.length > 0) {
+        summary += `\n#### Security Findings\n`;
+        findings.slice(0, 10).forEach((f: any) => {
+          summary += `- **${f.severity?.toUpperCase()}** L${f.lineno}: ${f.title} — ${f.description}\n`;
+        });
+      }
+      summary += `\n_Generated by [IntelliCode](https://intellcode.onrender.com)_`;
+
+      const res = await fetch(`${BASE_URL}/github/create-pr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          github_token: token,
+          repo_full_name: prRepo,
+          filename: result.filename || "reviewed_code.py",
+          code: result.code ?? "",
+          branch_name: prBranch.trim() || "",
+          pr_title: prTitle.trim() || `IntelliCode Review: ${result.filename}`,
+          analysis_summary: summary,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setPrResult({ pr_url: data.pr_url, comment_url: data.comment_url });
+      toast.success("PR created on GitHub!");
+    } catch (e: any) {
+      toast.error(e.message ?? "Failed to create PR");
+    } finally {
+      setPrLoading(false);
+    }
+  };
 
   // ── Feedback state ──
   const [feedbacks, setFeedbacks] = useState<Record<string, FindingFeedback>>(
@@ -1908,6 +2138,12 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
             <Button variant="outline" size="sm" onClick={() => navigate("/submit", { state: { filename: result.filename } })}>
               Re-analyze
             </Button>
+            {isGitHubConnected() && (
+              <Button variant="outline" size="sm" onClick={() => { setPrModal(true); setPrResult(null); }}>
+                <Github className="w-4 h-4 mr-1" />
+                Create PR
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={handleExport}>
               <Download className="w-4 h-4 mr-1" />
               JSON
@@ -2037,6 +2273,100 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
                 Save Decision
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create PR Modal */}
+      {prModal && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setPrModal(false)}
+        >
+          <div
+            className="bg-card border border-border rounded-xl p-6 max-w-md w-full space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-foreground flex items-center gap-2">
+                <Github className="w-4 h-4" /> Create GitHub PR
+              </h3>
+              <button onClick={() => setPrModal(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {prResult ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-green-500 text-sm font-medium">
+                  <CheckCircle className="w-4 h-4" /> PR created successfully!
+                </div>
+                <a
+                  href={prResult.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-primary hover:underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  {prResult.pr_url}
+                </a>
+                <Button size="sm" variant="outline" className="w-full" onClick={() => setPrModal(false)}>
+                  Close
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">Repository</label>
+                  <select
+                    value={prRepo}
+                    onChange={(e) => setPrRepo(e.target.value)}
+                    className="w-full rounded-lg bg-input border border-border text-sm text-foreground px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">Select a repo...</option>
+                    {prRepos.map((r) => (
+                      <option key={r.id} value={r.full_name}>{r.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">Branch name <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input
+                    value={prBranch}
+                    onChange={(e) => setPrBranch(e.target.value)}
+                    placeholder="intellcode/review-..."
+                    className="w-full rounded-lg bg-input border border-border text-sm text-foreground px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-foreground">PR title <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <input
+                    value={prTitle}
+                    onChange={(e) => setPrTitle(e.target.value)}
+                    placeholder={`IntelliCode Review: ${result?.filename ?? "code"}`}
+                    className="w-full rounded-lg bg-input border border-border text-sm text-foreground px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  This will commit the analyzed code to a new branch in the selected repo and open a PR with findings as a comment.
+                </p>
+
+                <div className="flex gap-3 justify-end">
+                  <Button variant="outline" size="sm" onClick={() => setPrModal(false)}>Cancel</Button>
+                  <Button
+                    size="sm"
+                    className="bg-gradient-primary"
+                    onClick={handleCreatePR}
+                    disabled={!prRepo || prLoading}
+                  >
+                    {prLoading ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Creating...</> : <><Github className="w-3.5 h-3.5 mr-1.5" />Create PR</>}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

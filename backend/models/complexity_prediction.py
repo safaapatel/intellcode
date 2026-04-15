@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import pickle
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from features.code_metrics import (
     compute_all_metrics,
@@ -251,7 +254,8 @@ class ComplexityPredictionModel:
                 }
                 for fr in func_results[:3]
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning("predict_functions failed: %s", e)
             func_level_summary = []
 
         result = ComplexityResult(
@@ -443,7 +447,7 @@ class ComplexityPredictionModel:
             pickle.dump(self._regressor, f)
         self._checkpoint = output_path
 
-        print(f"Training complete — RMSE: {rmse:.2f}, R²: {r2:.4f}")
+        print(f"Training complete - RMSE: {rmse:.2f}, R^2: {r2:.4f}")
         return {"rmse": rmse, "r2": r2}
 
     def predict_with_interval(
@@ -573,7 +577,7 @@ class ComplexityPredictionModel:
             mapie_path = Path(self._checkpoint).parent / "mapie_wrapper.pkl"
             with open(mapie_path, "wb") as f:
                 pickle.dump(self._mapie, f)
-            print(f"MAPIE conformal wrapper saved → {mapie_path}")
+            print(f"MAPIE conformal wrapper saved -> {mapie_path}")
 
     def feature_importance(self) -> list[tuple[str, float]]:
         """Return (feature_name, importance) pairs sorted by importance."""

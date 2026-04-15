@@ -19,9 +19,9 @@ Outputs:
     checkpoints/bug_predictor/metrics.json
 
 JIT-SDP feature set (Kamei et al. 2013 + static):
-    Static (16): cyclomatic, cognitive, halstead metrics, LOC, function counts, line lengths
+    Static (17): cyclomatic, cognitive, halstead metrics, LOC, function counts, line lengths, n_functions
     JIT    (14): NS, ND, NF, Entropy, LA, LD, LT, FIX, NDEV, AGE, NUC, EXP, REXP, SEXP
-    Total  (30): concatenated at training and inference time
+    Total  (31): concatenated at training and inference time
 """
 
 from __future__ import annotations
@@ -46,12 +46,17 @@ np.random.seed(42)
 
 # -- Feature groups ------------------------------------------------------------
 STATIC_FEATURE_NAMES = [
+    # 17-dim — matches bug_predictor.py STATIC_FEATURE_NAMES exactly.
+    # cognitive_complexity is a VALID input feature for bug prediction
+    # (only excluded from complexity_prediction.py where it is the TARGET).
+    # n_functions is extracted from ASTExtractor at both train and inference time.
     "cyclomatic_complexity", "cognitive_complexity",
     "max_function_complexity", "avg_function_complexity",
     "sloc", "comments", "blank_lines",
     "halstead_volume", "halstead_difficulty", "halstead_effort", "halstead_bugs",
     "n_long_functions", "n_complex_functions",
     "max_line_length", "avg_line_length", "n_lines_over_80",
+    "n_functions",
 ]
 
 # JIT (Just-In-Time) features from Kamei et al. (2013)
@@ -71,7 +76,9 @@ JIT_FEATURE_NAMES = [
     "lines_added",    # LA  — lines added
     "lines_deleted",  # LD  — lines deleted
     "lines_touched",  # LT  — lines in touched files before change
-    "is_fix",         # FIX — is this a bug-fix commit (0/1)
+    # "is_fix" EXCLUDED: FIX=1 iff commit message contains "fix/bug", which is
+    # identical to the keyword label → perfect circular correlation → AUC=1.0.
+    # Kamei uses it with SZZ labels (no circularity there), but not here.
     "developer_exp",  # EXP — total developer experience (past commits)
 ]
 
@@ -80,7 +87,7 @@ ALL_FEATURE_NAMES = STATIC_FEATURE_NAMES + JIT_FEATURE_NAMES
 
 # -- Data loading --------------------------------------------------------------
 
-def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list]:
     """
     Load bug_dataset.jsonl.
 
@@ -88,12 +95,13 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
     JIT format. Missing JIT features default to 0.
 
     Returns:
-        X_static : (N, 16)
+        X_static : (N, 17)
         X_jit    : (N, 14)
         y        : (N,)    binary labels
-        repos    : (N,)    repo identifier per sample
+        repos    : list[str] repo identifier per sample
+        dates    : list[str] author_date per sample (empty string if absent)
     """
-    X_static, X_jit, y, repos = [], [], [], []
+    X_static, X_jit, y, repos, dates = [], [], [], [], []
 
     with open(path) as f:
         for line in f:
@@ -112,6 +120,7 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
             X_jit.append(jit_vec)
             y.append(label)
             repos.append(rec.get("repo", "unknown"))
+            dates.append(rec.get("author_date", ""))
 
     X_s = np.array(X_static, dtype=np.float32)
     X_j = np.array(X_jit, dtype=np.float32)
@@ -121,7 +130,123 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
     print(f"  Static features: {X_s.shape[1]}  JIT features: {X_j.shape[1]}")
     unique_repos = sorted(set(repos))
     print(f"  Repositories ({len(unique_repos)}): {unique_repos}")
-    return X_s, X_j, y_arr, repos
+    return X_s, X_j, y_arr, repos, dates
+
+
+def temporal_split(
+    X: np.ndarray,
+    y: np.ndarray,
+    dates: list,
+    train_frac: float = 0.70,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Sort records by author_date (oldest first) and split at train_frac.
+    Records with missing/unparseable dates are placed at the beginning (oldest).
+
+    This is the correct protocol to detect temporal leakage: if a model trained
+    on old commits cannot generalise to new commits, the labels contain future
+    information (SZZ leakage).
+    """
+    import dateutil.parser  # pydriller dependency, always available
+
+    def _parse(d: str) -> float:
+        try:
+            return dateutil.parser.parse(d).timestamp()
+        except Exception:
+            return 0.0
+
+    timestamps = np.array([_parse(d) for d in dates], dtype=np.float64)
+    order = np.argsort(timestamps, kind="stable")
+    X_sorted = X[order]
+    y_sorted = y[order]
+
+    split_idx = int(len(y_sorted) * train_frac)
+    return X_sorted[:split_idx], X_sorted[split_idx:], y_sorted[:split_idx], y_sorted[split_idx:]
+
+
+def temporal_walk_forward_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    dates: list,
+    n_folds: int = 5,
+) -> dict:
+    """
+    Walk-forward (expanding-window) temporal cross-validation.
+
+    Records are sorted chronologically and divided into `n_folds` equal slices.
+    For fold k (k = 1 .. n_folds-1): train on slices 0..k-1, test on slice k.
+    Fold 0 is never a test set (no history before it).
+
+    This is the gold-standard evaluation for JIT defect prediction.
+    A single 70/30 temporal cut has high variance; averaging across folds gives
+    a more reliable estimate of the true temporal generalisation gap.
+
+    Returns a dict with per-fold AUC/AP and summary stats.
+    """
+    import dateutil.parser
+    from xgboost import XGBClassifier
+    from sklearn.metrics import roc_auc_score, average_precision_score
+
+    def _parse(d: str) -> float:
+        try:
+            return dateutil.parser.parse(d).timestamp()
+        except Exception:
+            return 0.0
+
+    timestamps = np.array([_parse(d) for d in dates], dtype=np.float64)
+    order = np.argsort(timestamps, kind="stable")
+    X_s = X[order]
+    y_s = y[order]
+
+    n = len(y_s)
+    fold_size = n // n_folds
+    fold_aucs, fold_aps = [], []
+    fold_details = []
+
+    for k in range(1, n_folds):
+        train_end = k * fold_size
+        test_start = train_end
+        test_end = (k + 1) * fold_size if k < n_folds - 1 else n
+
+        X_tr, y_tr = X_s[:train_end], y_s[:train_end]
+        X_te, y_te = X_s[test_start:test_end], y_s[test_start:test_end]
+
+        if len(set(y_te)) < 2 or len(X_tr) < 20:
+            fold_details.append({"fold": k, "skipped": True})
+            continue
+
+        clf = XGBClassifier(
+            n_estimators=200, max_depth=4, learning_rate=0.05,
+            scale_pos_weight=(y_tr == 0).sum() / max((y_tr == 1).sum(), 1),
+            eval_metric="logloss", random_state=42,
+            n_jobs=1, verbosity=0,
+        )
+        clf.fit(X_tr, y_tr)
+        probs = clf.predict_proba(X_te)[:, 1]
+        auc = float(roc_auc_score(y_te, probs))
+        ap  = float(average_precision_score(y_te, probs))
+        fold_aucs.append(auc)
+        fold_aps.append(ap)
+        fold_details.append({
+            "fold": k,
+            "n_train": int(len(y_tr)),
+            "n_test":  int(len(y_te)),
+            "pos_rate_train": round(float(y_tr.mean()), 4),
+            "pos_rate_test":  round(float(y_te.mean()), 4),
+            "auc": round(auc, 4),
+            "ap":  round(ap, 4),
+        })
+
+    result = {
+        "protocol": f"walk_forward_{n_folds}_fold",
+        "n_folds_evaluated": len(fold_aucs),
+        "fold_details": fold_details,
+        "mean_auc": round(float(np.mean(fold_aucs)), 4) if fold_aucs else None,
+        "std_auc":  round(float(np.std(fold_aucs)),  4) if fold_aucs else None,
+        "mean_ap":  round(float(np.mean(fold_aps)),  4) if fold_aps else None,
+        "std_ap":   round(float(np.std(fold_aps)),   4) if fold_aps else None,
+    }
+    return result
 
 
 def cross_project_split(
@@ -394,7 +519,7 @@ def train(
     from sklearn.metrics import roc_auc_score, accuracy_score, average_precision_score
     from scipy.stats import wilcoxon
 
-    X_static, X_jit, y, repos = load_dataset(data_path)
+    X_static, X_jit, y, repos, dates = load_dataset(data_path)
     X_full = np.hstack([X_static, X_jit])
 
     # -- Split -----------------------------------------------------------------
@@ -495,12 +620,89 @@ def train(
                 f"AP={np.mean(seed_aps):.4f}+/-{np.std(seed_aps):.4f}  (n={len(seed_aucs)} seeds)"
             )
 
+    # -- Temporal split evaluation (leakage detection) -------------------------
+    # Train on oldest 70% of commits, test on newest 30%.
+    # If labels are temporally clean (proper SZZ with max_fix_lag_days), the
+    # temporal AUC should be close to the random-split AUC.
+    # A large drop (>0.05) indicates residual label leakage.
+    temporal_metrics: dict = {}
+    has_dates = any(d for d in dates)
+    if has_dates and not test_repos:
+        print("\n=== Temporal split evaluation (leakage check) ===")
+        try:
+            from xgboost import XGBClassifier
+            from sklearn.metrics import roc_auc_score, average_precision_score
+
+            X_ttr, X_tte, y_ttr, y_tte = temporal_split(X_full, y, dates, train_frac=0.70)
+            print(f"Temporal split — Train: {len(X_ttr)}  Test: {len(X_tte)}")
+            print(f"  Train positive rate: {y_ttr.mean():.3f}  Test positive rate: {y_tte.mean():.3f}")
+
+            if len(set(y_tte)) > 1 and len(X_ttr) >= 50:
+                n_buggy_t = max(int(y_ttr.sum()), 1)
+                n_clean_t = int((y_ttr == 0).sum())
+                xgb_t = XGBClassifier(
+                    n_estimators=200, max_depth=4, learning_rate=0.05,
+                    subsample=0.7, colsample_bytree=0.7,
+                    scale_pos_weight=n_clean_t / n_buggy_t,
+                    eval_metric="logloss", random_state=42, n_jobs=1, verbosity=0,
+                )
+                xgb_t.fit(X_ttr, y_ttr)
+                t_probs = xgb_t.predict_proba(X_tte)[:, 1]
+                t_auc = float(roc_auc_score(y_tte, t_probs))
+                t_ap  = float(average_precision_score(y_tte, t_probs))
+                random_auc = xgb_metrics.get("test_auc", 0.0) or 0.0
+                delta = round(t_auc - random_auc, 4)
+                print(f"Temporal AUC : {t_auc:.4f}  AP: {t_ap:.4f}")
+                print(f"Random AUC   : {random_auc:.4f}  Delta: {delta:+.4f}")
+                if abs(delta) < 0.05:
+                    print("  [PASS] Temporal delta < 0.05 — labels appear temporally clean")
+                else:
+                    print(f"  [WARN] Large temporal delta={delta:+.4f} — possible residual label leakage")
+                temporal_metrics = {
+                    "temporal_auc": round(t_auc, 4),
+                    "temporal_ap":  round(t_ap, 4),
+                    "random_auc":   round(random_auc, 4),
+                    "delta_auc":    delta,
+                    "protocol":     "age_sorted_70_30",
+                    "n_train":      int(len(X_ttr)),
+                    "n_test":       int(len(X_tte)),
+                }
+            else:
+                print("  Skipped: not enough samples or only one class in temporal test set")
+        except Exception as e:
+            print(f"  Temporal split evaluation failed: {e}")
+
+    # -- Walk-forward temporal cross-validation --------------------------------
+    temporal_cv_metrics: dict = {}
+    if has_dates and not test_repos:
+        print("\n=== Walk-forward temporal CV (5-fold rolling window) ===")
+        try:
+            temporal_cv_metrics = temporal_walk_forward_cv(X_full, y, dates, n_folds=5)
+            folds = temporal_cv_metrics.get("fold_details", [])
+            for fd in folds:
+                if fd.get("skipped"):
+                    print(f"  Fold {fd['fold']}: skipped (insufficient data)")
+                else:
+                    print(f"  Fold {fd['fold']}: n_train={fd['n_train']}  n_test={fd['n_test']}  "
+                          f"AUC={fd['auc']:.4f}  AP={fd['ap']:.4f}")
+            m = temporal_cv_metrics.get("mean_auc")
+            s = temporal_cv_metrics.get("std_auc")
+            if m is not None:
+                print(f"Walk-forward mean AUC: {m:.4f} +/- {s:.4f}  "
+                      f"(vs random-split AUC={xgb_metrics.get('test_auc', 0):.4f})")
+        except Exception as e:
+            print(f"  Walk-forward CV failed: {e}")
+
     # -- Save combined metrics -------------------------------------------------
+    random_auc_for_gate = xgb_metrics.get("test_auc") if xgb_metrics else None
     metrics = {
         "logistic_regression": lr_metrics,
         "xgboost":             xgb_metrics,
         "ensemble_lr_xgb":     ensemble_metrics,
         "mlp":                 mlp_metrics,
+        "temporal_split":      temporal_metrics,
+        "temporal_auc":        temporal_metrics.get("temporal_auc"),   # top-level for bug_predictor.py gate
+        "temporal_walk_forward_cv": temporal_cv_metrics,
         "n_train":             len(X_tr),
         "n_test":              len(X_te),
         "n_static_features":   int(X_static.shape[1]),
@@ -522,6 +724,27 @@ def train(
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"\nMetrics saved -> {metrics_path}")
+
+    # Also write temporal_auc into lopo_bug.json so bug_predictor.py gate
+    # reads the correct value directly (no more fallback to baseline_comparison.json)
+    lopo_path = Path(__file__).resolve().parent.parent / "evaluation" / "results" / "lopo_bug.json"
+    if temporal_metrics and lopo_path.exists():
+        try:
+            with open(lopo_path) as f:
+                lopo_data = json.load(f)
+            lopo_data["temporal_auc"]          = temporal_metrics.get("temporal_auc")
+            lopo_data["temporal_ap"]           = temporal_metrics.get("temporal_ap")
+            lopo_data["random_split_auc"]      = temporal_metrics.get("random_auc")
+            lopo_data["degradation_auc"]       = temporal_metrics.get("delta_auc")
+            lopo_data["temporal_protocol"]     = temporal_metrics.get("protocol")
+            if temporal_cv_metrics:
+                lopo_data["temporal_walk_forward_cv"] = temporal_cv_metrics
+            with open(lopo_path, "w") as f:
+                json.dump(lopo_data, f, indent=2)
+            print(f"lopo_bug.json updated with temporal_auc={temporal_metrics.get('temporal_auc')}")
+        except Exception as e:
+            print(f"Warning: could not update lopo_bug.json: {e}")
+
     print("[OK] Bug predictor training complete.")
     return metrics
 

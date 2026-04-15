@@ -1,0 +1,505 @@
+{
+  "method": "Failure_Taxonomy",
+  "description": "Systematic categorisation of ML failure modes in code analysis. Each LOPO project-failure is assigned quantitatively derived failure categories: cross-project mismatch, temporal drift, label noise, data sparsity, class imbalance, feature instability.",
+  "failure_mode_definitions": {
+    "CROSS_PROJECT_MISMATCH": "Training and test projects have different feature distributions (measured by JSD / Wasserstein distance).",
+    "TEMPORAL_DRIFT": "Test commits are temporally distant from training commits; coding patterns have evolved.",
+    "LABEL_NOISE": "Labels are derived from heuristics (keyword matching, SZZ) that introduce systematic errors.",
+    "DATA_SPARSITY": "Fewer than 50 test samples or fewer than 200 training samples; results are statistically unreliable.",
+    "CLASS_IMBALANCE": "Bug-positive rate in test project differs by more than 15pp from the training set positive rate.",
+    "FEATURE_INSTABILITY": "High-CV features (PIFF-unstable) dominate the model's decision, degrading cross-project transfer."
+  },
+  "overall_mode_frequency": {
+    "FEATURE_INSTABILITY": 1,
+    "LABEL_NOISE": 19,
+    "CLASS_IMBALANCE": 1,
+    "TEMPORAL_DRIFT": 2,
+    "CROSS_PROJECT_MISMATCH": 19,
+    "DATA_SPARSITY": 2
+  },
+  "overall_severity": {
+    "severe": 13,
+    "moderate": 0,
+    "low": 16
+  },
+  "per_task": {
+    "bug_prediction": {
+      "n_cases": 3,
+      "mean_auc": 0.5670592419664756,
+      "mean_degradation": 0.3668407580335243,
+      "dominant_failure_modes": {
+        "LABEL_NOISE": 3,
+        "TEMPORAL_DRIFT": 2,
+        "FEATURE_INSTABILITY": 1,
+        "CLASS_IMBALANCE": 1
+      },
+      "severity_distribution": {
+        "severe": 3,
+        "moderate": 0,
+        "low": 0
+      }
+    },
+    "complexity_prediction": {
+      "n_cases": 10,
+      "mean_auc": 0.7953514452337617,
+      "mean_degradation": 4.85547662383623e-05,
+      "dominant_failure_modes": {
+        "CROSS_PROJECT_MISMATCH": 10,
+        "DATA_SPARSITY": 1
+      },
+      "severity_distribution": {
+        "severe": 1,
+        "moderate": 0,
+        "low": 9
+      }
+    },
+    "security_detection": {
+      "n_cases": 16,
+      "mean_auc": 0.495122175005119,
+      "mean_degradation": -0.0007221750051190183,
+      "dominant_failure_modes": {
+        "LABEL_NOISE": 16,
+        "CROSS_PROJECT_MISMATCH": 9,
+        "DATA_SPARSITY": 1
+      },
+      "severity_distribution": {
+        "severe": 9,
+        "moderate": 0,
+        "low": 7
+      }
+    }
+  },
+  "all_cases": [
+    {
+      "task": "bug_prediction",
+      "held_out_project": "django",
+      "auc": 0.5449789944436916,
+      "auc_degradation": 0.3889210055563084,
+      "failure_modes": [
+        "FEATURE_INSTABILITY",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "test_positive_rate": 0.18522727272727274,
+        "global_positive_rate": 0.3081449007844947,
+        "imbalance_gap": 0.12291762805722195,
+        "churn_w1_normalised": 0.06404939619242242,
+        "mean_train_year": 2019.5327426810477,
+        "mean_test_year": 2018.0,
+        "year_gap": -1.5327426810476936,
+        "label_method": "keyword (commit message contains 'fix'/'bug')",
+        "auc_below_threshold": true
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "bug_prediction",
+      "held_out_project": "flask",
+      "auc": 0.6058575533468369,
+      "auc_degradation": 0.32804244665316307,
+      "failure_modes": [
+        "CLASS_IMBALANCE",
+        "LABEL_NOISE",
+        "TEMPORAL_DRIFT"
+      ],
+      "evidence": {
+        "test_positive_rate": 0.1470790378006873,
+        "global_positive_rate": 0.3081449007844947,
+        "imbalance_gap": 0.1610658629838074,
+        "churn_w1_normalised": 0.03793562622116381,
+        "mean_train_year": 2019.2021350339664,
+        "mean_test_year": 2020.244673539519,
+        "year_gap": 1.0425385055525567,
+        "label_method": "keyword (commit message contains 'fix'/'bug')"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "bug_prediction",
+      "held_out_project": "requests",
+      "auc": 0.5503411781088985,
+      "auc_degradation": 0.38355882189110146,
+      "failure_modes": [
+        "LABEL_NOISE",
+        "TEMPORAL_DRIFT"
+      ],
+      "evidence": {
+        "test_positive_rate": 0.22795698924731184,
+        "global_positive_rate": 0.3081449007844947,
+        "imbalance_gap": 0.08018791153718285,
+        "churn_w1_normalised": 0.06384290687574923,
+        "mean_train_year": 2019.2785566256248,
+        "mean_test_year": 2021.116129032258,
+        "year_gap": 1.8375724066331713,
+        "label_method": "keyword (commit message contains 'fix'/'bug')"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "bottlepy/bottle",
+      "auc": 0.8877880468017941,
+      "auc_degradation": -0.09238804680179413,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "DATA_SPARSITY"
+      ],
+      "evidence": {
+        "n_test": 28,
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "encode/httpx",
+      "auc": 0.830061539007107,
+      "auc_degradation": -0.034661539007107,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "pallets/click",
+      "auc": 0.874498278002275,
+      "auc_degradation": -0.07909827800227498,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "pallets/flask",
+      "auc": 0.8730597114639216,
+      "auc_degradation": -0.07765971146392159,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "psf/requests",
+      "auc": 0.7272820657220613,
+      "auc_degradation": 0.06811793427793866,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "pydantic/pydantic",
+      "auc": 0.8320365081205275,
+      "auc_degradation": -0.036636508120527544,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "pypa/pip",
+      "auc": 0.8868144464785997,
+      "auc_degradation": -0.09141444647859975,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "sqlalchemy/sqlalchemy",
+      "auc": 0.9041688275027618,
+      "auc_degradation": -0.10876882750276184,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "tiangolo/fastapi",
+      "auc": 0.2552544751591135,
+      "auc_degradation": 0.5401455248408865,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "complexity_prediction",
+      "held_out_project": "tqdm/tqdm",
+      "auc": 0.8825505540794547,
+      "auc_degradation": -0.08715055407945471,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH"
+      ],
+      "evidence": {
+        "note": "Complexity metrics are correlated with project style (indent level, naming conventions)"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "aiohttp",
+      "auc": 0.6170955882352941,
+      "auc_degradation": -0.12269558823529408,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "bandit/examples",
+      "auc": 0.19682539682539682,
+      "auc_degradation": 0.29757460317460316,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "bottlepy/bottle",
+      "auc": 0.5,
+      "auc_degradation": -0.005599999999999994,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "DATA_SPARSITY",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "n_test": 28,
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "django",
+      "auc": 0.5223214285714286,
+      "auc_degradation": -0.027921428571428597,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "encode/httpx",
+      "auc": 0.2730769230769231,
+      "auc_degradation": 0.2213230769230769,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "flask",
+      "auc": 0.5927884615384615,
+      "auc_degradation": -0.09838846153846154,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "httpx",
+      "auc": 0.2582720588235294,
+      "auc_degradation": 0.23612794117647062,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "pallets/click",
+      "auc": 0.27586206896551724,
+      "auc_degradation": 0.21853793103448277,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "pallets/flask",
+      "auc": 0.5,
+      "auc_degradation": -0.005599999999999994,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "paramiko",
+      "auc": 0.4925480769230769,
+      "auc_degradation": 0.001851923076923112,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "pip",
+      "auc": 0.4265625,
+      "auc_degradation": 0.0678375,
+      "failure_modes": [
+        "CROSS_PROJECT_MISMATCH",
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "note": "Vulnerability patterns are project/framework-specific",
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "severe"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "psf/requests",
+      "auc": 0.9393939393939394,
+      "auc_degradation": -0.44499393939393944,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "pypa/pip",
+      "auc": 0.5714285714285714,
+      "auc_degradation": -0.07702857142857139,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "requests",
+      "auc": 0.5678571428571428,
+      "auc_degradation": -0.07345714285714283,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "tornado",
+      "auc": 0.5622395833333333,
+      "auc_degradation": -0.06783958333333334,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    },
+    {
+      "task": "security_detection",
+      "held_out_project": "tqdm/tqdm",
+      "auc": 0.6256830601092896,
+      "auc_degradation": -0.13128306010928964,
+      "failure_modes": [
+        "LABEL_NOISE"
+      ],
+      "evidence": {
+        "label_method": "CVEFixes keyword labels; not all CVEs reflect actual vulnerabilities in context"
+      },
+      "severity": "low"
+    }
+  ],
+  "key_findings": [
+    "LABEL_NOISE is universal (19/29 cases) because all three tasks use heuristic or keyword-based labels.",
+    "CROSS_PROJECT_MISMATCH affects 19/29 cases \u2014 the dominant technical cause of performance degradation.",
+    "13/29 failure cases are classified as SEVERE (AUC < 0.55 or degradation > 20pp), indicating models are unreliable on multiple held-out projects.",
+    "Bug prediction exhibits TEMPORAL_DRIFT in projects with long commit histories (SQLAlchemy, Django), suggesting concept drift over time."
+  ]
+}

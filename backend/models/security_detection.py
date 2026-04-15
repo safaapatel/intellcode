@@ -585,6 +585,13 @@ class EnsembleSecurityModel:
                 except Exception:
                     pass
 
+                # RF was trained on 31-dim base features; truncate so optional
+                # identifier-semantics / taint-tracker augmentation doesn't
+                # cause a sklearn dimension mismatch and silent 0.0 fallback.
+                feat = feat[:31]
+                if len(feat) < 31:
+                    feat = np.pad(feat, (0, 31 - len(feat)))
+
                 rf_feat = feat
                 rf_p = self._rf.predict_proba(feat)
                 weight_sum += self._rf_weight

@@ -273,12 +273,15 @@ def train(
 
         rf_preds_prob = np.array([rf_model.predict_proba(x) for x in X_rf_te])
 
-        # Threshold via Youden's J on test set (not train — avoids optimistic bias)
+        # Threshold via Youden's J on TRAINING set to avoid test-set leakage.
+        # Selecting the threshold on the test set inflates reported recall/precision
+        # because the threshold is optimised on the same data used for evaluation.
         from sklearn.metrics import roc_curve
-        fpr, tpr, thresholds = roc_curve(y_rf_te, rf_preds_prob)
-        youden_j    = tpr - fpr
-        optimal_idx = int(np.argmax(youden_j))
-        rf_threshold = float(thresholds[optimal_idx])
+        rf_preds_prob_tr = np.array([rf_model.predict_proba(x) for x in X_rf_tr])
+        fpr_tr, tpr_tr, thresholds_tr = roc_curve(y_rf_tr, rf_preds_prob_tr)
+        youden_j_tr = tpr_tr - fpr_tr
+        optimal_idx = int(np.argmax(youden_j_tr))
+        rf_threshold = float(thresholds_tr[optimal_idx])
 
         rf_labels = (rf_preds_prob > rf_threshold).astype(int)
 

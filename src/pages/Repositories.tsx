@@ -104,32 +104,13 @@ interface Repository {
   githubUrl?: string;
 }
 
-const mockRepos: Repository[] = [
-  {
-    id: "intellcode",
-    name: "intellcode",
-    fullName: "safaapatel/intellcode",
-    description: "ML-powered code review platform with 12 analysis models",
-    language: "Python",
-    languageColor: "#3572A5",
-    stars: 0,
-    defaultBranch: "main",
-    lastReviewed: "Not yet scanned",
-    status: "pending",
-    totalReviews: 0,
-    openIssues: 0,
-    avgScore: 0,
-    private: false,
-    githubUrl: "https://github.com/safaapatel/intellcode",
-  },
-];
 
 function loadRepos(): Repository[] {
   try {
     const raw = localStorage.getItem(REPOS_KEY);
-    return raw ? JSON.parse(raw) : mockRepos;
+    return raw ? JSON.parse(raw) : [];
   } catch {
-    return mockRepos;
+    return [];
   }
 }
 
@@ -151,7 +132,7 @@ const Repositories = () => {
   const location = useLocation();
   const fromSubmit = (location.state as { from?: string } | null)?.from === "submit";
 
-  const [repos, setRepos] = useState<Repository[]>(mockRepos);
+  const [repos, setRepos] = useState<Repository[]>([]);
 
   useEffect(() => { setRepos(loadRepos()); }, []);
 

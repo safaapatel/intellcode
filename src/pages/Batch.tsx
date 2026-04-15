@@ -77,7 +77,7 @@ function ScoreBar({ score }: { score: number }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-const MAX_FILES = 20;
+const MAX_FILES = 50;
 
 const Batch = () => {
   const navigate = useNavigate();
@@ -319,8 +319,10 @@ const Batch = () => {
                   <Download className="w-4 h-4" /> Export CSV
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={() => { setQueue([]); setResults(null); }}
-                className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
+              <Button variant="outline" size="sm" onClick={() => {
+                if (!window.confirm(`Remove all ${queue.length} file${queue.length !== 1 ? "s" : ""} and results?`)) return;
+                setQueue([]); setResults(null);
+              }} className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
                 <X className="w-4 h-4" /> Clear All
               </Button>
               <Button
