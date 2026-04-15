@@ -2138,8 +2138,13 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
             <Button variant="outline" size="sm" onClick={() => navigate("/submit", { state: { filename: result.filename } })}>
               Re-analyze
             </Button>
-            {isGitHubConnected() && (
+            {isGitHubConnected() && result.code ? (
               <Button variant="outline" size="sm" onClick={() => { setPrModal(true); setPrResult(null); }}>
+                <Github className="w-4 h-4 mr-1" />
+                Create PR
+              </Button>
+            ) : isGitHubConnected() && (
+              <Button variant="outline" size="sm" disabled title="Re-analyze this file to enable PR creation">
                 <Github className="w-4 h-4 mr-1" />
                 Create PR
               </Button>
