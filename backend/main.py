@@ -3226,6 +3226,76 @@ def _fetch_pr_file_content(owner: str, repo: str, path: str, ref: str, token: st
         return ""
 
 
+def _generate_fix_suggestion(vuln_type: str, line: str, description: str) -> str:
+    """
+    Given a vulnerability type and the offending line of code, return a
+    suggested replacement line (or the original if we can't auto-fix).
+    The result is wrapped in a GitHub suggestion block.
+    """
+    stripped = line.rstrip()
+
+    # SQL injection — replace string concat with parameterized placeholder
+    if vuln_type in ("sql_injection",):
+        # Try to extract the variable being concatenated
+        m = re.search(r'["\']([^"\']*)["\'][\s]*\+[\s]*(\w+)', stripped)
+        if m:
+            fixed = f'{stripped.split("+")[0].rstrip()} %s"  # use cursor.execute(query, ({m.group(2)},))'
+        else:
+            fixed = stripped + "  # TODO: use parameterized query, e.g. cursor.execute(sql, (val,))"
+        return f"```suggestion\n{fixed}\n```"
+
+    # Command injection — suggest subprocess list form
+    if vuln_type in ("command_injection",):
+        if "os.system" in stripped:
+            fixed = re.sub(
+                r'os\.system\((.+)\)',
+                r'subprocess.run(\1, shell=False)  # split args into a list',
+                stripped,
+            )
+        else:
+            fixed = stripped + "  # TODO: use subprocess.run([cmd, arg], shell=False)"
+        return f"```suggestion\n{fixed}\n```"
+
+    # Hardcoded secrets — replace literal with env var lookup
+    if vuln_type in ("hardcoded_secret", "hardcoded_password"):
+        # Extract variable name
+        m = re.match(r'^(\s*)([\w.]+)\s*=\s*["\'].*["\']', stripped)
+        if m:
+            indent, var = m.group(1), m.group(2)
+            env_key = var.upper().replace(".", "_")
+            fixed = f'{indent}{var} = os.environ["{env_key}"]  # move secret to env var'
+        else:
+            fixed = stripped + '  # TODO: use os.environ["SECRET_KEY"] instead'
+        return f"```suggestion\n{fixed}\n```"
+
+    # XSS — innerHTML → textContent / DOMPurify
+    if vuln_type in ("xss",):
+        fixed = stripped.replace("innerHTML", "textContent")
+        if fixed == stripped:
+            fixed = stripped + "  # TODO: sanitize with DOMPurify before setting innerHTML"
+        return f"```suggestion\n{fixed}\n```"
+
+    # Path traversal — add realpath validation comment
+    if vuln_type in ("path_traversal",):
+        m = re.match(r'^(\s*)', stripped)
+        indent = m.group(1) if m else ""
+        fixed = (
+            f"{indent}# Validate path before opening\n"
+            f"{indent}safe_path = os.path.realpath(os.path.join(BASE_DIR, user_input))\n"
+            f"{indent}assert safe_path.startswith(BASE_DIR), 'Path traversal detected'\n"
+            f"{stripped}"
+        )
+        return f"```suggestion\n{fixed}\n```"
+
+    # Eval / exec
+    if vuln_type in ("eval_injection", "exec_injection"):
+        fixed = stripped + "  # TODO: remove eval/exec — use ast.literal_eval or a safe parser"
+        return f"```suggestion\n{fixed}\n```"
+
+    # Generic fallback — no suggestion block, just a note
+    return f"_{description}_\n\nNo automated fix available for `{vuln_type}` — manual review required."
+
+
 @app.post("/github/analyze-pr", tags=["github"])
 async def analyze_pr(req: PRAnalyzeRequest):
     """
@@ -3295,6 +3365,7 @@ async def analyze_pr(req: PRAnalyzeRequest):
             "complexity": cpx_out.model_dump() if cpx_out else {},
             "bug_prediction": bug_out.model_dump() if bug_out else {},
             "function_risk": fr_out,
+            "_source": source,   # kept server-side for suggestion generation, stripped from response
             "skipped": False,
         }
 
@@ -3352,23 +3423,43 @@ async def analyze_pr(req: PRAnalyzeRequest):
         except Exception as e:
             logger.warning("Failed to post PR summary comment: %s", e)
 
-        # Post inline review comments for security findings with line numbers
+        # Post inline review comments for security findings with suggestions
         inline_comments = []
         for r in file_results:
             if r.get("skipped"):
                 continue
+            # Build a lookup of line → code text for suggestion blocks
+            file_source = r.get("_source", "")
+            source_lines = file_source.splitlines() if file_source else []
+
             for finding in r.get("security", {}).get("findings", []):
                 lineno = finding.get("lineno", 1)
-                if lineno and lineno > 0:
-                    inline_comments.append({
-                        "path": r["filename"],
-                        "line": lineno,
-                        "body": (
-                            f"**{finding.get('severity','').upper()} — {finding.get('title','')}**\n\n"
-                            f"{finding.get('description','')}\n\n"
-                            f"CWE: `{finding.get('cwe','')}`  Confidence: {finding.get('confidence',0):.0%}"
-                        ),
-                    })
+                if not lineno or lineno <= 0:
+                    continue
+                vuln_type  = finding.get("vuln_type", "")
+                title      = finding.get("title", "")
+                severity   = finding.get("severity", "low").upper()
+                description = finding.get("description", "")
+                cwe        = finding.get("cwe", "")
+                confidence = finding.get("confidence", 0)
+
+                # Try to get the actual offending line for the suggestion
+                code_line = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
+                fix_block = _generate_fix_suggestion(vuln_type, code_line, description)
+
+                body = (
+                    f"### {severity} — {title}\n\n"
+                    f"{description}\n\n"
+                    f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
+                    f"#### Suggested fix\n\n"
+                    f"{fix_block}"
+                )
+
+                inline_comments.append({
+                    "path": r["filename"],
+                    "line": lineno,
+                    "body": body,
+                })
 
         if inline_comments:
             def _post_review():
@@ -3388,13 +3479,16 @@ async def analyze_pr(req: PRAnalyzeRequest):
             except Exception as e:
                 logger.warning("Failed to post inline review: %s", e)
 
+    # Strip internal _source field before returning
+    clean_results = [{k: v for k, v in r.items() if k != "_source"} for r in file_results]
+
     return {
         "status": "ok",
         "pr_url": req.pr_url,
         "pr_title": pr_title,
-        "files_analyzed": len([r for r in file_results if not r.get("skipped")]),
+        "files_analyzed": len([r for r in clean_results if not r.get("skipped")]),
         "comment_urls": comment_urls,
-        "results": list(file_results),
+        "results": clean_results,
     }
 
 
@@ -3410,7 +3504,8 @@ class CreatePRRequest(BaseModel):
     branch_name: str = ""        # auto-generated if empty
     pr_title: str = ""
     base_branch: str = ""        # defaults to repo default branch
-    analysis_summary: str = ""   # pre-built markdown summary to post as comment
+    analysis_summary: str = ""   # pre-built markdown summary
+    security_findings: list = [] # list of {vuln_type, title, severity, description, cwe, confidence, lineno}
 
 
 def _b64encode(s: str) -> str:
@@ -3510,9 +3605,57 @@ async def create_pr(req: CreatePRRequest):
     pr_data = await loop.run_in_executor(_EXECUTOR, _open_pr)
     pr_url    = pr_data.get("html_url", "")
     pr_number = pr_data.get("number")
+    head_sha  = pr_data.get("head", {}).get("sha") or base_sha
 
-    # Post analysis as a follow-up comment if summary is long
     comment_url = ""
+
+    # Post inline suggestion comments for each security finding
+    source_lines = req.code.splitlines() if req.code else []
+    inline_comments = []
+    for finding in req.security_findings:
+        lineno = finding.get("lineno", 0)
+        if not lineno or lineno <= 0 or lineno > len(source_lines):
+            continue
+        code_line  = source_lines[lineno - 1]
+        vuln_type  = finding.get("vuln_type", "")
+        title      = finding.get("title", "")
+        severity   = finding.get("severity", "low").upper()
+        description = finding.get("description", "")
+        cwe        = finding.get("cwe", "")
+        confidence = finding.get("confidence", 0)
+        fix_block  = _generate_fix_suggestion(vuln_type, code_line, description)
+
+        inline_comments.append({
+            "path": req.filename,
+            "line": lineno,
+            "body": (
+                f"### {severity} — {title}\n\n"
+                f"{description}\n\n"
+                f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
+                f"#### Suggested fix\n\n"
+                f"{fix_block}"
+            ),
+        })
+
+    if inline_comments and pr_number:
+        def _post_review():
+            return _gh_api(
+                f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+                token, method="POST",
+                body={
+                    "commit_id": head_sha,
+                    "body": "IntelliCode found security issues — suggested fixes inline below.",
+                    "event": "COMMENT",
+                    "comments": inline_comments[:10],
+                },
+            )
+        try:
+            review = await loop.run_in_executor(_EXECUTOR, _post_review)
+            comment_url = review.get("html_url", "")
+        except Exception as e:
+            logger.warning("Could not post inline suggestions: %s", e)
+
+    # Post summary comment
     if req.analysis_summary and pr_number:
         def _post_comment():
             return _gh_api(
@@ -3522,7 +3665,8 @@ async def create_pr(req: CreatePRRequest):
             )
         try:
             comment = await loop.run_in_executor(_EXECUTOR, _post_comment)
-            comment_url = comment.get("html_url", "")
+            if not comment_url:
+                comment_url = comment.get("html_url", "")
         except Exception as e:
             logger.warning("Could not post PR comment: %s", e)
 
