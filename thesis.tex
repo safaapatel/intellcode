@@ -40,7 +40,7 @@
     linkcolor=blue,
     citecolor=blue,
     urlcolor=blue,
-    pdftitle={IntelliCode Review: An AI-Powered Platform for Automated Code Quality Analysis and Developer Productivity Enhancement},
+    pdftitle={IntelliCode Review: An AI-Powered Platform for Automated Code Quality Analysis},
     pdfauthor={Safaa Patel},
 }
 
@@ -107,8 +107,7 @@
 {\Large University of Nevada, Reno}\\[0.5em]
 \vspace{1in}
 {\LARGE\bfseries IntelliCode Review: An AI-Powered Platform for\\[0.3em]
-Automated Code Quality Analysis and\\[0.3em]
-Developer Productivity Enhancement}\\[1.5in]
+Automated Code Quality Analysis}\\[1.5in]
 {\large A thesis submitted in partial fulfillment of the\\
 requirements for the degree of Master of Science\\
 in Computer Science and Engineering}\\[1in]
@@ -139,8 +138,7 @@ prepared under our supervision by\\[1em]
 {\large Safaa Patel}\\[1em]
 entitled\\[1em]
 {\large\bfseries IntelliCode Review: An AI-Powered Platform for\\
-Automated Code Quality Analysis and\\
-Developer Productivity Enhancement}\\[1em]
+Automated Code Quality Analysis}\\[1em]
 be accepted in partial fulfillment of the\\
 requirements for the degree of\\[1em]
 {\large MASTER OF SCIENCE}\\[2em]
@@ -161,58 +159,45 @@ May, 2026
 \chapter*{Abstract}
 \addcontentsline{toc}{chapter}{Abstract}
 
-Code review is a cornerstone of professional software development, yet traditional review
-processes are time-consuming, inconsistent, and heavily dependent on reviewer expertise.
-As software systems grow in size and complexity, organizations face increasing pressure to
-maintain code quality while accelerating delivery cadence. Static analysis tools exist, but
-they are often siloed, configuration-heavy, and limited to rule-based detection that misses
-subtle quality issues.
+This thesis makes two connected contributions. The first is \textit{IntelliCode Review},
+a web-based platform that integrates twelve analysis components---four trained ML models
+and eight deterministic AST-based modules---into a unified code quality system. The second,
+and the more technically novel, is a rigorous multi-protocol evaluation that exposes how
+badly standard ML evaluation practice overstates performance for code analysis tasks.
 
-This thesis presents \textit{IntelliCode Review}, a web-based platform that integrates twelve
-machine learning models into a unified, automated code quality analysis and developer
-productivity system. The system accepts Python, JavaScript, TypeScript, and Java source
-code and produces a comprehensive quality report covering security vulnerabilities,
-cyclomatic and cognitive complexity, bug probability, code clone detection, refactoring
-opportunities, dead code elimination, technical debt estimation, documentation quality,
-performance hotspots, dependency coupling, and code readability.
+It accepts Python source code and reports on security vulnerabilities, cyclomatic and
+cognitive complexity, bug probability, code clones, refactoring opportunities, dead code,
+technical debt, documentation quality, performance hotspots, dependency coupling, and
+readability.
 
-The platform is built on a three-tier architecture: a React~18 single-page application
-with shadcn/ui components for the user interface, a Python FastAPI backend exposing twelve
-specialized REST endpoints, and a collection of trained machine learning models using
-XGBoost, scikit-learn, and PyTorch. A rigorous post-audit evaluation---correcting a
-target leakage error that had inflated complexity metrics---establishes the following
-honest performance figures: the XGBoost complexity predictor achieves $R^2 = 0.712$
-(RMSE = 49.5, Spearman $\rho = 0.865$) on a held-out test set, with multi-seed
-stability of $R^2 = 0.685 \pm 0.044$ across five random seeds and cross-project
-Leave-One-Project-Out (LOPO) Spearman $\rho = 0.795 \pm 0.186$ across ten repositories;
-the Random Forest security model achieves multi-seed AUC $= 0.834 \pm 0.036$, though
-cross-project LOPO AUC $= 0.494 \pm 0.189$ (near chance)---a result that constitutes
-a positive finding rather than a limitation: taint feature ablation reveals that
-removing API co-occurrence features \emph{improves} LOPO AUC, a phenomenon we
-formally define as \textbf{anti-learning}: \emph{anti-learning occurs when feature--label
-correlations invert across training and test distributions, causing the model to make
-systematically incorrect predictions under distribution shift.}
-This diagnosis motivated a full redesign of the security feature set toward a
-16-dimensional causal taint-flow representation (inter-procedural propagation,
-graded sanitizer trust, argument-level semantics, branch-aware path sensitivity);
-the XGBoost bug predictor achieves multi-seed AUC $= 0.676 \pm 0.038$, with
-a temporal split revealing $\Delta\text{AUC} = -0.158$ (AUC drops from 0.618 to 0.460
-under forward-looking evaluation, confirming data leakage in random-split baselines).
-Static per-file metrics are by construction unable to distinguish a recently-fixed file
-from one that is about to fail; a valid reformulation of JIT bug prediction would require
-sequential or developer-aware features---commit history embeddings, reviewer interaction
-graphs, or temporal graph neural networks trained on software evolution traces;
-and the Random Forest pattern classifier achieves cross-validated F1 $= 0.412$ with
-Cohen's $\kappa = 0.168$ (slight agreement), exposing the circular nature of
-tool-consensus labelling. All four trained models were retrained from scratch on
-real OSS datasets. Rule-based and AST-visitor models for dead code, documentation,
-performance, dependencies, and readability are deterministic and fully tested.
+The stack is three-tier: a React~18 SPA (shadcn/ui) on the frontend, a Python FastAPI
+backend with twelve specialized REST endpoints, and models built on XGBoost, scikit-learn,
+and PyTorch. All reported metrics are post-audit, after correcting a target leakage error
+that had artificially inflated complexity figures. The XGBoost complexity predictor achieves
+$R^2 = 0.712$ (RMSE = 49.5, Spearman $\rho = 0.865$), with multi-seed
+$R^2 = 0.685 \pm 0.044$ across five seeds and LOPO $\rho = 0.795 \pm 0.186$ across ten
+repositories. The security Random Forest reaches AUC $= 0.834 \pm 0.036$ in-distribution
+but AUC $= 0.494 \pm 0.189$ under LOPO.
 
-The system is evaluated through functional correctness testing, end-to-end API validation,
-and a prototype demonstration. Results show that IntelliCode Review provides actionable,
-multi-dimensional quality feedback in under 500\,ms per analysis request via a fast
-\texttt{/analyze/quick} endpoint, and under 2\,s for full analysis, making
-it practical for integration into real-world continuous integration pipelines.
+The near-chance LOPO result is not a simple generalisation failure. Ablation shows that
+removing API co-occurrence features \emph{improves} cross-project AUC---we define this
+as \textbf{anti-learning}: \emph{feature--label correlations that invert across training
+and test distributions, causing systematically wrong predictions under shift}. This led
+to a security feature redesign around a 16-dimensional causal taint-flow representation.
+The bug predictor reaches multi-seed AUC $= 0.676 \pm 0.038$ under random split but
+drops to walk-forward temporal CV mean AUC $= 0.544 \pm 0.105$
+($\Delta\text{AUC} = -0.132$), confirming that random-split defect prediction baselines
+are upward-biased. Per-file static metrics cannot, by construction, distinguish a
+recently-fixed file from one about to fail; a credible JIT predictor would need sequential
+or developer-aware features such as commit history embeddings or temporal graph neural
+networks. The pattern classifier reaches cross-validated F1 $= 0.657$ after removing 14
+metric features that encode the label rules directly---a confirmed $+0.082$ F1 inflation
+from circular label supervision (Wilcoxon $p = 0.031$) in the prior 26-feature model.
+All four models were trained from scratch on real OSS datasets. The remaining eight modules
+are deterministic and AST-based.
+
+Evaluation covers 24 end-to-end API test cases and a prototype demonstration. Full analysis
+completes in under 2\,s; the \texttt{/analyze/quick} endpoint runs in under 500\,ms.
 
 %% ============================================================
 %%  DEDICATION
@@ -525,10 +510,12 @@ clone detection, code summarization, and defect prediction.
 
 IntelliCode Review evaluated a CodeBERT-based approach for pattern recognition but
 ultimately implemented the component as a calibrated Random Forest classifier
-(\texttt{pattern\_recognition.py}) operating on a 26-dimensional hand-engineered feature
-vector derived from AST metrics. This choice avoids the \textasciitilde500\,MB model
-download and GPU requirements while still achieving 86.1\% classification accuracy on
-four code pattern categories. Section~\ref{ssec:pattern} details this design.
+(\texttt{pattern\_recognition.py}) operating on a 12-dimensional debiased AST feature
+vector (structural features only, excluding the 14 metric features that encode label
+rules). This choice avoids the \textasciitilde500\,MB model download and GPU requirements
+while providing an honest F1=0.657 on four code pattern categories; leakage analysis
+confirms that the full 26-feature set inflates F1 by $+0.082$ via circular label
+supervision. Section~\ref{ssec:pattern} details this design.
 
 \subsection{Ensemble Methods}
 
@@ -735,7 +722,8 @@ detection. While such models provide strong representational power, they impose 
 infrastructure requirements (\textasciitilde500\,MB weights, GPU-accelerated inference for
 acceptable latency). IntelliCode Review instead uses a calibrated Random Forest classifier
 with handcrafted AST features for its pattern recognition component, prioritising practical
-deployability over raw accuracy while still achieving competitive performance (AUC 0.969).
+deployability over raw accuracy while maintaining competitive performance (AUC=0.846
+on a debiased 12-feature AST model, down from 0.969 on the leaky 26-feature model).
 
 \section{Integrated Developer Productivity Tools}
 \label{sec:rel-idt}
@@ -1176,8 +1164,11 @@ probabilities:
   p_{\text{bug}} = \frac{p_{LR} + p_{XGB}}{2}
 \end{equation}
 
-Training was performed on 3000 real OSS samples labelled via SZZ-style commit heuristics
-and Bandit annotations. Held-out AUC scores: LR = 0.677, XGB = 0.710, ensemble = 0.704.
+Training was performed on 8668 real OSS commit records labelled via keyword-based SZZ
+heuristics (commit messages containing ``fix'' or ``bug''), with \texttt{is\_fix} excluded
+from features to prevent circular labels. Held-out AUC scores: LR = 0.682 (multi-seed
+$0.676 \pm 0.038$), XGB = 0.934 (circular on keyword labels). Cross-project LOPO AUC
+$= 0.567 \pm 0.028$; 5-fold walk-forward temporal CV AUC $= 0.544 \pm 0.105$.
 A heuristic fallback is used when checkpoints are unavailable, based on thresholds applied
 directly to cyclomatic complexity and Halstead bugs metrics.
 
@@ -1193,18 +1184,24 @@ Risk levels are classified as:
 \label{ssec:pattern}
 
 The pattern recognition model (\texttt{pattern\_recognition.py}) is a Random Forest
-classifier with 300 trees trained on a 26-dimensional AST feature vector extracted per
-code snippet. The four output classes are: \texttt{clean}, \texttt{god\_class},
-\texttt{long\_method}, and \texttt{feature\_envy}. Probability calibration is applied via
-Platt scaling (\texttt{CalibratedClassifierCV}, \texttt{method='sigmoid'}, \texttt{cv=5}),
-which improves the reliability of per-class confidence scores reported to the frontend.
+classifier with 300 trees trained on a \textbf{12-dimensional debiased AST feature
+vector}. The four output classes are: \texttt{clean}, \texttt{code\_smell},
+\texttt{anti\_pattern}, and \texttt{style\_violation}. Probability calibration is applied
+via Platt scaling (\texttt{CalibratedClassifierCV}, \texttt{method='sigmoid'},
+\texttt{cv=5}), which improves the reliability of per-class confidence scores reported to
+the frontend.
 
-The model was trained on 1825 real code samples sourced from OSS repositories and labelled
-using code structure heuristics. Evaluation on the held-out test split yields:
-\textbf{accuracy = 86.1\%}, \textbf{AUC = 0.969}, and cross-validated F1 = 0.797. The
-Random Forest architecture was chosen over fine-tuned CodeBERT to avoid the
-\textasciitilde500\,MB model download and GPU requirements while still achieving
-competitive accuracy. The checkpoint (\texttt{checkpoints/pattern/rf\_model.pkl}) loads
+A label leakage analysis (Section~\ref{ssec:pattern-leakage}) identified that the
+original 26-feature set included CC, SLOC, Halstead volume, and related metrics that are
+also used as inputs to the label assignment rules, creating circular self-supervision.
+The 14 leaky features were removed, leaving 12 structural AST features (function counts,
+class/block counts, nesting depth, parameter statistics) that are genuinely independent of
+the labeling thresholds. The model was trained on 1153 real OSS code samples.
+Evaluation on the held-out test split yields:
+\textbf{accuracy = 66.5\%}, \textbf{AUC = 0.846}, and cross-validated F1 = 0.657.
+The leaky 26-feature model achieved 80.3\% accuracy and 0.969 AUC---a confirmed
+$+0.082$ F1 inflation (Wilcoxon $p=0.031$, significant at $\alpha=0.05$).
+The debiased checkpoint (\texttt{checkpoints/pattern/rf\_model.pkl}) loads
 in under 100\,ms at startup.
 
 \subsection{Code Clone Detection: TF-IDF Cosine Similarity}
@@ -1365,12 +1362,18 @@ The master training script \texttt{train\_all.py} orchestrates five training ste
     Cross-project LOPO AUC $= 0.494 \pm 0.189$ confirms near-chance generalisation.
   \item \textbf{Bug training} (\texttt{train\_bugs.py}): trains the XGBoost bug predictor
     on the bug dataset. Multi-seed evaluation (5 seeds) yields AUC $= 0.676 \pm 0.038$.
-    A temporal forward-looking split reveals AUC = 0.460 versus random-split AUC = 0.618
-    ($\Delta\text{AUC} = -0.158$), confirming data leakage in random-split evaluation.
+    5-fold walk-forward temporal cross-validation yields mean AUC $= 0.544 \pm 0.105$
+    versus random-split AUC $= 0.676$ ($\Delta\text{AUC} = -0.132$), confirming
+    temporal data leakage. The per-fold variance ($\pm0.105$) is itself informative:
+    it shows the model's performance depends strongly on which time period is used
+    as the test window, which a single 70/30 cut obscures.
   \item \textbf{Pattern training} (\texttt{train\_pattern.py}): trains the calibrated
-    Random Forest (300 trees, Platt scaling, \texttt{cv=5}) on the 1825-sample pattern
-    dataset. Cross-validation uses \texttt{n\_jobs=1} on Windows to avoid shared-memory
-    serialisation errors. Result: accuracy = 86.1\%, AUC = 0.969, CV F1 = 0.797.
+    Random Forest (300 trees, Platt scaling, \texttt{cv=5}) on the 1153-sample pattern
+    dataset using 12 debiased structural AST features. Cross-validation uses
+    \texttt{n\_jobs=1} on Windows to avoid shared-memory serialisation errors.
+    Debiased result: accuracy = 66.5\%, AUC = 0.846, CV F1 = $0.657 \pm 0.016$.
+    The prior 26-feature model (accuracy = 80.3\%, AUC = 0.969) is deprecated due
+    to confirmed label leakage ($+0.082$ F1 inflation, Wilcoxon $p=0.031$).
 \end{enumerate}
 
 Checkpoints are saved in \texttt{backend/checkpoints/} as pickle files (\texttt{.pkl}
@@ -1445,37 +1448,23 @@ production.
 \section{Frontend Implementation}
 \label{sec:frontend}
 
-\subsection{Navigation, Routing, and Authentication}
+The frontend is a React~18 single-page application built with Vite and TypeScript,
+using React Router~v6 for client-side routing. Eleven pages are accessible from a
+persistent sidebar: Dashboard, Submit, Reviews, Review Detail, Compare, Analytics,
+Models, Rules, Repositories, Admin, and Settings. A \texttt{ProtectedRoute} component
+redirects unauthenticated users to the Login page, and a live API status indicator
+polls \texttt{GET /health} every 15 seconds. Analysis history is persisted entirely in
+\texttt{localStorage} via \texttt{reviewHistory.ts}, keyed on \texttt{intellcode\_history},
+so results survive browser sessions without a server-side database.
 
-The React application uses React Router v6 for client-side routing. The sidebar
-navigation (\texttt{AppNavigation.tsx}) links to eleven pages: Dashboard, Submit,
-Reviews, Review Detail, Compare, Analytics, Models, Rules, Repositories, Admin, and
-Settings. A \texttt{ProtectedRoute} component wraps authenticated routes; users who
-have not started a session are redirected to the Login page. The navigation bar also
-includes a live API status indicator that polls \texttt{GET /health} every 15 seconds
-(3-second abort timeout), displaying a pulsing green dot when the backend is reachable
-or a red dot when it is offline.
-
-\subsection{Code Submission}
-
-The Submit page (\texttt{Submit.tsx}) provides a macOS-style editor chrome with line
-numbers, a Copy button that copies the current code to the clipboard (showing a checkmark
-for 2 seconds), and a submit button labelled \textit{Ctrl+$\hookleftarrow$} on desktop.
-A \texttt{useEffect} hook registers a \texttt{keydown} listener for \texttt{Ctrl+Enter}
-that triggers analysis when the editor is active. Batch repository scans navigate to
-the Reviews list on completion rather than a single-result detail page. On submission,
-\texttt{api.ts}'s \texttt{analyzeCode()} posts to the backend, saves the result to
-localStorage via \texttt{reviewHistory.ts}, and navigates to the Review Detail page.
-
-\subsection{Analysis History and Sorting}
-
-The \texttt{reviewHistory.ts} service manages a list of past analysis results in
-\texttt{localStorage} under the key \texttt{intellcode\_history}. Each entry includes a
-unique ID (UUID), timestamp, filename, overall score, status, and the full API response.
-The Reviews page renders this list with a multi-field sort control (Newest First, Lowest
-Score, Most Issues, Highest Severity) and text filtering. The Review Detail page
-renders the full analysis for a selected review, organized into fourteen tabs for each
-analysis dimension (see Table~\ref{tab:tabs}).
+The Review Detail page organises results into fourteen tabs (see
+Table~\ref{tab:tabs}). Two design choices are architecturally significant. First,
+the \texttt{/analyze/stream} SSE endpoint populates the Security tab within the first
+200\,ms while remaining models continue asynchronously, reducing perceived latency on
+long files. Second, the Fix Guide tab (Tab~14) provides ready-to-paste corrected code
+for the five most common vulnerability types, eliminating the context-switch to an
+external search. Full per-page component documentation is in
+Appendix~\ref{app:frontend}.
 
 \begin{table}[H]
 \centering
@@ -1504,63 +1493,6 @@ analysis dimension (see Table~\ref{tab:tabs}).
 \bottomrule
 \end{tabular}
 \end{table}
-
-In addition to the tabbed view, the Review Detail page provides a Markdown export button
-that generates a \texttt{.md} report containing the score bar, metrics table, security
-findings, bug risk factors, and refactoring suggestions as a downloadable file using the
-Browser Blob API.
-
-\subsection{Compare Page}
-
-The Compare page (\texttt{Compare.tsx}) presents two side-by-side code editors, each with
-an independent ``Analyze'' trigger. Selecting ``Run Comparison'' calls both
-\texttt{/analyze} endpoints in parallel, then renders a diff-style metrics table
-highlighting which submission scored better in each dimension. A ``Reset Samples'' button
-restores both slots to built-in example snippets.
-
-\subsection{Dashboard and Analytics}
-
-The Dashboard (\texttt{Dashboard.tsx}) displays summary statistics, a quality trend
-sparkline (Recharts \texttt{AreaChart}), recent reviews list, and --- when two or more
-distinct files have been analysed --- a leaderboard section showing the five highest-scoring
-files (``Top Quality Files'') and five lowest-scoring files (``Needs Attention''). The
-dashboard updates reactively via \texttt{storage} events and a 5-second polling interval.
-
-The Analytics page (\texttt{Analytics.tsx}) reads all past reviews from localStorage and
-renders trend charts (score over time, status distribution, per-category distributions,
-score histogram). A ``File Quality Progress'' section displays per-file
-\texttt{LineChart}s (60\,px height, colour-coded by improvement or decline) for up to
-five files that have at least two analyses, enabling developers to track quality
-improvements at file granularity.
-
-\subsection{Admin Page}
-
-The Admin page (\texttt{Admin.tsx}) provides a model status panel (ready / unavailable /
-not loaded for each of the twelve models), four backend statistics cards (total cached
-analyses, average score, total security findings, models ready) sourced from
-\texttt{GET /stats}, and a ``Clear Cache'' button that calls \texttt{POST /cache/clear}.
-The admin panel also includes a placeholder user management table.
-
-\subsection{Settings}
-
-The Settings page (\texttt{Settings.tsx}) organises preferences into tabs: Profile,
-Notifications, Appearance, and Integrations. The Notifications tab includes a Browser
-Notifications panel that reads \texttt{Notification.permission} on mount, displays the
-current permission status (Enabled / Blocked / Not set), and provides an ``Enable''
-button that calls \texttt{Notification.requestPermission()} and fires a test notification.
-The Appearance tab displays a keyboard shortcuts reference card with five shortcuts
-shown as key badge pairs (e.g., \textit{Ctrl+Enter} to submit, \textit{Ctrl+K} to
-search).
-
-\subsection{Rules and Repositories Persistence}
-
-The Rules page allows users to define, enable/disable, and configure custom quality rules
-with an embedded code preview panel. The preview panel re-analyses the typed snippet in
-real time against the user's active ruleset, giving immediate visual feedback on whether
-a proposed rule would flag the intended pattern. Rules state is persisted in localStorage
-so that the configured ruleset survives browser sessions. The Repositories page similarly
-persists repository configurations (name, URL, branch, language) and initiates batch
-scans across sixteen recognised programming languages.
 
 \section{Implementation Challenges}
 \label{sec:challenges}
@@ -1643,8 +1575,8 @@ external tool in a single action. The backend status indicator embedded in the
 navigation bar informs the user at a glance whether the analysis engine is reachable,
 preventing confusion when the backend is not running.
 
-\section{Demonstration Scenarios}
-\label{sec:demo-scenarios}
+\section{Interface Walkthrough}
+\label{sec:interface-walkthrough}
 
 \subsection{Dashboard and Analysis History}
 
@@ -1989,34 +1921,70 @@ held-out real OSS data.
 \toprule
 \textbf{Model} & \textbf{Metric} & \textbf{Test} \\
 \midrule
-\multirow{2}{*}{Complexity (XGBoost)} & $R^2$  & 1.000 \\
- & RMSE & 0.064 \\
+\multirow{3}{*}{Complexity (XGBoost)} & $R^2$            & 0.712 \\
+ & RMSE                                                  & 49.5  \\
+ & Spearman $\rho$ (LOPO)                               & 0.795 \\
 \midrule
-\multirow{3}{*}{Security (RF+CNN ensemble)} & AUC       & 0.928 \\
- & RF threshold & 0.417 \\
- & Vuln recall  & 54\%  \\
+\multirow{3}{*}{Security (RF+CNN ensemble)} & AUC (in-dist, multi-seed)  & $0.834\pm0.036$ \\
+ & AUC (LOPO cross-project)                              & $0.494\pm0.189$ \\
+ & Vuln recall                                           & 54\%  \\
 \midrule
-\multirow{3}{*}{Bug Predictor (LR+XGBoost)} & LR AUC  & 0.677 \\
- & XGB AUC (best\_iter=97) & 0.710 \\
- & Ensemble AUC             & 0.704 \\
+\multirow{4}{*}{Bug Predictor (LR+XGBoost)} & AUC (multi-seed, random split)  & $0.676\pm0.038$ \\
+ & AUC (5-fold walk-forward CV)                          & $0.544\pm0.105$ \\
+ & AUC (single 70/30 temporal)                           & 0.569 \\
+ & AUC (LOPO)                                            & $0.567\pm0.028$ \\
 \midrule
-\multirow{3}{*}{Pattern Recognition (RF, 300 trees)} & Accuracy & 86.1\% \\
- & AUC    & 0.969 \\
- & CV F1  & 0.797 \\
+\multirow{3}{*}{Pattern RF (debiased, 12 AST features)} & Accuracy & 66.5\% \\
+ & AUC    & 0.846 \\
+ & CV F1  & $0.657\pm0.016$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The Complexity XGBoost model achieves near-perfect $R^2$ because maintainability scores
-are derived analytically from code metrics, making the prediction task inherently learnable
-from the same feature set. The Security ensemble AUC of 0.928 is competitive with
-published results on comparable binary vulnerability classification tasks~\cite{li2017},
-though the 54\% recall for vulnerable samples reflects the class imbalance inherent in
-real OSS codebases. The Bug Predictor AUC of 0.704 falls in the range typical for
-metric-based defect prediction~\cite{lessmann2008} and reflects the noisy nature of
-commit-message-based labels. The Pattern RF achieves 86.1\% accuracy on four categories,
-approaching performance of lightweight transformer baselines at a fraction of the
-inference cost.
+Complexity $R^2 = 0.712$ is the corrected figure; the prior model predicted Maintainability
+Index, a closed-form function of the input features, which gave a spurious $R^2 = 1.000$.
+The security ensemble's near-chance LOPO AUC is an anti-learning result: ablation shows
+that removing certain features \emph{improves} cross-project performance, meaning the
+model was fitting spurious within-project correlations rather than anything that transfers.
+The bug predictor's walk-forward temporal CV (mean AUC $= 0.544 \pm 0.105$) confirms
+the same problem for random-split evaluation in defect prediction: the fold variance alone
+($\pm0.105$) shows the result is sensitive to which time window is tested, which a single
+70/30 cut cannot reveal. The pattern RF was retrained on 12 debiased AST features after
+leakage analysis found that the prior 26-feature model's F1 $= 0.803$ included
+$+0.082$ of circular label supervision (Wilcoxon $p = 0.031$); the honest figure is
+F1 $= 0.657$.
+
+\section{Pattern Label Leakage Analysis}
+\label{ssec:pattern-leakage}
+
+The pattern classifier was originally trained on a 26-dimensional feature set including
+cyclomatic complexity (CC), SLOC, Halstead volume, Maintainability Index, and related
+metrics. Those same metrics drive the label assignment function
+\texttt{\_assign\_pattern\_label\_tool\_consensus()}: CC $> 20 \Rightarrow$
+\texttt{anti\_pattern}; SLOC $\leq 40 \Rightarrow$ \texttt{clean};
+lines over 80 $\Rightarrow$ \texttt{style\_violation}. When training features encode the
+label rules directly, the model learns the labeling function, not structural patterns in
+the code.
+
+Spearman correlation between each feature and its corresponding class indicator made this
+concrete: leaky features had $|r| > 0.40$ (CC--anti\_pattern: $|r|=0.68$,
+SLOC--clean: $|r|=0.71$), while the 12 clean AST structural features showed substantially
+lower correlations.
+
+A 5-fold stratified CV comparison put numbers on the gap:
+\begin{itemize}
+  \item Full model: mean F1 $= 0.748$, mean $\kappa = 0.664$
+  \item Debiased model: mean F1 $= 0.665$, mean $\kappa = 0.553$
+  \item Leakage inflation: $\Delta\text{F1} = +0.082$
+  \item Wilcoxon signed-rank test: $W = 0$, $p = 0.031$ (significant at $\alpha = 0.05$)
+\end{itemize}
+
+The debiased model (12 structural AST features: \texttt{n\_functions},
+\texttt{n\_classes}, \texttt{n\_try\_blocks}, \texttt{n\_raises},
+\texttt{n\_with\_blocks}, \texttt{max\_nesting\_depth}, \texttt{max\_params},
+\texttt{avg\_params}, \texttt{n\_decorated\_functions}, \texttt{n\_imports},
+\texttt{max\_function\_body\_lines}, \texttt{avg\_function\_body\_lines}) has been
+adopted as the production checkpoint.
 
 \section{API Correctness Results}
 \label{sec:api-results}
@@ -2094,33 +2062,120 @@ multi-visit continuity. Finally, the actionability goal is met by the Fix Guide 
 which provides ready-to-paste corrected code for the five most common vulnerability
 types alongside severity classification and CWE identifiers for all findings.
 
+\subsection{Partial Mitigations for Diagnosed Failures}
+\label{ssec:mitigations}
+
+Diagnosing failure without attempting remediation is incomplete. Two targeted
+interventions were implemented and evaluated.
+
+\textbf{Feature instability (PIFF).} The Project-Invariant Feature Filtering
+contribution addresses the LOPO collapse by identifying which features have stable
+cross-project distributions (low coefficient of variation across per-project means) and
+restricting the model to those features at test time. On the bug prediction LOPO
+benchmark, PIFF features raise mean AUC from 0.578 to 0.620 ($+0.042$, approximately
+4 percentage points). This is a modest but directionally consistent improvement:
+features that generalize better across projects do produce better cross-project
+predictions, even on a small four-project benchmark where statistical significance
+is unattainable (minimum Wilcoxon $p = 0.0625$). Cohen's $d = 0.558$ indicates a
+medium effect size.
+
+\textbf{Temporal drift (TDCP).} The Time-Decayed Code Prediction contribution applies
+exponential sample weighting $w_i = \exp(-\lambda \cdot \Delta\text{years})$ to
+de-emphasize old commits during training. At $\lambda = 2.0$, temporal AUC improves
+from 0.430 to 0.440 ($+0.010$). The gain is small because the labeling noise
+(keyword-based SZZ) limits the ceiling: no reweighting scheme can recover signal
+that was never in the labels.
+
+Both interventions confirm the core finding: a meaningful fraction of the performance
+gap between random-split and cross-project or temporal evaluation is attributable to
+feature instability and temporal drift---not only label noise. The remaining gap
+is not easily closed without higher-quality labels (e.g., manual bug reports,
+issue-tracking integration) or more diverse training repositories.
+
 \subsection{Limitations and Threats to Validity}
 
-The primary threat to validity is the scope of training data. While models are trained
-on real OSS samples (3000 per model), the dataset diversity is limited to a handful of
-popular Python projects. Models may not generalise well to domain-specific code styles
-(e.g., scientific computing, embedded systems, web frameworks outside Django/Flask).
-Security AUC (0.928) and Bug AUC (0.704) are promising but leave meaningful false
-negative rates, particularly for novel vulnerability patterns not present in training data.
+The primary threat to validity is training data scope. Models are trained on a small
+set of popular Python OSS projects; the LOPO evaluation demonstrates directly that
+cross-project generalisation is poor (security LOPO AUC $= 0.494 \pm 0.189$,
+bug walk-forward CV AUC $= 0.544 \pm 0.105$). Models will likely perform worse
+on domain-specific styles (scientific computing, embedded systems, web frameworks
+outside the training set). The in-distribution results (security AUC $= 0.834$,
+complexity Spearman $\rho = 0.865$) are useful for understanding model capacity
+but should not be taken as deployment-ready performance figures.
 
-A secondary limitation is the depth of language support. While the repository scanner
-recognises sixteen languages at file level, the full ML analysis pipeline (security,
-complexity, bug prediction, pattern recognition) operates only on Python. JavaScript,
-Java, and Go codebases receive only AST-level deterministic analysis.
+A second limitation is language coverage. The full ML pipeline operates only on
+Python; JavaScript, Java, and Go receive only deterministic AST-level analysis.
 
-Finally, the localStorage persistence model limits the system to single-user use. In a
-team setting, shared analysis history and collaborative rules would require a server-side
-database.
+The pattern classifier carries a construct validity threat despite debiasing: the
+label assignment function uses structural heuristics that, while not directly encoded
+in the 12 clean features, may still correlate weakly with those features. The only
+definitive fix is a human-annotated smell dataset independent of any automated oracle.
+
+The localStorage persistence model limits deployment to single-user sessions; a
+production system would require a server-side database with multi-user support.
+
+\subsection{What Should Work Instead}
+\label{ssec:what-works}
+
+The honest conclusion from the evaluation is that pure ML trained on a handful of OSS
+projects cannot reliably transfer to unseen projects or future time windows. This raises
+the practical question: what approaches would work better? Four directions are supported
+by the empirical record.
+
+\textbf{Hybrid rule--ML fusion.} IntelliCode Review's own architecture already embodies
+this answer: eight of twelve analysis dimensions are deterministic AST-based modules
+that do not suffer from distribution shift because they have no trainable parameters.
+Cyclomatic complexity, dead code, clone detection, and technical debt estimates are
+project-agnostic by construction. The ML components (security, bug prediction) are the
+ones that collapse cross-project. A practical deployment would weight the deterministic
+findings more heavily and treat ML outputs as calibrated soft signals rather than
+predictions. This is the architecture recommendation that follows directly from the
+evaluation results.
+
+\textbf{Issue-tracker ground truth.} The bug predictor's temporal AUC of 0.544 is
+bounded above by the quality of its SZZ-style keyword labels. Commit messages containing
+``fix'' or ``bug'' include unrelated corrections (typos, whiteboard comments, test
+fixtures) and miss silent bug repairs. Replacing keyword labels with closed bug reports
+from issue trackers (GitHub Issues, Jira) linked to commits via conventional commit
+standards would substantially reduce label noise. The framework built in this thesis
+(LOPO, temporal CV, LAMV leakage checks) can evaluate any label scheme without change.
+
+\textbf{Project-conditioned adaptation.} The feature instability result from PIFF shows
+that some features (code churn, author count) vary so much across projects that a
+globally-trained model treats them as noise rather than signal. A project-conditioned
+model---one that fine-tunes a shared backbone on the target project's history before
+deploying---would avoid the cold-start problem. Even five to ten labelled examples
+from the target project can substantially narrow the LOPO gap in domain adaptation
+settings~\cite{pan2010}.
+
+\textbf{Larger, more diverse training corpora.} The GHTorrent dataset contains hundreds
+of thousands of Python repositories with commit histories. Training on a corpus 100$\times$
+the size used here, stratified by domain (web, scientific, systems, tooling), would give
+the model exposure to the kinds of distributional variation it currently fails on. This
+does not require better algorithms---it requires engineering effort to collect and
+validate labels at scale.
+
+The takeaway for practitioners is this: for cross-project deployment today, deterministic
+static analysis is more reliable than trained ML. ML adds value in projects where
+historical labeled data is available for fine-tuning, and as a soft signal in ensembles
+where it can be outweighed by deterministic signals when confidence is low.
 
 \subsection{Comparison to Related Work}
 
-Compared to Pylint and Bandit, IntelliCode Review provides a substantially broader
+Compared to Pylint and Bandit, IntelliCode Review provides substantially broader
 analysis scope (twelve dimensions vs. two) and integrates findings into a single quality
-score. Compared to SonarQube, IntelliCode Review requires no server infrastructure and
-is trivially deployable, but lacks SonarQube's multi-language ML models and mature rule
-database. Compared to DeepCode/Snyk, IntelliCode Review uses real (if limited) training
-data, is fully transparent (all model code is included in the repository), and does not
-require an account or API key.
+score. Compared to SonarQube, it requires no server infrastructure and deploys as a
+single Python process, though it lacks SonarQube's mature multi-language rule database.
+The evaluation framework presented here is more rigorous than any of these tools
+report: Pylint and Bandit publish no cross-project AUC; SonarQube's quality gate
+thresholds have not been validated against commit-level ground truth.
+
+The key difference from CodeBERT-based approaches is not performance but transparency
+and cost. CodeBERT requires 500\,MB of model weights and a GPU for acceptable inference
+speed; IntelliCode Review runs on any laptop CPU in under 2\,s. The trade-off is clear:
+CodeBERT's richer representations may generalise better cross-project (though published
+LOPO evaluations for code quality are rare), but its infrastructure requirements make
+it impractical for the self-contained, single-developer deployment this system targets.
 
 %% ============================================================
 \chapter{Conclusion}
@@ -2130,32 +2185,47 @@ require an account or API key.
 \section{Summary of Contributions}
 \label{sec:contributions}
 
-This thesis has presented IntelliCode Review, an AI-powered code quality analysis platform
-that integrates twelve machine learning models into a unified web application. The main
-contributions are:
+This thesis presents IntelliCode Review: a unified code quality analysis system, a
+rigorous multi-protocol evaluation that surfaces systematic ML failures, and a set of
+targeted interventions that partially address those failures. The main contributions are:
 
 \begin{enumerate}
-  \item \textbf{A unified code quality API}: A FastAPI backend exposing over twenty
-    endpoints including twelve specialized model endpoints, a combined full-analysis
-    endpoint, a real-time SSE streaming endpoint (\texttt{/analyze/stream}), a fast
-    sub-500\,ms endpoint (\texttt{/analyze/quick}), and utility endpoints for statistics,
-    feedback collection, and cache management.
-  \item \textbf{A four-model ML training pipeline}: End-to-end training of security
-    (RF+CNN, AUC=0.928), complexity (XGBoost, $R^2$=1.000), bug prediction
-    (LR+XGBoost, AUC=0.704), and pattern recognition (calibrated RF, accuracy=86.1\%)
-    models on 3000 real OSS samples each, with a master script (\texttt{train\_all.py})
-    that reproduces all checkpoints from scratch.
-  \item \textbf{Eight AST-based analysis modules}: Deterministic, high-coverage modules
-    for clone detection, refactoring suggestions, dead code, technical debt, documentation
-    quality, performance hotspots, dependency coupling, and code readability.
-  \item \textbf{A React 18 SPA with rich developer UX}: A developer-friendly web interface
-    with a fourteen-tab Review Detail page, a Fix Guide with copy-ready remediation
-    snippets, a side-by-side Compare page, per-file quality tracking in Analytics, a
-    Dashboard leaderboard, browser notification integration, keyboard shortcuts, and
-    localStorage-based persistence.
-  \item \textbf{A reproducible prototype}: All code, training scripts, real dataset
-    fetchers, and documentation are included in the repository, making the system
-    fully reproducible from a clean checkout.
+  \item \textbf{A unified code quality platform}: A FastAPI backend and React 18 SPA
+    covering twelve analysis dimensions in a single request under 2\,s, with a
+    sub-500\,ms fast path for CI integration. Eight deterministic AST modules handle
+    clone detection, dead code, technical debt, documentation quality, performance
+    hotspots, dependency coupling, readability, and refactoring suggestions. A Fix
+    Guide tab delivers copy-ready remediation snippets for the five most common
+    vulnerability types.
+
+  \item \textbf{A rigorous multi-protocol evaluation framework}: Rather than reporting
+    a single random-split AUC, every ML component is evaluated under (i) multi-seed
+    random splits to measure variance, (ii) Leave-One-Project-Out cross-validation to
+    measure cross-project generalisation, and (iii) 5-fold walk-forward temporal
+    cross-validation to detect temporal data leakage. This protocol surfaces failures
+    that a single split conceals: security collapses from AUC $= 0.834$ in-distribution
+    to AUC $= 0.494$ under LOPO; bug prediction drops from random-split AUC $= 0.676$
+    to walk-forward CV AUC $= 0.544 \pm 0.105$.
+
+  \item \textbf{Label leakage detection and correction}: A Leakage-Aware Model
+    Validation (LAMV) procedure identifies features with Spearman $|r| > 0.70$ against
+    labels, single-feature oracle AUC $> 0.85$, or large train/CV gap. Applied to the
+    pattern classifier, LAMV identified 14 leaky features (CC, SLOC, Halstead metrics)
+    that encode the label rules directly. Removing them and retraining on 12 structural
+    AST features corrects a confirmed $+0.082$ F1 inflation (Wilcoxon $p = 0.031$),
+    bringing pattern CV F1 from 0.748 to 0.665.
+
+  \item \textbf{Partial mitigations for diagnosed failures}: Project-Invariant Feature
+    Filtering (PIFF) raises LOPO AUC by $+0.042$ (Cohen's $d = 0.558$) by restricting
+    the model to cross-project stable features. Time-Decayed Code Prediction (TDCP)
+    improves temporal AUC by $+0.010$ through exponential sample reweighting. Both
+    confirm that the performance gap has identifiable, partially addressable causes
+    beyond irreducible label noise.
+
+  \item \textbf{A reproducible artifact}: All training scripts, evaluation modules,
+    dataset fetchers, and trained checkpoints are included. A GitHub Actions workflow
+    posts findings as PR review comments. The full pipeline reproduces from a clean
+    checkout with a single master script.
 \end{enumerate}
 
 \section{Answers to Research Questions}
@@ -2167,12 +2237,18 @@ contributions are:
     analysis tool. End-to-end API testing confirms 100\% correctness on 24 structured
     test cases, and the platform's breadth of UX features (Compare, Fix Guide, SSE
     streaming, browser notifications) directly addresses developer workflow friction.
-  \item[RQ2] XGBoost is effective for tabular regression (complexity, $R^2$=1.000).
+  \item[RQ2] XGBoost is effective for tabular regression (complexity,
+    $R^2=0.712$, Spearman $\rho=0.865$; LOPO $\rho=0.795\pm0.186$).
     RF+CNN ensembles combine structural and sequential representations for security
-    detection (AUC=0.928). LR+XGBoost ensembles leverage complementary model biases
-    for bug prediction (ensemble AUC=0.704). Calibrated Random Forests provide fast,
-    deployable pattern recognition (accuracy=86.1\%, AUC=0.969) without requiring
-    large pre-trained language models.
+    detection (in-distribution AUC=$0.834\pm0.036$; LOPO AUC=$0.494\pm0.189$,
+    exposing anti-learning under distribution shift).
+    LR+XGBoost ensembles leverage complementary model biases for bug prediction
+    (multi-seed AUC=$0.676\pm0.038$; 5-fold walk-forward temporal CV
+    mean AUC=$0.544\pm0.105$, confirming temporal data leakage in
+    random-split baselines).
+    A debiased Random Forest provides pattern recognition without circular
+    label leakage (CV F1=0.657, AUC=0.846), using only structural AST features
+    that are not part of the labeling rules.
   \item[RQ3] A React 18 SPA with localStorage persistence provides a practical,
     zero-infrastructure developer tool. All 1000-line inputs are analyzed within 2 seconds;
     the \texttt{/analyze/quick} endpoint delivers sub-500\,ms results for CI integration;
@@ -2196,9 +2272,12 @@ Several directions remain open for future research and development:
     teams. The current architecture supports this via language-specific AST adapters without
     changing the model layer.
 
-  \item[GitHub Actions CI integration] A GitHub Actions workflow that posts IntelliCode
-    Review findings as PR comments would complete the integration begun by the repository
-    scanning feature, enabling automated quality gates on every pull request.
+  \item[Extended language and framework support] A GitHub Actions workflow
+    (\texttt{.github/workflows/intellicode-review.yml}) already posts IntelliCode Review
+    findings as PR comments and uploads SARIF results to GitHub Code Scanning.
+    Extending the static analysis pipeline to handle TypeScript, Java, and Go natively
+    (beyond the current Python-primary support) would make the CI gate useful for
+    polyglot teams without any workflow changes.
 
   \item[Graph Neural Networks] Representing code as a code property graph (AST + control
     flow graph + data flow graph) and applying GNN-based vulnerability detection could
@@ -2223,19 +2302,26 @@ Several directions remain open for future research and development:
 \section{Closing Remarks}
 \label{sec:closing}
 
-IntelliCode Review demonstrates that a comprehensive, multi-model code quality analysis
-platform can be built as a self-contained web application using entirely open-source
-components. The system achieves broad coverage (twelve analysis dimensions, four trained
-ML models, fourteen-tab review interface), competitive ML performance (Security AUC=0.928,
-Bug AUC=0.704, Pattern accuracy=86.1\%), responsive speed ($<2$\,s full analysis,
-$<500$\,ms quick endpoint), and practical developer UX (Fix Guide, Compare page, SSE
-streaming, browser notifications, Markdown export, keyboard shortcuts) in a fully
-reproducible research prototype.
+This thesis makes three things clear. First, building a practical, fast, multi-dimensional
+code quality platform using only open-source components is feasible: IntelliCode Review
+analyzes twelve quality dimensions in under 2\,s on commodity hardware, with no server
+infrastructure beyond a single Python process.
 
-The platform represents a meaningful step toward democratising sophisticated code quality
-analysis---making the kind of multi-dimensional, ML-augmented feedback previously
-available only in expensive commercial tools accessible to any developer with a Python
-environment and a web browser.
+Second, standard ML evaluation practice in defect prediction and vulnerability detection
+is optimistic in ways that are easy to overlook. The random-split AUC of 0.934 for the
+bug predictor drops to a walk-forward temporal CV mean of 0.544; security in-distribution
+AUC of 0.834 becomes 0.494 under cross-project evaluation. These are not minor rounding
+differences---they signal that the models have learnt something that does not transfer,
+and that reporting only the comfortable number conceals this.
+
+Third, the failures are partially fixable. Feature selection under PIFF recovers
+4 percentage points of cross-project AUC. Temporal sample reweighting under TDCP
+narrows the temporal gap, though the ceiling is limited by label quality. The remaining
+gap points to the real next step: better training data (larger corpora, issue-tracker
+ground truth) rather than better model architectures.
+
+A researcher who reads only the in-distribution numbers might conclude the problem is
+solved. The contribution of this work is to make that conclusion harder to reach.
 
 %% ============================================================
 %%  BIBLIOGRAPHY
@@ -2404,6 +2490,101 @@ M.~Brunsfeld \textit{et al.},
 ``Tree-sitter: An incremental parsing system for programming tools,''
 \url{https://tree-sitter.github.io/}, accessed 2026.
 
+\bibitem{pan2010}
+S.~J.~Pan and Q.~Yang,
+``A survey on transfer learning,''
+\textit{IEEE Trans. Knowledge and Data Engineering}, vol.~22, no.~10, pp.~1345--1359, 2010.
+
 \end{thebibliography}
+
+%% ============================================================
+%%  APPENDIX
+%% ============================================================
+\appendix
+
+\chapter{Frontend Component Reference}
+\label{app:frontend}
+
+This appendix documents the React components that implement each page of the
+IntelliCode Review interface. Component-level details are intentionally separated from
+the main implementation chapter to keep the architectural discussion focused on
+decisions rather than code inventory.
+
+\section{Navigation, Routing, and Authentication}
+
+The React application uses React Router~v6 for client-side routing. The sidebar
+navigation (\texttt{AppNavigation.tsx}) links to eleven pages: Dashboard, Submit,
+Reviews, Review Detail, Compare, Analytics, Models, Rules, Repositories, Admin, and
+Settings. A \texttt{ProtectedRoute} component wraps authenticated routes; users who
+have not started a session are redirected to the Login page. The navigation bar
+includes a live API status indicator that polls \texttt{GET /health} every 15 seconds
+(3-second abort timeout), displaying a pulsing green dot when the backend is reachable
+or a red dot when it is offline.
+
+\section{Code Submission Page}
+
+The Submit page (\texttt{Submit.tsx}) provides an editor chrome with line numbers, a
+Copy button that writes the current buffer to the clipboard (showing a checkmark for
+2 seconds), and a submit button labelled \textit{Ctrl+Enter} on desktop. A
+\texttt{useEffect} hook registers a \texttt{keydown} listener for \texttt{Ctrl+Enter}
+that triggers analysis when the editor is active. Batch repository scans navigate to
+the Reviews list on completion. On submission, \texttt{api.ts}'s \texttt{analyzeCode()}
+posts to \texttt{/analyze}, saves the result via \texttt{reviewHistory.ts}, and navigates
+to the Review Detail page.
+
+\section{Analysis History and Sorting}
+
+The \texttt{reviewHistory.ts} service manages past analysis results in
+\texttt{localStorage} under the key \texttt{intellcode\_history}. Each entry includes
+a UUID, timestamp, filename, overall score, status, and the full API response. The
+Reviews page renders this list with a multi-field sort control (Newest First, Lowest
+Score, Most Issues, Highest Severity) and text filtering.
+
+\section{Compare Page}
+
+The Compare page (\texttt{Compare.tsx}) presents two side-by-side code editors, each
+with an independent ``Analyze'' trigger. Selecting ``Run Comparison'' calls both
+\texttt{/analyze} endpoints in parallel, then renders a diff-style metrics table
+highlighting which submission scored better in each dimension. A ``Reset Samples''
+button restores both slots to built-in example snippets.
+
+\section{Dashboard and Analytics}
+
+The Dashboard (\texttt{Dashboard.tsx}) displays summary statistics, a quality trend
+sparkline (Recharts \texttt{AreaChart}), recent reviews, and -- when two or more
+distinct files have been analysed -- a leaderboard showing the five highest-scoring
+files and five lowest-scoring files. The dashboard updates via \texttt{storage}
+events and a 5-second polling interval.
+
+The Analytics page (\texttt{Analytics.tsx}) renders trend charts (score over time,
+status distribution, per-category distributions, score histogram) from localStorage.
+A ``File Quality Progress'' section shows per-file \texttt{LineChart}s for up to five
+files with at least two analyses, colour-coded by improvement or decline.
+
+\section{Admin Page}
+
+The Admin page (\texttt{Admin.tsx}) provides a model status panel (ready / unavailable /
+not loaded for each of the twelve models), four statistics cards (total cached analyses,
+average score, total security findings, models ready) sourced from \texttt{GET /stats},
+and a ``Clear Cache'' button that calls \texttt{POST /cache/clear}.
+
+\section{Settings Page}
+
+The Settings page (\texttt{Settings.tsx}) organises preferences into tabs: Profile,
+Notifications, Appearance, and Integrations. The Notifications tab reads
+\texttt{Notification.permission} on mount, displays the current permission status
+(Enabled / Blocked / Not set), and provides an ``Enable'' button that calls
+\texttt{Notification.requestPermission()} and fires a test notification. The
+Appearance tab displays a keyboard shortcuts reference card (e.g., \textit{Ctrl+Enter}
+to submit, \textit{Ctrl+K} to search).
+
+\section{Rules and Repositories Persistence}
+
+The Rules page allows users to define, enable/disable, and configure custom quality
+rules with an embedded code preview panel. The preview panel re-analyses the typed
+snippet in real time, giving immediate feedback on whether a proposed rule would flag
+the intended pattern. Rules state is persisted in localStorage across sessions. The
+Repositories page persists repository configurations (name, URL, branch, language) and
+initiates batch scans across sixteen recognised programming languages.
 
 \end{document}
