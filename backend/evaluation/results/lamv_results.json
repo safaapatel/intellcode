@@ -1,0 +1,223 @@
+{
+  "method": "LAMV",
+  "description": "Leakage-Aware Model Validation: three automated checks for label leakage in ML-based code analysis pipelines. (1) feature-label correlation, (2) single-feature oracle AUC, (3) train/CV accuracy gap.",
+  "n_records": 8668,
+  "n_features": 31,
+  "positive_rate": 0.3081449007844947,
+  "thresholds": {
+    "r_threshold": 0.7,
+    "oracle_threshold": 0.85,
+    "gap_threshold": 0.2
+  },
+  "check1_correlation": {
+    "all_results": [
+      {
+        "feature": "is_fix",
+        "spearman_r": 1.0,
+        "p_value": 0.0,
+        "suspicious": true,
+        "reason": "|r|=1.000 > threshold 0.7"
+      },
+      {
+        "feature": "sloc",
+        "spearman_r": 0.14212407139459246,
+        "p_value": 2.387244542312436e-40,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_difficulty",
+        "spearman_r": 0.14107004341799065,
+        "p_value": 9.001037825339191e-40,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_effort",
+        "spearman_r": 0.13976484361828176,
+        "p_value": 4.5911591036672084e-39,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "blank_lines",
+        "spearman_r": 0.13944836545848516,
+        "p_value": 6.799636605612635e-39,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_bugs",
+        "spearman_r": 0.13621466569469187,
+        "p_value": 3.568622946090118e-37,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_volume",
+        "spearman_r": 0.1362146656940644,
+        "p_value": 3.5686229487995407e-37,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "lines_added",
+        "spearman_r": 0.13309184540128835,
+        "p_value": 1.4936938680287697e-35,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "n_functions",
+        "spearman_r": 0.12515614833287683,
+        "p_value": 1.3260872130455767e-31,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "n_long_functions",
+        "spearman_r": 0.10936766523985571,
+        "p_value": 1.760599790551414e-24,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "code_churn",
+        "spearman_r": 0.09491207413763203,
+        "p_value": 8.350842983703274e-19,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "lines_touched",
+        "spearman_r": 0.09491207413763203,
+        "p_value": 8.350842983703274e-19,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "cyclomatic_complexity",
+        "spearman_r": 0.09327420956421954,
+        "p_value": 3.268141715622296e-18,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "cognitive_complexity",
+        "spearman_r": 0.09019151787850994,
+        "p_value": 3.997982365483497e-17,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "n_lines_over_80",
+        "spearman_r": -0.0885388226874482,
+        "p_value": 1.4790720623403326e-16,
+        "suspicious": false,
+        "reason": null
+      }
+    ],
+    "flagged": [
+      {
+        "feature": "is_fix",
+        "spearman_r": 1.0,
+        "p_value": 0.0,
+        "suspicious": true,
+        "reason": "|r|=1.000 > threshold 0.7"
+      }
+    ],
+    "n_flagged": 1
+  },
+  "check2_oracle": {
+    "top_results": [
+      {
+        "feature": "is_fix",
+        "single_feature_auc": 1.0,
+        "suspicious": true,
+        "reason": "single-feature AUC=1.000 > 0.85"
+      },
+      {
+        "feature": "n_subsystems",
+        "single_feature_auc": 0.6766281790310659,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "n_files",
+        "single_feature_auc": 0.6475529485529491,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "entropy",
+        "single_feature_auc": 0.5720377332640393,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_volume",
+        "single_feature_auc": 0.5708705290235755,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_bugs",
+        "single_feature_auc": 0.5708705290235755,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "halstead_effort",
+        "single_feature_auc": 0.5692250573430239,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "sloc",
+        "single_feature_auc": 0.5679504993125911,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "n_functions",
+        "single_feature_auc": 0.5615268081208917,
+        "suspicious": false,
+        "reason": null
+      },
+      {
+        "feature": "blank_lines",
+        "single_feature_auc": 0.55971512513635,
+        "suspicious": false,
+        "reason": null
+      }
+    ],
+    "flagged": [
+      {
+        "feature": "is_fix",
+        "single_feature_auc": 1.0,
+        "suspicious": true,
+        "reason": "single-feature AUC=1.000 > 0.85"
+      }
+    ],
+    "n_flagged": 1
+  },
+  "check3_gap": {
+    "train_auc": 1.0,
+    "cv_auc": 1.0,
+    "cv_std": 0.0,
+    "gap": 0.0,
+    "suspicious": false,
+    "reason": null
+  },
+  "summary": {
+    "leakage_detected": true,
+    "suspicious_features": [
+      "is_fix"
+    ],
+    "recommendation": "Remove flagged features before retraining."
+  },
+  "known_leakage_verified": {
+    "is_fix_flagged": true,
+    "note": "is_fix is the Kamei JIT feature equal to 1 when the commit message contains 'fix' or 'bug'. With keyword-based labels, this is identically equal to the label \u2014 a textbook case of circular feature construction. LAMV correctly flags it."
+  }
+}

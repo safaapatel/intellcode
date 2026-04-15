@@ -1,0 +1,173 @@
+{
+  "method": "PIFF",
+  "description": "Project-Invariant Feature Filtering: features with cross-project CV > threshold are dropped before training to improve LOPO generalization.",
+  "n_features_total": 30,
+  "n_features_stable": 15,
+  "stable_feature_names": [
+    "n_directories",
+    "comments",
+    "avg_line_length",
+    "avg_function_complexity",
+    "max_line_length",
+    "max_function_complexity",
+    "author_count",
+    "halstead_difficulty",
+    "cyclomatic_complexity",
+    "n_functions",
+    "n_complex_functions",
+    "cognitive_complexity",
+    "entropy",
+    "halstead_volume",
+    "halstead_bugs"
+  ],
+  "cv_threshold": 1.0,
+  "feature_stability": {
+    "n_directories": 0.0,
+    "comments": 0.022860344494767034,
+    "avg_line_length": 0.057783130279479414,
+    "avg_function_complexity": 0.09296052100648432,
+    "max_line_length": 0.11410896823365084,
+    "max_function_complexity": 0.11640074117016815,
+    "author_count": 0.21274059924043695,
+    "halstead_difficulty": 0.22442046857067804,
+    "cyclomatic_complexity": 0.27416589350110915,
+    "n_functions": 0.30843935693144303,
+    "n_complex_functions": 0.3485470703922552,
+    "cognitive_complexity": 0.3723902847161982,
+    "entropy": 0.37383440975114657,
+    "halstead_volume": 0.3748214603211872,
+    "halstead_bugs": 0.3748214605108847,
+    "n_past_bugs": 0.381066834892436,
+    "sloc": 0.4362362015446694,
+    "blank_lines": 0.46185664379469354,
+    "halstead_effort": 0.5352200775526146,
+    "lines_deleted": 0.6133450751577636,
+    "n_long_functions": 0.6307995124616836,
+    "code_churn": 0.666127182257384,
+    "lines_touched": 0.666127182257384,
+    "lines_added": 0.7046631487958387,
+    "file_age_days": 0.8145904904560145,
+    "n_subsystems": 0.9757006216020584,
+    "n_lines_over_80": 1.007242559531169,
+    "n_files": 1.0440436657981969,
+    "commit_freq": 1.351200985776746,
+    "developer_exp": 1.392517543428592
+  },
+  "full_features": {
+    "mean_auc": 0.5779478252321635,
+    "std_auc": 0.05620270780167302,
+    "mean_ap": 0.28011481534331173,
+    "std_ap": 0.07609916514952786,
+    "per_project": [
+      {
+        "held_out": "django",
+        "auc": 0.5495546371640527,
+        "ap": 0.2000804777328386,
+        "n_train": 7788,
+        "n_test": 880
+      },
+      {
+        "held_out": "flask",
+        "auc": 0.6629263406809403,
+        "ap": 0.22774852120860106,
+        "n_train": 7213,
+        "n_test": 1455
+      },
+      {
+        "held_out": "requests",
+        "auc": 0.5884269721974037,
+        "ap": 0.2950723554108775,
+        "n_train": 8203,
+        "n_test": 465
+      },
+      {
+        "held_out": "sqlalchemy",
+        "auc": 0.510883350886257,
+        "ap": 0.3975579070209298,
+        "n_train": 2800,
+        "n_test": 5868
+      }
+    ]
+  },
+  "piff_features": {
+    "mean_auc": 0.6200331539854216,
+    "std_auc": 0.07323182122308233,
+    "mean_ap": 0.3290368744196292,
+    "std_ap": 0.04926087108341349,
+    "per_project": [
+      {
+        "held_out": "django",
+        "auc": 0.5924780313336927,
+        "ap": 0.2490904360113122,
+        "n_train": 7788,
+        "n_test": 880
+      },
+      {
+        "held_out": "flask",
+        "auc": 0.7097569792223637,
+        "ap": 0.33350438212797895,
+        "n_train": 7213,
+        "n_test": 1455
+      },
+      {
+        "held_out": "requests",
+        "auc": 0.6621248751773795,
+        "ap": 0.35183298756064507,
+        "n_train": 8203,
+        "n_test": 465
+      },
+      {
+        "held_out": "sqlalchemy",
+        "auc": 0.5157727302082505,
+        "ap": 0.3817196919785805,
+        "n_train": 2800,
+        "n_test": 5868
+      }
+    ]
+  },
+  "delta_auc": 0.0420853287532581,
+  "most_stable_features": [
+    [
+      "n_directories",
+      0.0
+    ],
+    [
+      "comments",
+      0.022860344494767034
+    ],
+    [
+      "avg_line_length",
+      0.057783130279479414
+    ],
+    [
+      "avg_function_complexity",
+      0.09296052100648432
+    ],
+    [
+      "max_line_length",
+      0.11410896823365084
+    ]
+  ],
+  "least_stable_features": [
+    [
+      "n_subsystems",
+      0.9757006216020584
+    ],
+    [
+      "n_lines_over_80",
+      1.007242559531169
+    ],
+    [
+      "n_files",
+      1.0440436657981969
+    ],
+    [
+      "commit_freq",
+      1.351200985776746
+    ],
+    [
+      "developer_exp",
+      1.392517543428592
+    ]
+  ]
+}

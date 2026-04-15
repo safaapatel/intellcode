@@ -70,10 +70,7 @@ interface Session {
   time: string;
 }
 
-const INITIAL_SESSIONS: Session[] = [
-  { id: "s1", device: "Chrome on Windows 11", location: "Reno, NV", current: true, time: "Now" },
-  { id: "s2", device: "Safari on iPhone 15", location: "Reno, NV", current: false, time: "2 hours ago" },
-];
+const INITIAL_SESSIONS: Session[] = [];
 
 const Settings = () => {
   const navigate = useNavigate();

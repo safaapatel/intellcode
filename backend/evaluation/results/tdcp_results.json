@@ -1,0 +1,54 @@
+{
+  "method": "TDCP",
+  "description": "Time-Decayed Code Prediction: assigns exponentially decaying sample weights during training so that recent commits are prioritised. Addresses temporal drift observed in forward-looking evaluation.",
+  "test_fraction": 0.2,
+  "lambdas_tested": [
+    0.0,
+    0.5,
+    1.0,
+    2.0
+  ],
+  "results": {
+    "lambda_0.0": {
+      "auc": 0.43027173084738873,
+      "ap": 0.3773556922518747,
+      "n_train": 6934,
+      "n_test": 1734,
+      "test_positive_rate": 0.29873125720876587,
+      "lambda": 0.0,
+      "label": "uniform (baseline)"
+    },
+    "lambda_0.5": {
+      "auc": 0.4362092943507417,
+      "ap": 0.3918784015748154,
+      "n_train": 6934,
+      "n_test": 1734,
+      "test_positive_rate": 0.29873125720876587,
+      "lambda": 0.5,
+      "label": "TDCP lambda=0.5"
+    },
+    "lambda_1.0": {
+      "auc": 0.4359600436903069,
+      "ap": 0.35646293233109483,
+      "n_train": 6934,
+      "n_test": 1734,
+      "test_positive_rate": 0.29873125720876587,
+      "lambda": 1.0,
+      "label": "TDCP lambda=1.0"
+    },
+    "lambda_2.0": {
+      "auc": 0.44012903881324933,
+      "ap": 0.348316995191568,
+      "n_train": 6934,
+      "n_test": 1734,
+      "test_positive_rate": 0.29873125720876587,
+      "lambda": 2.0,
+      "label": "TDCP lambda=2.0"
+    }
+  },
+  "best_lambda": 2.0,
+  "best_temporal_auc": 0.44012903881324933,
+  "baseline_temporal_auc": 0.43027173084738873,
+  "delta_vs_baseline": 0.009857307965860596,
+  "summary": "Best lambda=2.0 improves temporal AUC by +0.0099 (0.4303 -> 0.4401)."
+}

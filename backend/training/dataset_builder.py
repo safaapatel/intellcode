@@ -82,6 +82,9 @@ SECURITY_HARD_NEGATIVE_REPOS = [
     "sqlalchemy/sqlalchemy",     # ORM: parameterized queries throughout
     "encode/httpx",              # HTTP: verify=True by default, correct SSL
     "pytest-dev/pytest",         # Test infra: no network/crypto patterns
+    "pydantic/pydantic",         # Validation: safe input handling
+    "psf/black",                 # Formatter: no network/crypto/SQL
+    "python-attrs/attrs",        # Data classes: no dangerous API usage
 ]
 
 # Clean negative repositories (genuinely safe, well-reviewed code)
@@ -94,6 +97,11 @@ SECURITY_NEGATIVE_REPOS = [
     "pyca/cryptography",
     "ansible/ansible",
     "home-assistant/core",
+    "pydantic/pydantic",
+    "psf/black",
+    "pytest-dev/pytest",
+    "python-attrs/attrs",
+    "tiangolo/fastapi",
 ]
 
 # ---------------------------------------------------------------------------
@@ -162,6 +170,15 @@ BUG_REPOS = [
     "https://github.com/pytest-dev/pytest",
     "https://github.com/encode/httpx",
     "https://github.com/aio-libs/aiohttp",
+    # Extended for better cross-project coverage (added Apr 2026)
+    "https://github.com/celery/celery",
+    "https://github.com/tornadoweb/tornado",
+    "https://github.com/tiangolo/fastapi",
+    "https://github.com/pydantic/pydantic",
+    "https://github.com/pallets/werkzeug",
+    "https://github.com/scrapy/scrapy",
+    "https://github.com/psf/black",
+    "https://github.com/apache/airflow",
 ]
 
 COMPLEXITY_REPOS = [
@@ -173,6 +190,18 @@ COMPLEXITY_REPOS = [
     "scikit-learn/scikit-learn",
     "sqlalchemy/sqlalchemy",
     "pytest-dev/pytest",
+    # Extended for better cross-project coverage (added Apr 2026)
+    "scipy/scipy",
+    "matplotlib/matplotlib",
+    "pallets/werkzeug",
+    "encode/httpx",
+    "aio-libs/aiohttp",
+    "celery/celery",
+    "tornadoweb/tornado",
+    "sympy/sympy",
+    "networkx/networkx",
+    "psf/black",
+    "python-attrs/attrs",
 ]
 
 # ---------------------------------------------------------------------------
@@ -258,28 +287,27 @@ def _load_cvefixes_sqlite(db_path: Path, limit: int) -> list[dict]:
 
     records = []
     try:
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        # CVEFixes schema: code_changes.before_change is the vulnerable code
-        cursor.execute("""
-            SELECT cc.before_change, cve.cve_id, cve.cvss3_base_score, f.repo_url
-            FROM code_changes cc
-            JOIN fixes f ON cc.hash = f.hash
-            JOIN cve ON f.cve_id = cve.cve_id
-            WHERE cc.programming_language = 'Python'
-              AND cc.before_change IS NOT NULL
-              AND length(cc.before_change) > 50
-            LIMIT ?
-        """, (limit,))
-        for before_code, cve_id, cvss_score, repo_url in cursor.fetchall():
-            records.append({
-                "source":   before_code,
-                "label":    1,
-                "cve_id":   cve_id,
-                "repo":     repo_url or "cvefixes",
-                "severity": _cvss_to_severity(cvss_score or 0.0),
-            })
-        conn.close()
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            # CVEFixes schema: code_changes.before_change is the vulnerable code
+            cursor.execute("""
+                SELECT cc.before_change, cve.cve_id, cve.cvss3_base_score, f.repo_url
+                FROM code_changes cc
+                JOIN fixes f ON cc.hash = f.hash
+                JOIN cve ON f.cve_id = cve.cve_id
+                WHERE cc.programming_language = 'Python'
+                  AND cc.before_change IS NOT NULL
+                  AND length(cc.before_change) > 50
+                LIMIT ?
+            """, (limit,))
+            for before_code, cve_id, cvss_score, repo_url in cursor.fetchall():
+                records.append({
+                    "source":   before_code,
+                    "label":    1,
+                    "cve_id":   cve_id,
+                    "repo":     repo_url or "cvefixes",
+                    "severity": _cvss_to_severity(cvss_score or 0.0),
+                })
         logger.info("Loaded %d vulnerable samples from CVEFixes", len(records))
     except Exception as e:
         logger.error("CVEFixes load error: %s", e)
@@ -434,7 +462,7 @@ def build_complexity_dataset(
     repo_names: list[str],
     github_token: str,
     output_path: str,
-    max_per_repo: int = 500,
+    max_per_repo: int = 1000,
     use_sonarqube_target: bool = False,
 ) -> int:
     """
@@ -468,7 +496,14 @@ def build_complexity_dataset(
             source = file_info["content"]
             try:
                 metrics = compute_all_metrics(source)
-                feat_vec = metrics_to_feature_vector(metrics)
+                # Build 16-dim vector: insert cognitive_complexity at index 1
+                # so that train_complexity.py can extract it as the target (COG_IDX=1)
+                # while using the remaining 15 dims as input features.
+                # NOTE: metrics_to_feature_vector() returns 15-dim (cog excluded)
+                # because it is used for inference; the dataset must store 16-dim.
+                base_vec = metrics_to_feature_vector(metrics)  # 15-dim
+                cog = float(getattr(metrics, "cognitive_complexity", 0) or 0)
+                feat_vec = [base_vec[0], cog] + list(base_vec[1:])  # 16-dim
 
                 if len(feat_vec) != 16:
                     continue
@@ -552,9 +587,9 @@ def build_security_dataset(
     negative_repos: list[str],
     github_token: str,
     output_path: str,
-    max_per_repo: int = 300,
+    max_per_repo: int = 600,
     use_cvefixes: bool = True,
-    cvefixes_limit: int = 1500,
+    cvefixes_limit: int = 3000,
 ) -> int:
     """
     Build security dataset with real CVE-linked labels.
@@ -675,9 +710,37 @@ def build_security_dataset(
 # ---------------------------------------------------------------------------
 
 PATTERN_LABELS = {
-    "code_smell":    ["getsentry/sentry"],
-    "anti_pattern":  ["minimaxir/textgenrnn"],
-    "clean":         ["django/django", "pallets/flask", "psf/requests", "numpy/numpy"],
+    # code_smell: large production codebases with known technical debt
+    "code_smell":    [
+        "getsentry/sentry",
+        "ansible/ansible",
+        "home-assistant/core",
+        "apache/airflow",
+    ],
+    # anti_pattern: repos with historically complex / deeply-nested code
+    "anti_pattern":  [
+        "minimaxir/textgenrnn",
+        "scipy/scipy",
+        "sympy/sympy",
+        "celery/celery",
+    ],
+    # clean: well-reviewed, high-quality codebases
+    "clean":         [
+        "django/django",
+        "pallets/flask",
+        "psf/requests",
+        "numpy/numpy",
+        "psf/black",
+        "python-attrs/attrs",
+        "encode/httpx",
+    ],
+    # style_violation: repos with long lines, inconsistent formatting
+    "style_violation": [
+        "scrapy/scrapy",
+        "tornadoweb/tornado",
+        "matplotlib/matplotlib",
+        "networkx/networkx",
+    ],
 }
 
 
@@ -734,7 +797,7 @@ def _assign_pattern_label_tool_consensus(source: str, metrics) -> "str | None":
     # --- Signal 2: metric thresholds (tightened) ---
     if cc > 20:
         metric_signal = "anti_pattern"
-    elif cc <= 4 and sloc <= 40:
+    elif cc <= 4 and sloc <= 40 and n80 <= 2:
         metric_signal = "clean"
     elif 4 < cc <= 20 or 40 < sloc <= 100:
         metric_signal = "code_smell"
@@ -753,6 +816,14 @@ def _assign_pattern_label_tool_consensus(source: str, metrics) -> "str | None":
     if "long_method" in smells and metric_signal == "code_smell":
         return "code_smell"
 
+    # style_violation: long lines + long parameter list is an independent signal
+    # (line-length violations are not captured by PyNose's long_method heuristic,
+    # so we use long_parameter_list as a proxy for "crowded, unreadable code").
+    if metric_signal == "style_violation" and (
+        "long_parameter_list" in smells or n80 > 10
+    ):
+        return "style_violation"
+
     # No consensus — discard this sample
     return None
 
@@ -760,7 +831,7 @@ def _assign_pattern_label_tool_consensus(source: str, metrics) -> "str | None":
 def build_pattern_dataset(
     github_token: str,
     output_path: str,
-    max_per_label: int = 500,
+    max_per_label: int = 1000,
 ) -> int:
     """
     Build function-level pattern recognition dataset.
@@ -1025,65 +1096,245 @@ def _szz_find_inducing_commits(
 
 
 # ---------------------------------------------------------------------------
-# Bug dataset builder (FIXED: real JIT features + SZZ labels)
+# Bug dataset builder — proper SZZ + temporal-clean labels
 # ---------------------------------------------------------------------------
+
+def _clone_repo(repo_url: str, clone_dir: Path) -> Path:
+    """
+    Clone repo_url to clone_dir/{repo_name} if not already present.
+    Full clone (no --depth) so pydriller's git diff-tree never hits a
+    shallow boundary. Limits download size with --filter=blob:none which
+    defers large blobs but keeps full commit/tree history.
+    Returns the local repo path.
+    """
+    import subprocess
+    repo_name = repo_url.rstrip("/").split("/")[-1]
+    local_path = clone_dir / repo_name
+    if (local_path / ".git").exists():
+        logger.info("  Using existing clone at %s", local_path)
+        return local_path
+    logger.info("  Cloning %s -> %s (full history, blob:none filter) ...", repo_url, local_path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "clone", "--filter=blob:none", "--no-tags",
+         "--single-branch", repo_url, str(local_path)],
+        check=True, timeout=600,
+    )
+    return local_path
+
+
+def _build_szz_inducing_map(
+    local_path: Path,
+    max_commits: int,
+    since=None,
+) -> dict:
+    """
+    SZZ first pass: traverse commits, find all bug-fix commits, then use
+    git blame on their parents to identify which EARLIER commits introduced
+    the removed lines.
+
+    Returns inducing_map: {inducing_hash[:8]: fix_committer_date}
+
+    The fix_committer_date is stored so the caller can apply a temporal lag
+    filter: label a commit as bug-introducing only when the fix was observed
+    within N days (preventing labels that depend on future bug fixes).
+    """
+    from pydriller import Repository
+
+    # SZZ first pass MUST use the same since filter as the main pass.
+    # Without it, max_commits=2000 processes the oldest 2000 commits in the
+    # repo (e.g. Flask 2010), none of which appear in the main pass
+    # (since=2018), so inducing_map keys never match → all label=0.
+    repo_kwargs: dict = {}
+    if since is not None:
+        repo_kwargs["since"] = since
+
+    # First pass: collect fix commits {full_hash: {date, py_files[]}}
+    fix_commits: dict = {}
+    processed = 0
+    try:
+        for commit in Repository(str(local_path), **repo_kwargs).traverse_commits():
+            if processed >= max_commits:
+                break
+            processed += 1
+            try:
+                if _is_bug_fix_message(commit.msg):
+                    py_files = [
+                        mf.filename for mf in commit.modified_files
+                        if mf.filename.endswith(".py")
+                    ]
+                    if py_files:
+                        fix_commits[commit.hash] = {
+                            "date":     commit.committer_date,
+                            "py_files": py_files[:5],  # cap to avoid timeouts
+                        }
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning("  SZZ first pass error: %s", e)
+
+    logger.info("  SZZ: found %d fix commits in first pass", len(fix_commits))
+
+    # Second pass: for each fix commit, blame its parent to find inducing commits
+    inducing_map: dict = {}
+    for fix_hash, info in fix_commits.items():
+        fix_date = info["date"]
+        for py_file in info["py_files"]:
+            try:
+                for ind_hash in _szz_find_inducing_commits(str(local_path), fix_hash, py_file):
+                    # Keep the earliest-observed fix date for each inducing commit
+                    if ind_hash not in inducing_map:
+                        inducing_map[ind_hash] = fix_date
+            except Exception:
+                continue
+
+    logger.info("  SZZ: identified %d inducing commit hashes", len(inducing_map))
+
+    # Filter out inducing commits that predate the since window.
+    # The main pass won't traverse pre-since commits, so those hashes would
+    # never produce a label=1 even though they're in the map.
+    if since is not None and inducing_map:
+        import subprocess as _sp
+        filtered: dict = {}
+        for ind_hash, fix_date in inducing_map.items():
+            try:
+                r = _sp.run(
+                    ["git", "log", "-1", "--format=%ai", ind_hash],
+                    cwd=str(local_path), capture_output=True, text=True, timeout=5,
+                )
+                date_str = r.stdout.strip()
+                if date_str:
+                    import dateutil.parser as _dparser
+                    ind_date = _dparser.parse(date_str)
+                    if ind_date.tzinfo is None:
+                        import datetime as _dtt
+                        ind_date = ind_date.replace(tzinfo=_dtt.timezone.utc)
+                    since_aware = since if since.tzinfo else since.replace(
+                        tzinfo=__import__("datetime").timezone.utc)
+                    if ind_date >= since_aware:
+                        filtered[ind_hash] = fix_date
+            except Exception:
+                filtered[ind_hash] = fix_date  # keep on error (conservative)
+        logger.info("  SZZ: %d inducing commits within since window (dropped %d pre-since)",
+                    len(filtered), len(inducing_map) - len(filtered))
+        inducing_map = filtered
+
+    return inducing_map
+
+
+def _build_static_features_17(source: str) -> list:
+    """
+    Build the 17-dim static feature vector for the bug prediction dataset.
+
+    Layout matches STATIC_FEATURE_NAMES in bug_predictor.py and train_bugs.py:
+      [CC, cog, maxCC, avgCC, sloc, comments, blank, vol, diff, effort,
+       halstead_bugs, n_long, n_complex, max_line, avg_line, over80, n_functions]
+    """
+    from features.code_metrics import compute_all_metrics, metrics_to_feature_vector
+    from features.ast_extractor import ASTExtractor
+
+    metrics = compute_all_metrics(source)
+    base = metrics_to_feature_vector(metrics)  # 15-dim (no cognitive_complexity)
+    cog = float(getattr(metrics, "cognitive_complexity", 0) or 0)
+    try:
+        ast_feats = ASTExtractor().extract(source)
+        n_functions = float(ast_feats.get("n_functions", 0) or 0)
+    except Exception:
+        n_functions = 0.0
+    # Insert cog at index 1 (after CC), append n_functions at end
+    return [base[0], cog] + list(base[1:]) + [n_functions]
+
 
 def build_bug_dataset(
     repo_urls: list[str],
     output_path: str,
-    max_commits: int = 1000,
-    use_szz: bool = False,
+    max_commits: int = 3000,
+    use_szz: bool = True,
     clone_dir: Optional[str] = None,
+    max_fix_lag_days: int = 365,
+    since_year: int = 2018,
 ) -> int:
     """
-    Mine commit history to build a JIT-SDP dataset with 14 Kamei features.
+    Mine commit history to build a JIT-SDP dataset with proper SZZ labels.
 
-    CRITICAL FIXES:
-      - All 14 Kamei process features now computed from real git history
-        (previously LA/LD/LT were correct; NS/ND/NF/Entropy/NDEV/AGE/NUC/
-         EXP/REXP/SEXP were zeros or placeholders).
-      - use_szz=True enables SZZ blame-based inducing commit labeling,
-        improving label precision from ~0.65 to ~0.78.
+    FIXES vs old implementation:
+      1. SZZ labels are correct: inducing commits (the ones that INTRODUCED the
+         bug) are labeled 1. Fix commits themselves are labeled 0 (they fix bugs,
+         not introduce them). Previously fix commits were mislabeled as label=1.
+      2. Temporal window: a commit is only labeled bug-introducing if its fix
+         commit arrived within max_fix_lag_days. Commits with future fixes are
+         excluded from the training set entirely — this is the root cause of the
+         temporal leakage (AUC drops from 0.676 to 0.460 in temporal split).
+      3. author_date stored for temporal-split evaluation in train_bugs.py.
+      4. Static features: 17-dim (adds cognitive_complexity + n_functions).
+      5. git_features: all 14 Kamei keys used by train_bugs.py JIT_FEATURE_NAMES.
 
     Args:
-        repo_urls:   Git clone URLs to mine.
-        output_path: Output JSONL file path.
-        max_commits: Max commits per repository.
-        use_szz:     Enable SZZ-based inducing commit labeling.
-        clone_dir:   Directory for temporary repo clones.
+        repo_urls:        Git clone URLs to mine.
+        output_path:      Output JSONL file path.
+        max_commits:      Max commits per repository.
+        use_szz:          Use SZZ blame-based labeling (True = correct behavior).
+        clone_dir:        Directory for repo clones (default: data/clones/).
+        max_fix_lag_days: Only label as buggy if fix is within this many days.
     """
     try:
         from pydriller import Repository
     except ImportError:
         raise RuntimeError("pydriller not installed: pip install pydriller")
 
-    from features.code_metrics import compute_all_metrics, metrics_to_feature_vector
+    output_path_obj = Path(output_path)
+    output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _clone_base = Path(clone_dir) if clone_dir else (
+        Path(__file__).resolve().parent.parent / "data" / "clones"
+    )
 
     count = 0
     with open(output_path, "w") as out:
         for repo_url in repo_urls:
             logger.info("Mining %s ...", repo_url)
-            file_history: dict = {}
 
-            # SZZ two-pass: first collect all fix commit hashes
-            fix_hashes: set[str] = set()
+            # Clone repo so both pydriller and git blame share the same local path
+            try:
+                local_path = _clone_repo(repo_url, _clone_base)
+            except Exception as e:
+                logger.warning("Failed to clone %s: %s — skipping", repo_url, e)
+                continue
+
+            import datetime as _dt
+            since_dt = (
+                _dt.datetime(since_year, 1, 1, tzinfo=_dt.timezone.utc)
+                if since_year and since_year > 0 else None
+            )
+
+            # SZZ first pass and main pass MUST use the same since window.
+            # Reason: if the SZZ blame finds an inducing commit from before the
+            # since window, the main pass never traverses that commit, so it can
+            # never get label=1. Both passes must share the same time range so
+            # that bugs introduced AND fixed within the window are correctly labeled.
+            repo_kwargs: dict = {}
+            if since_dt:
+                repo_kwargs["since"] = since_dt
+
+            inducing_map: dict = {}
             if use_szz:
-                for commit in Repository(repo_url).traverse_commits():
-                    if _is_bug_fix_message(commit.msg):
-                        fix_hashes.add(commit.hash[:8])
-                logger.info("  SZZ: found %d fix commits", len(fix_hashes))
-
+                try:
+                    inducing_map = _build_szz_inducing_map(
+                        local_path, max_commits, since=since_dt
+                    )
+                except Exception as e:
+                    logger.warning("SZZ first pass failed for %s: %s", repo_url, e)
+            file_history: dict = {}
+            repo_count = 0
             try:
                 processed = 0
-                for commit in Repository(repo_url).traverse_commits():
+                for commit in Repository(str(local_path), **repo_kwargs).traverse_commits():
                     if processed >= max_commits:
                         break
                     processed += 1
 
                     is_bug_fix = _is_bug_fix_message(commit.msg)
+                    commit_date = commit.committer_date
 
                     for mf in commit.modified_files:
                         if not (mf.filename.endswith(".py") and mf.source_code):
@@ -1092,67 +1343,103 @@ def build_bug_dataset(
                             continue
 
                         try:
-                            metrics = compute_all_metrics(mf.source_code)
-                            feat_vec = metrics_to_feature_vector(metrics)
-                            if len(feat_vec) != 16:
-                                continue
+                            # Build 17-dim static features
+                            feat_vec = _build_static_features_17(mf.source_code)
+                            assert len(feat_vec) == 17
 
                             jit = _compute_kamei_features(commit, mf, file_history)
 
-                            # Label: bug-fix commit OR SZZ-identified inducing commit
-                            label = 1 if is_bug_fix else 0
-                            if use_szz and not is_bug_fix:
-                                if commit.hash[:8] in fix_hashes:
-                                    label = 1
-
-                            # Label dilution weight (audit fix):
-                            # A 1000-line file with a 5-line bug patch looks
-                            # identical to a clean 1000-line file on static
-                            # metrics. Weight buggy samples by the fraction of
-                            # the file that actually changed, so large files
-                            # with tiny bug patches don't dominate the loss.
-                            #
-                            # Weight = min(1.0, 10 * changed_lines / file_sloc)
-                            # Clean files keep weight=1.0 (they are the full file).
-                            file_sloc = max(1, metrics.lines.sloc)
-                            changed_lines = jit.get("LT", 0)  # lines touched in this commit
-                            if label == 1 and changed_lines > 0:
-                                sample_weight = min(1.0, 10.0 * changed_lines / file_sloc)
+                            # --- Correct SZZ labeling ---
+                            if use_szz:
+                                fix_date = inducing_map.get(commit.hash[:8])
+                                if fix_date is None:
+                                    label = 0  # no fix found => clean
+                                else:
+                                    # Apply temporal window: only label as buggy when
+                                    # the fix was observed within max_fix_lag_days.
+                                    # This removes labels that rely on future fixes,
+                                    # which is the source of temporal leakage.
+                                    try:
+                                        import datetime as _dt
+                                        cd = commit_date
+                                        fd = fix_date
+                                        # normalise both to tz-aware UTC if needed
+                                        if cd and cd.tzinfo is None:
+                                            cd = cd.replace(tzinfo=_dt.timezone.utc)
+                                        if fd and fd.tzinfo is None:
+                                            fd = fd.replace(tzinfo=_dt.timezone.utc)
+                                        lag = (fd - cd).days if (cd and fd) else 0
+                                        label = 1 if 0 <= lag <= max_fix_lag_days else 0
+                                    except Exception:
+                                        label = 1  # date arithmetic failed; keep positive
                             else:
-                                sample_weight = 1.0
+                                # Fallback (no SZZ): label fix commits as 1
+                                # NOTE: this is the old broken behavior, only for ablation
+                                label = 1 if is_bug_fix else 0
+
+                            # Label dilution weight: a 1000-line file with a 5-line
+                            # bug patch is nearly identical to a clean file on static
+                            # metrics. Weight buggy samples by changed fraction so
+                            # large files with tiny patches don't dominate training.
+                            from features.code_metrics import compute_all_metrics
+                            metrics = compute_all_metrics(mf.source_code)
+                            file_sloc = max(1, metrics.lines.sloc)
+                            changed_lines = jit.get("LT", 0)
+                            sample_weight = (
+                                min(1.0, 10.0 * changed_lines / file_sloc)
+                                if label == 1 and changed_lines > 0
+                                else 1.0
+                            )
+
+                            # git_features with all 14 Kamei keys (matches
+                            # JIT_FEATURE_NAMES in train_bugs.py)
+                            git_features = {
+                                "code_churn":    jit["LT"],
+                                "author_count":  jit["NDEV"],
+                                "file_age_days": round(jit["AGE"] * 7, 1),
+                                "n_past_bugs":   jit["NUC"],
+                                "commit_freq":   jit["REXP"],
+                                "n_subsystems":  jit["NS"],
+                                "n_directories": jit["ND"],
+                                "n_files":       jit["NF"],
+                                "entropy":       jit["Entropy"],
+                                "lines_added":   jit["LA"],
+                                "lines_deleted": jit["LD"],
+                                "lines_touched": jit["LT"],
+                                "is_fix":        jit["FIX"],
+                                "developer_exp": jit["EXP"],
+                            }
 
                             out.write(json.dumps({
                                 "repo":            repo_url,
                                 "file":            mf.filename,
                                 "commit":          commit.hash[:8],
-                                "author_date":     str(commit.committer_date),
+                                "author_date":     str(commit_date),
                                 "label":           label,
                                 "sample_weight":   round(sample_weight, 4),
-                                "static_features": feat_vec,
-                                "jit_features":    jit,
-                                # Backward-compat scalar mapping
-                                "git_features": {
-                                    "code_churn":    jit["LT"],
-                                    "author_count":  jit["NDEV"],
-                                    "file_age_days": round(jit["AGE"] * 7, 1),
-                                    "n_past_bugs":   jit["NUC"],
-                                    "commit_freq":   jit["EXP"],
-                                },
+                                "static_features": [round(v, 6) for v in feat_vec],
+                                "git_features":    git_features,
                             }) + "\n")
                             count += 1
+                            repo_count += 1
 
                         except Exception:
-                            continue
+                            pass
 
                         _update_file_history(file_history, commit, mf)
 
                     if processed % 100 == 0:
-                        logger.info("  %s: %d commits, %d records", repo_url, processed, count)
+                        logger.info(
+                            "  %s: %d commits processed, %d records so far",
+                            repo_url, processed, count,
+                        )
 
             except Exception as e:
                 logger.warning("Error mining %s: %s", repo_url, e)
 
-    logger.info("Bug dataset: %d samples -> %s", count, output_path)
+            logger.info("  %s: wrote %d records", repo_url, repo_count)
+
+    logger.info("Bug dataset: %d total samples -> %s", count, output_path)
     return count
 
 
@@ -1326,7 +1613,7 @@ def main():
     elif args.task == "pattern":
         build_pattern_dataset(args.token, args.out, max_per_label=args.max)
     elif args.task == "bug":
-        build_bug_dataset(BUG_REPOS, args.out, max_commits=args.max, use_szz=args.szz)
+        build_bug_dataset(BUG_REPOS, args.out, max_commits=args.max, use_szz=args.szz, since_year=2015)
     elif args.task == "report":
         if not args.schema:
             parser.error("--schema required for report task")

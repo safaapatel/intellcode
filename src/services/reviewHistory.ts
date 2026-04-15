@@ -127,6 +127,37 @@ export function getEntries(): HistoryEntry[] {
   return load();
 }
 
+/**
+ * Returns the 15-dim static feature vector from the most recent previous
+ * analysis of the same filename, or null if none exists.
+ * Used by DRE to compute delta features between consecutive submissions.
+ */
+export function getPrevFeatures(filename: string): number[] | null {
+  const entries = load();
+  const prev = entries.find((e) => e.filename === filename && e.result?.complexity);
+  if (!prev) return null;
+  const c = prev.result.complexity;
+  const bd = c.breakdown ?? {};
+  // 15-dim — matches STATIC_FEAT_KEYS order in DRE training
+  return [
+    c.cyclomatic          ?? 0,
+    c.cognitive           ?? 0,
+    bd.max_function_cc    ?? 0,
+    bd.avg_function_cc    ?? 0,
+    c.sloc                ?? 0,
+    bd.comments           ?? 0,
+    bd.blank_lines        ?? 0,
+    bd.halstead_volume    ?? 0,
+    bd.halstead_difficulty ?? 0,
+    bd.halstead_effort    ?? 0,
+    c.halstead_bugs       ?? 0,
+    c.n_long_functions    ?? 0,
+    c.n_complex_functions ?? 0,
+    bd.max_line_length    ?? 0,
+    c.n_lines_over_80     ?? 0,
+  ];
+}
+
 export function getEntry(id: string): HistoryEntry | undefined {
   return load().find((e) => e.id === id);
 }

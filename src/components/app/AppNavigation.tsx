@@ -44,6 +44,7 @@ const baseNavLinks = [
   { name: "Submit",        path: "/submit" },
   { name: "Batch",         path: "/batch" },
   { name: "Repositories",  path: "/repositories" },
+  { name: "PR Review",     path: "/pr-review" },
   { name: "Reviews",       path: "/reviews" },
   { name: "Compare",       path: "/compare" },
   { name: "Analytics",     path: "/analytics" },
@@ -212,9 +213,9 @@ export const AppNavigation = () => {
                     </button>
                   </div>
                   {(() => {
-                    const recent = getEntries()
-                      .filter((e) => e.severity === "critical" || e.severity === "high")
-                      .slice(0, 8);
+                    const all = getEntries().filter((e) => e.severity === "critical" || e.severity === "high");
+                    const recent = all.slice(0, 8);
+                    const hiddenCount = all.length - recent.length;
                     return recent.length === 0 ? (
                       <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                         No critical or high-severity findings
@@ -236,6 +237,11 @@ export const AppNavigation = () => {
                             </div>
                           </button>
                         ))}
+                        {hiddenCount > 0 && (
+                          <div className="px-4 py-2 text-center text-xs text-muted-foreground">
+                            +{hiddenCount} more — <button className="text-primary hover:underline" onClick={() => { navigate("/reviews"); setNotifOpen(false); }}>view all</button>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}

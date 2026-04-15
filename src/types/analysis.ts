@@ -67,16 +67,25 @@ export interface ComplexityResult {
 
 export interface BugPredictionResult {
   bug_probability: number;
-  risk_level: "low" | "medium" | "high" | "critical";
+  risk_level: "low" | "medium" | "high" | "critical" | "uncertain";
   risk_factors: string[];
   confidence: number;
   static_score: number;
   git_score: number | null;
+  abstained?: boolean;
   ood?: OODInfo;
   low_confidence?: boolean;
   low_confidence_reason?: string;
   probability_adjusted?: number;
   conformal_interval?: ConformalInterval;
+  top_feature_importances?: { feature: string; importance: number }[];
+  reliability_context?: {
+    temporal_auc: number;
+    in_dist_auc: number;
+    lopo_auc: number;
+    temporal_cv_auc: number;
+    recommended_use: string;
+  };
 }
 
 // ─── Pattern Recognition ──────────────────────────────────────────────────────
@@ -328,4 +337,52 @@ export interface FullAnalysisResult {
   performance?: PerformanceResult;
   dependencies?: DependencyResult;
   readability?: ReadabilityResult;
+  // Novel model results
+  function_risk?: FunctionRiskResult;
+  grammar_anomaly?: GrammarAnomalyResult;
+  dre?: DREResult;
+  // Attached client-side before storing — not from backend
+  code?: string;
+}
+
+export interface DREResult {
+  risk_score: number;
+  delta_contribution: number;
+  top_delta_features: { feature: string; delta: number; current: number }[];
+  confidence: number;
+  static_score: number;
+  model_type: string;
+}
+
+export interface FunctionRisk {
+  name: string;
+  lineno: number;
+  end_lineno: number;
+  raw_score: number;
+  complexity_weight: number;
+  attributed_score: number;
+  cognitive_complexity: number;
+  cyclomatic_complexity: number;
+  sloc: number;
+  rank: number;
+  risk_level: "low" | "medium" | "high" | "critical";
+  reason: string;
+}
+
+export interface FunctionRiskResult {
+  functions: FunctionRisk[];
+  top_k: FunctionRisk[];
+  file_risk_score: number;
+  total_functions: number;
+  n_high_risk: number;
+  localization_available: boolean;
+}
+
+export interface GrammarAnomalyResult {
+  perplexity: number;
+  anomaly_score: number;
+  is_anomalous: boolean;
+  top_anomalous_ngrams: { ngram: string; log_prob: number }[];
+  n_tokens: number;
+  grammar_coverage: number;
 }

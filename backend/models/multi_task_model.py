@@ -643,7 +643,7 @@ class MultiTaskCodeModel:
         }
         with open(self._checkpoint_dir / "config.json", "w") as f:
             json.dump(config, f, indent=2)
-        logger.info("MTL checkpoint saved → %s", self._checkpoint_dir)
+        logger.info("MTL checkpoint saved -> %s", self._checkpoint_dir)
 
     def save_shallow_checkpoint(self, heads: dict) -> None:
         """Persist scikit-learn shallow heads to checkpoint directory."""

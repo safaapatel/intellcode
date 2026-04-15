@@ -12,8 +12,8 @@
   "std_rmse": null,
   "mean_spearman": null,
   "std_spearman": null,
-  "random_split_auc": null,
-  "degradation_auc": null,
+  "random_split_auc": 0.9339,
+  "degradation_auc": -0.3652,
   "project_results": [
     {
       "held_out_repo": "django",
@@ -48,5 +48,54 @@
       "rmse": null,
       "spearman": null
     }
-  ]
+  ],
+  "temporal_auc": 0.5687,
+  "temporal_ap": 0.385,
+  "temporal_protocol": "age_sorted_70_30",
+  "temporal_walk_forward_cv": {
+    "protocol": "walk_forward_5_fold",
+    "n_folds_evaluated": 4,
+    "fold_details": [
+      {
+        "fold": 1,
+        "n_train": 1733,
+        "n_test": 1733,
+        "pos_rate_train": 0.2666,
+        "pos_rate_test": 0.3941,
+        "auc": 0.4656,
+        "ap": 0.4274
+      },
+      {
+        "fold": 2,
+        "n_train": 3466,
+        "n_test": 1733,
+        "pos_rate_train": 0.3304,
+        "pos_rate_test": 0.322,
+        "auc": 0.6548,
+        "ap": 0.4133
+      },
+      {
+        "fold": 3,
+        "n_train": 5199,
+        "n_test": 1733,
+        "pos_rate_train": 0.3276,
+        "pos_rate_test": 0.2597,
+        "auc": 0.6383,
+        "ap": 0.4239
+      },
+      {
+        "fold": 4,
+        "n_train": 6932,
+        "n_test": 1736,
+        "pos_rate_train": 0.3106,
+        "pos_rate_test": 0.2984,
+        "auc": 0.4156,
+        "ap": 0.3524
+      }
+    ],
+    "mean_auc": 0.5436,
+    "std_auc": 0.1046,
+    "mean_ap": 0.4043,
+    "std_ap": 0.0304
+  }
 }

@@ -156,10 +156,9 @@ function buildAnalytics(range: number, repoFilter = "") {
       date: new Date(e.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     });
   });
-  const fileTimelines = Object.entries(byFile)
+  const allFileTimelines = Object.entries(byFile)
     .filter(([, runs]) => runs.length >= 2)
     .sort((a, b) => b[1].length - a[1].length)
-    .slice(0, 5)
     .map(([filename, runs]) => {
       const scores = runs.map((r) => r.score);
       const { slope, commitsToThreshold } = linearForecast(scores);
@@ -172,9 +171,11 @@ function buildAnalytics(range: number, repoFilter = "") {
         commitsToThreshold,
       };
     });
+  const fileTimelines = allFileTimelines.slice(0, 5);
+  const fileTimelinesTotal = allFileTimelines.length;
 
   // Regression alerts: files whose latest score is at least 10 pts below their best
-  const regressions = Object.entries(byFile)
+  const allRegressions = Object.entries(byFile)
     .filter(([, runs]) => runs.length >= 2)
     .map(([filename, runs]) => {
       const best = Math.max(...runs.map((r) => r.score));
@@ -183,11 +184,12 @@ function buildAnalytics(range: number, repoFilter = "") {
       return { filename, best, latest, prev, drop: best - latest, stepDrop: prev - latest };
     })
     .filter((r) => r.drop >= 10)
-    .sort((a, b) => b.drop - a.drop)
-    .slice(0, 5);
+    .sort((a, b) => b.drop - a.drop);
+  const regressions = allRegressions.slice(0, 5);
+  const regressionsTotal = allRegressions.length;
 
   // Most improved
-  const improved = Object.entries(byFile)
+  const allImproved = Object.entries(byFile)
     .filter(([, runs]) => runs.length >= 2)
     .map(([filename, runs]) => ({
       filename,
@@ -195,8 +197,9 @@ function buildAnalytics(range: number, repoFilter = "") {
       latest: runs[runs.length - 1].score,
     }))
     .filter((r) => r.delta >= 5)
-    .sort((a, b) => b.delta - a.delta)
-    .slice(0, 5);
+    .sort((a, b) => b.delta - a.delta);
+  const improved = allImproved.slice(0, 5);
+  const improvedTotal = allImproved.length;
 
   // Language breakdown
   const langCounts: Record<string, number> = {};
@@ -213,7 +216,7 @@ function buildAnalytics(range: number, repoFilter = "") {
     .map(([lang, count]) => ({ lang, count, color: LANG_COLORS[lang] ?? "hsl(220, 20%, 50%)" }));
   const langTotal = langBreakdown.reduce((s, l) => s + l.count, 0);
 
-  return { qualityTrend, issueDistribution, commonIssues, scoreBuckets, avgScore, totalIssues, insights, fileTimelines, regressions, improved, langBreakdown, langTotal, count: use.length, usedFallback };
+  return { qualityTrend, issueDistribution, commonIssues, scoreBuckets, avgScore, totalIssues, insights, fileTimelines, fileTimelinesTotal, regressions, regressionsTotal, improved, improvedTotal, langBreakdown, langTotal, count: use.length, usedFallback };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -255,9 +258,12 @@ const Analytics = () => {
   const issueDist      = real ? real.issueDistribution : mockIssueDistribution;
   const commonIssues   = real?.commonIssues.length ? real.commonIssues : mockCommonIssues;
   const scoreBuckets   = real?.scoreBuckets ?? null;
-  const fileTimelines  = real?.fileTimelines ?? [];
-  const regressions    = real?.regressions   ?? [];
-  const improved       = real?.improved       ?? [];
+  const fileTimelines      = real?.fileTimelines      ?? [];
+  const fileTimelinesTotal = real?.fileTimelinesTotal ?? 0;
+  const regressions        = real?.regressions        ?? [];
+  const regressionsTotal   = real?.regressionsTotal   ?? 0;
+  const improved           = real?.improved           ?? [];
+  const improvedTotal      = real?.improvedTotal      ?? 0;
   const insights       = real?.insights       ?? mockKeyInsights;
   const langBreakdown  = real?.langBreakdown  ?? [];
   const langTotal      = real?.langTotal      ?? 1;
@@ -453,7 +459,9 @@ const Analytics = () => {
             <div className="flex items-center gap-2 mb-5">
               <TrendingUp className="w-4 h-4 text-primary" />
               <h2 className="text-lg font-semibold text-foreground">File Quality Progress</h2>
-              <span className="text-xs text-muted-foreground ml-1">files analyzed 2+ times</span>
+              <span className="text-xs text-muted-foreground ml-1">
+                {fileTimelinesTotal > 5 ? `showing 5 of ${fileTimelinesTotal} files` : "files analyzed 2+ times"}
+              </span>
             </div>
             <div className="space-y-5">
               {fileTimelines.map(({ filename, runs, delta, latest, commitsToThreshold }) => {
@@ -511,7 +519,9 @@ const Analytics = () => {
                 <div className="flex items-center gap-2 mb-4">
                   <AlertTriangle className="w-4 h-4 text-red-400" />
                   <h2 className="text-lg font-semibold text-foreground">Regression Alerts</h2>
-                  <span className="text-xs text-muted-foreground ml-1">files that degraded since best score</span>
+                  <span className="text-xs text-muted-foreground ml-1">
+                    {regressionsTotal > 5 ? `showing 5 of ${regressionsTotal}` : "files that degraded since best score"}
+                  </span>
                 </div>
                 <div className="space-y-3">
                   {regressions.map(({ filename, best, latest, drop, stepDrop }) => (
@@ -540,7 +550,9 @@ const Analytics = () => {
                 <div className="flex items-center gap-2 mb-4">
                   <ArrowUpRight className="w-4 h-4 text-emerald-400" />
                   <h2 className="text-lg font-semibold text-foreground">Most Improved</h2>
-                  <span className="text-xs text-muted-foreground ml-1">largest score gains</span>
+                  <span className="text-xs text-muted-foreground ml-1">
+                    {improvedTotal > 5 ? `showing 5 of ${improvedTotal}` : "largest score gains"}
+                  </span>
                 </div>
                 <div className="space-y-3">
                   {improved.map(({ filename, delta, latest }) => (

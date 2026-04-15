@@ -260,7 +260,7 @@ const Dashboard = () => {
       else if (e.severity === "high" && e.overallScore < 60)
         items.push({ label: e.filename, entryId: e.id, detail: `High severity · score ${e.overallScore}` });
     });
-    return items.slice(0, 5);
+    return items;
   }, [allEntries]);
 
   const reviewerFbKeys = useMemo(
@@ -411,13 +411,14 @@ const Dashboard = () => {
                 <Flame className="w-4 h-4 text-red-400" />
                 <h2 className="font-semibold text-foreground text-sm">Urgent Actions</h2>
                 <span className="bg-red-500/20 text-red-400 text-xs font-bold px-2 py-0.5 rounded-full">{urgentItems.length}</span>
+                {urgentItems.length > 5 && <span className="text-xs text-muted-foreground">showing top 5</span>}
               </div>
               <button onClick={() => { setUrgentDismissed(true); localStorage.setItem("intellcode_urgent_dismissed", "1"); }} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="divide-y divide-red-500/10">
-              {urgentItems.map((item) => (
+              {urgentItems.slice(0, 5).map((item) => (
                 <div
                   key={item.entryId}
                   className="flex items-center gap-3 px-5 py-3 hover:bg-red-500/5 cursor-pointer transition-colors"
@@ -442,7 +443,9 @@ const Dashboard = () => {
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-primary" />
                 <h2 className="font-semibold text-foreground text-sm">Quality Score Trend</h2>
-                <span className="text-xs text-muted-foreground">last {trendData.length} analyses</span>
+                <span className="text-xs text-muted-foreground">
+                  {allEntries.length > 20 ? `last 20 of ${allEntries.length} analyses` : `last ${trendData.length} analyses`}
+                </span>
               </div>
               <Button variant="outline" size="sm" onClick={() => navigate("/analytics")}>
                 Full Analytics
@@ -484,9 +487,15 @@ const Dashboard = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             {/* Best files */}
             <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border bg-emerald-500/5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <h2 className="font-semibold text-foreground text-sm">Top Quality Files</h2>
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-emerald-500/5">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <h2 className="font-semibold text-foreground text-sm">Top Quality Files</h2>
+                  {latestByFile.length > 5 && <span className="text-xs text-muted-foreground">top 5 of {latestByFile.length}</span>}
+                </div>
+                {latestByFile.length > 5 && (
+                  <Button variant="ghost" size="sm" className="text-xs h-7 px-2" onClick={() => navigate("/reviews")}>View All</Button>
+                )}
               </div>
               <div className="divide-y divide-border">
                 {topFiles.map((entry, i) => (
@@ -504,9 +513,17 @@ const Dashboard = () => {
             {/* Worst files (needs attention) */}
             {worstFiles.length > 0 && (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border bg-orange-500/5">
-                  <AlertTriangle className="w-4 h-4 text-orange-400" />
-                  <h2 className="font-semibold text-foreground text-sm">Needs Attention</h2>
+                <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-orange-500/5">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-orange-400" />
+                    <h2 className="font-semibold text-foreground text-sm">Needs Attention</h2>
+                    {latestByFile.filter(f => f.overallScore < 80).length > 5 && (
+                      <span className="text-xs text-muted-foreground">top 5 of {latestByFile.filter(f => f.overallScore < 80).length}</span>
+                    )}
+                  </div>
+                  {latestByFile.filter(f => f.overallScore < 80).length > 5 && (
+                    <Button variant="ghost" size="sm" className="text-xs h-7 px-2" onClick={() => navigate("/reviews")}>View All</Button>
+                  )}
                 </div>
                 <div className="divide-y divide-border">
                   {worstFiles.map((entry, i) => (

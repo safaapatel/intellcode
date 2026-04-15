@@ -41,33 +41,37 @@ ID2LABEL = {i: l for i, l in enumerate(LABEL_NAMES)}
 # Feature extraction
 # ---------------------------------------------------------------------------
 
+"""
+Debiased feature set: structural AST features ONLY.
+
+Excluded (leaky — directly used in label assignment rules):
+  CC, cog, maxCC, avgCC, sloc, comments, comment_ratio,
+  halstead_volume, halstead_difficulty, halstead_bugs, MI,
+  n_long_functions, n_complex_functions, n_lines_over_80
+
+These 14 features encode the label rules themselves (e.g., CC > 20 -> anti_pattern,
+SLOC <= 40 -> clean).  A model that sees them during training partially memorises
+the labeling function — not genuine pattern generalisation.
+
+The 12 clean features below are derived from AST node counts and structural
+properties, not from the metric thresholds used to construct labels.
+"""
+FEATURE_NAMES = [
+    "n_functions", "n_classes", "n_try_blocks", "n_raises", "n_with_blocks",
+    "max_nesting_depth", "max_params", "avg_params",
+    "n_decorated_functions", "n_imports",
+    "max_function_body_lines", "avg_function_body_lines",
+]
+N_FEATURES = len(FEATURE_NAMES)  # 12
+
+
 def _extract_features(source: str) -> np.ndarray:
-    """Extract a fixed-length feature vector from source code."""
-    from features.code_metrics import compute_all_metrics
+    """Extract debiased structural AST feature vector (12-dim)."""
     from features.ast_extractor import ASTExtractor
 
     try:
-        m = compute_all_metrics(source)
         ast_feats = ASTExtractor().extract(source)
-
-        sloc = max(m.lines.sloc, 1)
-        comment_ratio = m.lines.comments / sloc
-
         return np.array([
-            float(m.cyclomatic_complexity),
-            float(m.cognitive_complexity),
-            float(m.max_function_complexity),
-            float(m.avg_function_complexity),
-            float(m.lines.sloc),
-            float(m.lines.comments),
-            float(comment_ratio),
-            float(m.halstead.volume),
-            float(m.halstead.difficulty),
-            float(m.halstead.bugs_delivered),
-            float(m.maintainability_index),
-            float(m.n_long_functions),
-            float(m.n_complex_functions),
-            float(m.n_lines_over_80),
             float(ast_feats.get("n_functions", 0)),
             float(ast_feats.get("n_classes", 0)),
             float(ast_feats.get("n_try_blocks", 0)),
@@ -82,7 +86,7 @@ def _extract_features(source: str) -> np.ndarray:
             float(ast_feats.get("avg_function_body_lines", 0.0)),
         ], dtype=np.float32)
     except Exception:
-        return np.zeros(26, dtype=np.float32)
+        return np.zeros(N_FEATURES, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +207,14 @@ def train(
         "n_train": len(X_tr),
         "n_test": len(X_te),
         "n_features": int(X.shape[1]),
+        "feature_names": FEATURE_NAMES,
         "label_names": LABEL_NAMES,
+        "debiased": True,
+        "leaky_features_excluded": [
+            "CC", "cog", "maxCC", "avgCC", "sloc", "comments", "comment_ratio",
+            "halstead_volume", "halstead_difficulty", "halstead_bugs", "MI",
+            "n_long_functions", "n_complex_functions", "n_lines_over_80",
+        ],
     }
     metrics_path = out / "metrics.json"
     with open(metrics_path, "w") as f:

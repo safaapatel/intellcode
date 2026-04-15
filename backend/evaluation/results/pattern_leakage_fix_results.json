@@ -1,0 +1,281 @@
+{
+  "method": "Pattern_Leakage_Fix",
+  "description": "Demonstrates circular labeling leakage in the pattern classifier: features (CC, SLOC, Halstead) are used in label assignment AND in training. A debiased model using only structural AST features (not used in labeling) shows the true generalisation performance.",
+  "n_samples": 1153,
+  "n_leaky_features": 14,
+  "n_clean_features": 12,
+  "leaky_features": [
+    "CC",
+    "MI",
+    "avgCC",
+    "cog",
+    "comment_ratio",
+    "comments",
+    "halstead_bugs",
+    "halstead_difficulty",
+    "halstead_volume",
+    "maxCC",
+    "n_complex_functions",
+    "n_lines_over_80",
+    "n_long_functions",
+    "sloc"
+  ],
+  "clean_features": [
+    "n_functions",
+    "n_classes",
+    "n_try_blocks",
+    "n_raises",
+    "n_with_blocks",
+    "max_nesting_depth",
+    "max_params",
+    "avg_params",
+    "n_decorated_functions",
+    "n_imports",
+    "max_function_body_lines",
+    "avg_function_body_lines"
+  ],
+  "audit_top15": [
+    {
+      "feature": "MI",
+      "is_leaky": true,
+      "max_abs_r": 0.7025,
+      "per_class_r": {
+        "clean": 0.7025,
+        "code_smell": -0.5423,
+        "anti_pattern": -0.1514,
+        "style_violation": -0.0973
+      }
+    },
+    {
+      "feature": "halstead_volume",
+      "is_leaky": true,
+      "max_abs_r": 0.6934,
+      "per_class_r": {
+        "clean": -0.6934,
+        "code_smell": 0.5015,
+        "anti_pattern": 0.1525,
+        "style_violation": 0.1261
+      }
+    },
+    {
+      "feature": "halstead_bugs",
+      "is_leaky": true,
+      "max_abs_r": 0.6934,
+      "per_class_r": {
+        "clean": -0.6934,
+        "code_smell": 0.5015,
+        "anti_pattern": 0.1525,
+        "style_violation": 0.1261
+      }
+    },
+    {
+      "feature": "sloc",
+      "is_leaky": true,
+      "max_abs_r": 0.692,
+      "per_class_r": {
+        "clean": -0.692,
+        "code_smell": 0.5282,
+        "anti_pattern": 0.1689,
+        "style_violation": 0.0791
+      }
+    },
+    {
+      "feature": "halstead_difficulty",
+      "is_leaky": true,
+      "max_abs_r": 0.6205,
+      "per_class_r": {
+        "clean": -0.6205,
+        "code_smell": 0.3656,
+        "anti_pattern": 0.2153,
+        "style_violation": 0.1044
+      }
+    },
+    {
+      "feature": "max_function_body_lines",
+      "is_leaky": false,
+      "max_abs_r": 0.4033,
+      "per_class_r": {
+        "clean": -0.2098,
+        "code_smell": 0.4033,
+        "anti_pattern": -0.2767,
+        "style_violation": 0.1607
+      }
+    },
+    {
+      "feature": "CC",
+      "is_leaky": true,
+      "max_abs_r": 0.3534,
+      "per_class_r": {
+        "clean": -0.2184,
+        "code_smell": 0.3534,
+        "anti_pattern": -0.2556,
+        "style_violation": 0.1958
+      }
+    },
+    {
+      "feature": "maxCC",
+      "is_leaky": true,
+      "max_abs_r": 0.3534,
+      "per_class_r": {
+        "clean": -0.2184,
+        "code_smell": 0.3534,
+        "anti_pattern": -0.2556,
+        "style_violation": 0.1958
+      }
+    },
+    {
+      "feature": "n_long_functions",
+      "is_leaky": true,
+      "max_abs_r": 0.3494,
+      "per_class_r": {
+        "clean": -0.1716,
+        "code_smell": 0.3494,
+        "anti_pattern": -0.0167,
+        "style_violation": -0.1294
+      }
+    },
+    {
+      "feature": "n_complex_functions",
+      "is_leaky": true,
+      "max_abs_r": 0.3456,
+      "per_class_r": {
+        "clean": -0.1886,
+        "code_smell": 0.3456,
+        "anti_pattern": -0.0639,
+        "style_violation": -0.0517
+      }
+    },
+    {
+      "feature": "comments",
+      "is_leaky": true,
+      "max_abs_r": 0.3439,
+      "per_class_r": {
+        "clean": -0.3439,
+        "code_smell": 0.2446,
+        "anti_pattern": 0.0538,
+        "style_violation": 0.0918
+      }
+    },
+    {
+      "feature": "n_functions",
+      "is_leaky": false,
+      "max_abs_r": 0.341,
+      "per_class_r": {
+        "clean": -0.0901,
+        "code_smell": 0.2767,
+        "anti_pattern": -0.341,
+        "style_violation": 0.2224
+      }
+    },
+    {
+      "feature": "avg_function_body_lines",
+      "is_leaky": false,
+      "max_abs_r": 0.3163,
+      "per_class_r": {
+        "clean": -0.1794,
+        "code_smell": 0.3163,
+        "anti_pattern": -0.2481,
+        "style_violation": 0.179
+      }
+    },
+    {
+      "feature": "avgCC",
+      "is_leaky": true,
+      "max_abs_r": 0.3044,
+      "per_class_r": {
+        "clean": -0.1901,
+        "code_smell": 0.3044,
+        "anti_pattern": -0.2344,
+        "style_violation": 0.1873
+      }
+    },
+    {
+      "feature": "comment_ratio",
+      "is_leaky": true,
+      "max_abs_r": 0.3021,
+      "per_class_r": {
+        "clean": -0.3021,
+        "code_smell": 0.1927,
+        "anti_pattern": 0.0389,
+        "style_violation": 0.1122
+      }
+    }
+  ],
+  "model_comparison": {
+    "full_model": {
+      "features_used": [
+        "CC",
+        "cog",
+        "maxCC",
+        "avgCC",
+        "sloc",
+        "comments",
+        "comment_ratio",
+        "halstead_volume",
+        "halstead_difficulty",
+        "halstead_bugs",
+        "MI",
+        "n_long_functions",
+        "n_complex_functions",
+        "n_lines_over_80",
+        "n_functions",
+        "n_classes",
+        "n_try_blocks",
+        "n_raises",
+        "n_with_blocks",
+        "max_nesting_depth",
+        "max_params",
+        "avg_params",
+        "n_decorated_functions",
+        "n_imports",
+        "max_function_body_lines",
+        "avg_function_body_lines"
+      ],
+      "n_features": 26,
+      "mean_f1_macro": 0.7477381976943155,
+      "std_f1": 0.023872742206631232,
+      "mean_kappa": 0.658990413209619,
+      "per_fold_f1": [
+        0.7295,
+        0.7467,
+        0.7219,
+        0.7907,
+        0.7499
+      ]
+    },
+    "debiased_model": {
+      "features_used": [
+        "n_functions",
+        "n_classes",
+        "n_try_blocks",
+        "n_raises",
+        "n_with_blocks",
+        "max_nesting_depth",
+        "max_params",
+        "avg_params",
+        "n_decorated_functions",
+        "n_imports",
+        "max_function_body_lines",
+        "avg_function_body_lines"
+      ],
+      "n_features": 12,
+      "mean_f1_macro": 0.6652927852750182,
+      "std_f1": 0.02111046103330115,
+      "mean_kappa": 0.5176244918478738,
+      "per_fold_f1": [
+        0.6679,
+        0.6918,
+        0.6358,
+        0.6475,
+        0.6835
+      ]
+    },
+    "delta_f1": 0.08244541241929726,
+    "wilcoxon_stat": 15.0,
+    "wilcoxon_p": 0.03125,
+    "leakage_inflation": 0.08244541241929726,
+    "interpretation": "Full-feature model F1=0.748 vs debiased F1=0.665. Delta=+0.082 = estimated leakage inflation. Wilcoxon p=0.0312 \u2014 full model is significantly better: leakage confirmed."
+  },
+  "finding": "Full-feature model F1=0.748 is inflated by +0.082 over the debiased model (F1=0.665). This gap quantifies the leakage: the model partially memorises the metric thresholds used to construct labels, not genuine patterns.",
+  "fix_recommendation": "For final training: use only CLEAN_FEAT_NAMES (structural AST features). For labeling: consider external ground truth (developer code reviews, pylint/flake8 annotations) rather than metric thresholds."
+}
