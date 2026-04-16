@@ -3226,74 +3226,155 @@ def _fetch_pr_file_content(owner: str, repo: str, path: str, ref: str, token: st
         return ""
 
 
-def _generate_fix_suggestion(vuln_type: str, line: str, description: str) -> str:
+def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippet: str = "") -> str:
     """
-    Given a vulnerability type and the offending line of code, return a
-    suggested replacement line (or the original if we can't auto-fix).
-    The result is wrapped in a GitHub suggestion block.
+    Generate a before/after fix block for a security finding.
+    Uses the actual code line when available, falls back to the finding snippet,
+    then to a canonical example. Always returns a non-empty markdown block.
     """
-    stripped = line.rstrip()
+    # Pick the best available "before" code
+    before = (line or snippet or "").rstrip()
 
-    # SQL injection — replace string concat with parameterized placeholder
-    if vuln_type in ("sql_injection",):
-        # Try to extract the variable being concatenated
-        m = re.search(r'["\']([^"\']*)["\'][\s]*\+[\s]*(\w+)', stripped)
-        if m:
-            fixed = f'{stripped.split("+")[0].rstrip()} %s"  # use cursor.execute(query, ({m.group(2)},))'
-        else:
-            fixed = stripped + "  # TODO: use parameterized query, e.g. cursor.execute(sql, (val,))"
-        return f"```suggestion\n{fixed}\n```"
+    # ── Canonical fix examples used when we have no real code ──
+    EXAMPLES: dict[str, tuple[str, str]] = {
+        "sql_injection": (
+            'query = "SELECT * FROM users WHERE id = " + user_id',
+            'query = "SELECT * FROM users WHERE id = %s"\ncursor.execute(query, (user_id,))',
+        ),
+        "command_injection": (
+            'os.system("ls " + user_input)',
+            'subprocess.run(["ls", user_input], check=True)  # shell=False by default',
+        ),
+        "hardcoded_secret": (
+            'api_key = "sk-prod-abc123xyz"',
+            'import os\napi_key = os.environ["API_KEY"]  # store secrets in env vars',
+        ),
+        "hardcoded_password": (
+            'password = "hunter2"',
+            'import os\npassword = os.environ["DB_PASSWORD"]',
+        ),
+        "xss": (
+            'element.innerHTML = user_input',
+            'element.textContent = user_input  # or use DOMPurify.sanitize()',
+        ),
+        "path_traversal": (
+            'open(base_dir + "/" + user_filename)',
+            'safe = os.path.realpath(os.path.join(base_dir, user_filename))\n'
+            'if not safe.startswith(os.path.realpath(base_dir)):\n'
+            '    raise ValueError("Path traversal detected")\n'
+            'open(safe)',
+        ),
+        "eval_injection": (
+            'result = eval(user_input)',
+            'import ast\nresult = ast.literal_eval(user_input)  # safe eval for literals only',
+        ),
+        "exec_injection": (
+            'exec(user_code)',
+            '# Remove exec() — run user code in a sandboxed subprocess instead',
+        ),
+        "open_redirect": (
+            'return redirect(request.args.get("next"))',
+            'from urllib.parse import urlparse\nnext_url = request.args.get("next", "/")\n'
+            'if urlparse(next_url).netloc:  # block absolute URLs\n'
+            '    next_url = "/"\nreturn redirect(next_url)',
+        ),
+        "ssrf": (
+            'requests.get(user_url)',
+            '# Validate URL against an allowlist before fetching\n'
+            'ALLOWED_HOSTS = {"api.example.com"}\n'
+            'parsed = urllib.parse.urlparse(user_url)\n'
+            'if parsed.hostname not in ALLOWED_HOSTS:\n'
+            '    raise ValueError("Blocked host")\n'
+            'requests.get(user_url, timeout=5)',
+        ),
+        "insecure_deserialization": (
+            'data = pickle.loads(user_bytes)',
+            '# Never deserialize untrusted data with pickle\n'
+            '# Use json.loads() or a schema-validated format instead\n'
+            'data = json.loads(user_bytes)',
+        ),
+        "weak_crypto": (
+            'hashlib.md5(password.encode()).hexdigest()',
+            'import bcrypt\nhashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())',
+        ),
+        "debug_enabled": (
+            'app.run(debug=True)',
+            'app.run(debug=os.environ.get("FLASK_DEBUG", "false").lower() == "true")',
+        ),
+        "insecure_random": (
+            'token = random.randint(0, 999999)',
+            'import secrets\ntoken = secrets.token_hex(32)  # cryptographically secure',
+        ),
+        "missing_auth": (
+            '@app.route("/admin")\ndef admin():',
+            '@app.route("/admin")\n@login_required  # add authentication\ndef admin():',
+        ),
+    }
 
-    # Command injection — suggest subprocess list form
-    if vuln_type in ("command_injection",):
-        if "os.system" in stripped:
-            fixed = re.sub(
-                r'os\.system\((.+)\)',
-                r'subprocess.run(\1, shell=False)  # split args into a list',
-                stripped,
-            )
-        else:
-            fixed = stripped + "  # TODO: use subprocess.run([cmd, arg], shell=False)"
-        return f"```suggestion\n{fixed}\n```"
-
-    # Hardcoded secrets — replace literal with env var lookup
-    if vuln_type in ("hardcoded_secret", "hardcoded_password"):
-        # Extract variable name
-        m = re.match(r'^(\s*)([\w.]+)\s*=\s*["\'].*["\']', stripped)
-        if m:
-            indent, var = m.group(1), m.group(2)
-            env_key = var.upper().replace(".", "_")
-            fixed = f'{indent}{var} = os.environ["{env_key}"]  # move secret to env var'
-        else:
-            fixed = stripped + '  # TODO: use os.environ["SECRET_KEY"] instead'
-        return f"```suggestion\n{fixed}\n```"
-
-    # XSS — innerHTML → textContent / DOMPurify
-    if vuln_type in ("xss",):
-        fixed = stripped.replace("innerHTML", "textContent")
-        if fixed == stripped:
-            fixed = stripped + "  # TODO: sanitize with DOMPurify before setting innerHTML"
-        return f"```suggestion\n{fixed}\n```"
-
-    # Path traversal — add realpath validation comment
-    if vuln_type in ("path_traversal",):
-        m = re.match(r'^(\s*)', stripped)
-        indent = m.group(1) if m else ""
-        fixed = (
-            f"{indent}# Validate path before opening\n"
-            f"{indent}safe_path = os.path.realpath(os.path.join(BASE_DIR, user_input))\n"
-            f"{indent}assert safe_path.startswith(BASE_DIR), 'Path traversal detected'\n"
-            f"{stripped}"
+    def _make_block(bad: str, good: str) -> str:
+        return (
+            f"**Before (vulnerable):**\n```python\n{bad}\n```\n\n"
+            f"**After (fixed):**\n```python\n{good}\n```"
         )
-        return f"```suggestion\n{fixed}\n```"
 
-    # Eval / exec
-    if vuln_type in ("eval_injection", "exec_injection"):
-        fixed = stripped + "  # TODO: remove eval/exec — use ast.literal_eval or a safe parser"
-        return f"```suggestion\n{fixed}\n```"
+    # Try to auto-fix the actual line
+    if before:
+        stripped = before
 
-    # Generic fallback — no suggestion block, just a note
-    return f"_{description}_\n\nNo automated fix available for `{vuln_type}` — manual review required."
+        if vuln_type == "sql_injection":
+            m = re.search(r'(["\'][^"\']*["\'])\s*\+\s*(\w+)', stripped)
+            if m:
+                var = m.group(2)
+                fixed = re.sub(r'["\'][^"\']*["\'][\s]*\+[\s]*\w+',
+                               f'"%s"  # then: cursor.execute(query, ({var},))', stripped, count=1)
+                return _make_block(stripped, fixed)
+
+        if vuln_type == "command_injection" and "os.system" in stripped:
+            fixed = re.sub(r'os\.system\((.+)\)',
+                           r'subprocess.run(\1, shell=False)  # pass args as list', stripped)
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+        if vuln_type in ("hardcoded_secret", "hardcoded_password"):
+            m = re.match(r'^(\s*)([\w.]+)\s*=\s*["\'].*["\']', stripped)
+            if m:
+                indent, var = m.group(1), m.group(2)
+                env_key = re.sub(r'[^A-Z0-9]', '_', var.upper())
+                fixed = f'{indent}{var} = os.environ["{env_key}"]'
+                return _make_block(stripped, fixed)
+
+        if vuln_type == "xss":
+            fixed = stripped.replace("innerHTML", "textContent")
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+        if vuln_type in ("eval_injection",):
+            fixed = stripped.replace("eval(", "ast.literal_eval(")
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+        if vuln_type in ("insecure_random",) and "random." in stripped:
+            fixed = re.sub(r'random\.\w+\([^)]*\)', 'secrets.token_hex(32)', stripped)
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+        if vuln_type == "debug_enabled":
+            fixed = stripped.replace("debug=True", 'debug=os.environ.get("DEBUG","false")=="true"')
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+    # Fall back to canonical example for this vuln type
+    if vuln_type in EXAMPLES:
+        bad, good = EXAMPLES[vuln_type]
+        return _make_block(bad, good)
+
+    # Last resort — generic advice
+    return (
+        f"**Issue:** {description}\n\n"
+        f"No automated fix template available for `{vuln_type}`.\n\n"
+        f"**General guidance:** validate and sanitize all untrusted input, "
+        f"apply the principle of least privilege, and consult OWASP for `{vuln_type}` remediation."
+    )
 
 
 @app.post("/github/analyze-pr", tags=["github"])
@@ -3637,7 +3718,8 @@ async def create_pr(req: CreatePRRequest):
         description = finding.get("description", "")
         cwe        = finding.get("cwe", "")
         confidence = finding.get("confidence", 0)
-        fix_block  = _generate_fix_suggestion(vuln_type, code_line, description)
+        snippet    = finding.get("snippet", "")
+        fix_block  = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
 
         findings_md += (
             f"\n---\n\n"
@@ -3679,7 +3761,8 @@ async def create_pr(req: CreatePRRequest):
         description = finding.get("description", "")
         cwe         = finding.get("cwe", "")
         confidence  = finding.get("confidence", 0)
-        fix_block   = _generate_fix_suggestion(vuln_type, code_line, description)
+        snippet     = finding.get("snippet", "")
+        fix_block   = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
 
         issue_body = (
             f"## Critical Security Finding\n\n"
