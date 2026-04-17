@@ -3232,6 +3232,16 @@ def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippe
     Uses the actual code line when available, falls back to the finding snippet,
     then to a canonical example. Always returns a non-empty markdown block.
     """
+    # Normalise vuln_type aliases so detector names map to example keys
+    _ALIASES: dict[str, str] = {
+        "code_injection":       "eval_injection",
+        "exec_injection":       "eval_injection",
+        "weak_cryptography":    "weak_crypto",
+        "hardcoded_credential": "hardcoded_secret",
+        "hardcoded_password":   "hardcoded_secret",
+    }
+    vuln_type = _ALIASES.get(vuln_type, vuln_type)
+
     # Pick the best available "before" code
     before = (line or snippet or "").rstrip()
 
@@ -3708,31 +3718,48 @@ async def create_pr(req: CreatePRRequest):
     # regardless of whether the file diff is empty.
     source_lines = req.code.splitlines() if req.code else []
 
+    # Group findings by vuln_type so identical patterns don't repeat the same fix block
+    from collections import defaultdict
+    grouped: dict[str, list] = defaultdict(list)
+    for f in req.security_findings:
+        grouped[f.get("vuln_type", "unknown")].append(f)
+
     findings_md = ""
-    for finding in req.security_findings[:10]:
-        lineno     = finding.get("lineno", 0)
-        code_line  = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
-        vuln_type  = finding.get("vuln_type", "")
-        title      = finding.get("title", "")
-        severity   = finding.get("severity", "low").upper()
-        description = finding.get("description", "")
-        cwe        = finding.get("cwe", "")
-        confidence = finding.get("confidence", 0)
-        snippet    = finding.get("snippet", "")
-        fix_block  = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
+    for vuln_type, group in list(grouped.items())[:8]:   # cap at 8 unique types
+        # Representative finding (highest severity, first occurrence)
+        rep = sorted(group, key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
+            x.get("severity", "low"), 4))[0]
+
+        lineno      = rep.get("lineno", 0)
+        code_line   = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
+        title       = rep.get("title", "")
+        severity    = rep.get("severity", "low").upper()
+        description = rep.get("description", "")
+        cwe         = rep.get("cwe", "")
+        confidence  = rep.get("confidence", 0)
+        snippet     = rep.get("snippet", "")
+        fix_block   = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
+
+        # List all affected line numbers for this pattern
+        linenos = sorted({x.get("lineno", 0) for x in group if x.get("lineno")})
+        loc_str = (
+            f"L{linenos[0]}" if len(linenos) == 1
+            else f"L{linenos[0]}–L{linenos[-1]} ({len(linenos)} locations)"
+        )
 
         findings_md += (
             f"\n---\n\n"
-            f"#### {severity} — {title} (L{lineno})\n\n"
+            f"#### {severity} — {title} ({loc_str})\n\n"
             f"{description}\n\n"
             f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
             f"**Suggested fix:**\n\n{fix_block}\n"
         )
 
-    full_body = req.analysis_summary or ""
+    # The PR body already contains the analysis_summary — only post a comment if there are fix suggestions
+    full_body = ""
     if findings_md:
-        full_body += f"\n\n## Security Findings & Suggested Fixes\n{findings_md}"
-    full_body += "\n\n---\n_Posted by [IntelliCode Review](https://intellcode.onrender.com)_"
+        full_body = f"## Security Findings & Suggested Fixes\n{findings_md}"
+        full_body += "\n\n---\n_Posted by [IntelliCode Review](https://intellcode.onrender.com)_"
 
     if full_body and pr_number:
         def _post_comment():
