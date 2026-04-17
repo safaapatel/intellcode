@@ -11,6 +11,14 @@ export interface SecurityFinding {
   cwe: string;
   source: string;
   decision?: Decision;  // injected by backend decision layer
+  // Taint-flow enrichment (added by context_analyzer)
+  argument_name?: string;
+  taint_source?: string;
+  taint_path?: string;
+  user_controlled?: boolean;
+  false_positive?: boolean;
+  exploitability?: number;
+  context_sentence?: string;
 }
 
 export interface ConformalInterval {
@@ -32,6 +40,8 @@ export interface OODInfo {
 
 export interface SecurityResult {
   findings: SecurityFinding[];
+  false_positives?: SecurityFinding[];
+  taint_enriched?: boolean;
   vulnerability_score: number;
   summary: {
     total: number;

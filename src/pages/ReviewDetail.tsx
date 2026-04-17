@@ -33,6 +33,7 @@ import {
   MapPin,
   Github,
   ExternalLink,
+  ChevronDown,
 } from "lucide-react";
 import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
@@ -577,6 +578,22 @@ function TrustBanner({ r }: { r: FullAnalysisResult }) {
   );
 }
 
+function ExploitabilityBar({ score }: { score: number }) {
+  const color =
+    score >= 8 ? "bg-destructive" :
+    score >= 6 ? "bg-orange-500" :
+    score >= 4 ? "bg-yellow-500" : "bg-green-500";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-20 shrink-0">Exploitability</span>
+      <div className="flex-1 bg-secondary rounded-full h-1.5">
+        <div className={`${color} h-1.5 rounded-full transition-all`} style={{ width: `${score * 10}%` }} />
+      </div>
+      <span className="text-[10px] font-bold text-foreground w-6 text-right">{score}/10</span>
+    </div>
+  );
+}
+
 function SecurityTab({
   r,
   feedbacks,
@@ -587,12 +604,22 @@ function SecurityTab({
   onReview: (key: string, title: string) => void;
 }) {
   const { findings, summary } = r.security;
-  if (findings.length === 0) return <Empty msg="No security vulnerabilities detected." />;
+  const fps = r.security.false_positives ?? [];
+  const enriched = r.security.taint_enriched ?? false;
+  const [showFPs, setShowFPs] = useState(false);
 
-  // Sort findings by decision priority (fix_now first, unreliable last)
+  if (findings.length === 0 && fps.length === 0)
+    return <Empty msg="No security vulnerabilities detected." />;
+
+  // Sort by exploitability desc, then decision priority
   const priorityOf = (f: typeof findings[0]) =>
     f.decision?.priority ?? (f.severity === "critical" ? 1 : f.severity === "high" ? 2 : 3);
-  const sorted = [...findings].sort((a, b) => priorityOf(a) - priorityOf(b));
+  const sorted = [...findings].sort((a, b) => {
+    const expDiff = (b.exploitability ?? 5) - (a.exploitability ?? 5);
+    return expDiff !== 0 ? expDiff : priorityOf(a) - priorityOf(b);
+  });
+
+  const userControlledCount = findings.filter(f => f.user_controlled).length;
 
   return (
     <div className="space-y-4">
@@ -602,6 +629,25 @@ function SecurityTab({
         reason={r.security.low_confidence_reason}
         conformal={r.security.conformal_interval}
       />
+
+      {/* Taint analysis summary banner */}
+      {enriched && (
+        <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-primary uppercase tracking-widest">Taint Analysis</span>
+          {userControlledCount > 0 && (
+            <span className="text-xs bg-destructive/15 text-destructive px-2 py-0.5 rounded-full font-medium">
+              {userControlledCount} confirmed user-controlled
+            </span>
+          )}
+          {fps.length > 0 && (
+            <span className="text-xs bg-secondary text-muted-foreground px-2 py-0.5 rounded-full">
+              {fps.length} likely false positive{fps.length > 1 ? "s" : ""} filtered
+            </span>
+          )}
+          <span className="text-xs text-muted-foreground ml-auto">Data-flow traced · sorted by exploitability</span>
+        </div>
+      )}
+
       <div className="flex gap-3 text-sm flex-wrap mb-2">
         {(["critical", "high", "medium", "low"] as const).map((sev) => (
           <span key={sev} className="flex items-center gap-1">
@@ -610,31 +656,53 @@ function SecurityTab({
           </span>
         ))}
       </div>
+
       {sorted.map((f, i) => {
         const key = `${f.title}-${f.lineno}`;
         const fb = feedbacks[key];
         return (
-          <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[f.severity] ?? "border-l-border"}`}>
+          <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2.5 border-l-4 ${SEV_BORDER[f.severity] ?? "border-l-border"}`}>
             <div className="flex items-center gap-2 flex-wrap">
               <SevBadge sev={f.severity} />
               <DecisionBadge decision={f.decision} />
+              {f.user_controlled && (
+                <span className="text-[10px] font-bold bg-destructive/15 text-destructive px-2 py-0.5 rounded-full uppercase tracking-wide">
+                  user-controlled
+                </span>
+              )}
               <span className="font-semibold text-foreground text-sm">{f.title}</span>
               <span className="text-xs text-muted-foreground ml-auto">{f.cwe} · line {f.lineno}</span>
             </div>
-            {f.decision?.action === "unreliable" && (
-              <p className="text-xs text-muted-foreground italic bg-secondary/40 rounded px-2 py-1">
-                {f.decision.explanation}
-              </p>
+
+            {/* AI context sentence — replaces generic description when available */}
+            {f.context_sentence ? (
+              <p className="text-sm text-foreground/90 leading-relaxed">{f.context_sentence}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">{f.description}</p>
             )}
-            <p className="text-sm text-muted-foreground">{f.description}</p>
+
+            {/* Taint data-flow path */}
+            {f.taint_path && f.taint_source && !["unknown", "constant", "internal"].includes(f.taint_source) && (
+              <div className="bg-secondary/60 rounded px-3 py-2">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Data flow</p>
+                <p className="text-xs font-mono text-foreground/80 break-all">{f.taint_path}</p>
+              </div>
+            )}
+
             {f.snippet && (
               <pre className="bg-destructive/10 border border-destructive/20 rounded p-3 text-xs font-mono text-foreground overflow-x-auto">
                 {f.snippet}
               </pre>
             )}
+
+            {/* Exploitability bar */}
+            {f.exploitability !== undefined && (
+              <ExploitabilityBar score={f.exploitability} />
+            )}
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs text-muted-foreground">
-                Source: {f.source} · Confidence: {Math.round(f.confidence * 100)}%
+                Confidence: {Math.round(f.confidence * 100)}%
                 {f.decision && f.decision.action !== "unreliable" && (
                   <span className="ml-2 italic">{f.decision.explanation}</span>
                 )}
@@ -645,31 +713,44 @@ function SecurityTab({
                     {FB_LABEL[fb.status]}
                   </span>
                   <span className="text-xs text-muted-foreground">by {fb.reviewer}</span>
-                  <button
-                    className="text-xs text-primary hover:underline"
-                    onClick={() => onReview(key, f.title)}
-                  >
-                    Edit
-                  </button>
+                  <button className="text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>Edit</button>
                 </div>
               ) : (
-                <button
-                  className="flex items-center gap-1 text-xs text-primary hover:underline"
-                  onClick={() => onReview(key, f.title)}
-                >
+                <button className="flex items-center gap-1 text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>
                   <MessageSquare className="w-3 h-3" />
                   Add Review
                 </button>
               )}
             </div>
             {fb?.reasoning && (
-              <p className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">
-                "{fb.reasoning}"
-              </p>
+              <p className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">"{fb.reasoning}"</p>
             )}
           </div>
         );
       })}
+
+      {/* False positives section */}
+      {fps.length > 0 && (
+        <div className="mt-2">
+          <button
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mb-2"
+            onClick={() => setShowFPs(v => !v)}
+          >
+            <ChevronDown className={`w-3 h-3 transition-transform ${showFPs ? "rotate-180" : ""}`} />
+            {showFPs ? "Hide" : "Show"} {fps.length} filtered false positive{fps.length > 1 ? "s" : ""}
+          </button>
+          {showFPs && fps.map((f, i) => (
+            <div key={i} className="bg-secondary/15 rounded-lg p-3 mb-2 border-l-4 border-l-border opacity-60">
+              <div className="flex items-center gap-2">
+                <SevBadge sev={f.severity} />
+                <span className="text-xs text-muted-foreground line-through">{f.title}</span>
+                <span className="text-[10px] bg-secondary px-2 py-0.5 rounded-full text-muted-foreground ml-auto">false positive</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{f.context_sentence || "Argument is a constant or internal value — not user-controlled."}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
