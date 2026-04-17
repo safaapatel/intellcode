@@ -236,7 +236,7 @@ export default function PRReview() {
               {posted && result.comment_urls.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {result.comment_urls.map((url, i) => (
-                    <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                    <a key={url} href={url} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-1 text-xs text-blue-500 hover:underline">
                       <ExternalLink className="w-3 h-3" />View comment {i + 1}
                     </a>
@@ -328,7 +328,7 @@ export default function PRReview() {
                           </h4>
                           <div className="space-y-2">
                             {secFindings.map((f: any, i: number) => (
-                              <div key={i} className={`rounded border p-2.5 text-sm ${SEV_COLOR[f.severity] ?? SEV_COLOR.low}`}>
+                              <div key={`${f.title}-${f.lineno ?? i}`} className={`rounded border p-2.5 text-sm ${SEV_COLOR[f.severity] ?? SEV_COLOR.low}`}>
                                 <div className="flex items-center justify-between">
                                   <span className="font-medium">{f.title}</span>
                                   <div className="flex items-center gap-1 text-xs">

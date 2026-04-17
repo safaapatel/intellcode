@@ -165,7 +165,8 @@ def _specialist_key(endpoint: str, code: str) -> str:
 
 def _cache_put(store: dict, key: str, value: dict, max_size: int = 200) -> None:
     if len(store) >= max_size:
-        store.pop(next(iter(store)))
+        oldest = min(store, key=lambda k: store[k]["ts"])
+        store.pop(oldest)
     store[key] = {"data": value, "ts": time.time()}
 
 
@@ -3237,8 +3238,12 @@ async def github_webhook(request: Request):
 # ---------------------------------------------------------------------------
 
 class PRAnalyzeRequest(BaseModel):
-    pr_url: str = Field(..., description="Full GitHub PR URL e.g. https://github.com/owner/repo/pull/123")
-    github_token: str = Field(..., description="GitHub personal access token or OAuth token")
+    pr_url: str = Field(
+        ...,
+        pattern=r"^https://github\.com/[\w.\-]+/[\w.\-]+/pull/\d+$",
+        description="Full GitHub PR URL e.g. https://github.com/owner/repo/pull/123",
+    )
+    github_token: str = Field(..., min_length=1, max_length=200, description="GitHub personal access token or OAuth token")
     post_comments: bool = Field(True, description="Whether to post review comments to GitHub")
     max_files: int = Field(10, ge=1, le=20, description="Max files to analyze")
 

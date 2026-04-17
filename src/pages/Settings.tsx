@@ -135,7 +135,10 @@ const Settings = () => {
 
   // Keep theme state in sync when changed from another tab/window
   useEffect(() => {
-    const handler = (e: Event) => setCurrentTheme((e as CustomEvent).detail as Theme);
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail;
+      if (t === "light" || t === "dark") setCurrentTheme(t);
+    };
     window.addEventListener("intellcode-theme", handler);
     return () => window.removeEventListener("intellcode-theme", handler);
   }, []);
