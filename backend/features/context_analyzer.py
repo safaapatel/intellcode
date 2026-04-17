@@ -145,6 +145,13 @@ def _find_call_arg(code: str, lineno: int) -> str:
         return ""
 
     tree = None
+    # Dedent using the first non-empty line's indent as the common prefix.
+    # textwrap.dedent fails when closing ')' has no indent, breaking the common-prefix calc.
+    _lines = block.splitlines()
+    _first_indent = len(_lines[0]) - len(_lines[0].lstrip()) if _lines else 0
+    if _first_indent:
+        block = "\n".join(l[_first_indent:] if len(l) >= _first_indent else l.lstrip()
+                          for l in _lines)
     candidates = [block]
     # If the block ends with ':' (compound stmt stub), append a minimal body
     # so the parser accepts it (e.g. `with open(...) as f:` needs a body)
@@ -355,6 +362,42 @@ _SOURCE_HUMAN = {
 }
 
 
+def _check_function_param(code: str, var_name: str, lineno: int) -> tuple[str, str]:
+    """
+    Walk backwards from lineno to find the nearest enclosing def statement.
+    If var_name appears in its parameter list, return ("function_param", param_description).
+    Also checks for common request-style parameter names.
+    """
+    lines = code.splitlines()
+    for i in range(min(lineno - 1, len(lines) - 1), -1, -1):
+        line = lines[i].strip()
+        m = re.match(r"def\s+\w+\s*\(([^)]*)\)\s*:", line)
+        if not m:
+            # Multi-line def: check if line starts with 'def '
+            m = re.match(r"def\s+\w+\s*\(", line)
+        if m:
+            # Collect the full parameter string (may span multiple lines)
+            param_block = ""
+            depth = 0
+            for j in range(i, min(len(lines), i + 10)):
+                param_block += lines[j]
+                depth += lines[j].count("(") - lines[j].count(")")
+                if depth <= 0:
+                    break
+            if re.search(r"\b" + re.escape(var_name) + r"\b", param_block):
+                # Check if param name suggests user input
+                user_param = re.search(
+                    r"\b(request|req|user_\w+|client_\w+|payload|body|data|"
+                    r"query|expr|formula|cmd|command|raw_\w+|untrusted)\b",
+                    var_name,
+                )
+                if user_param:
+                    return "function_param", f"function parameter `{var_name}` (user-supplied)"
+                return "function_param", f"function parameter `{var_name}`"
+            break  # found enclosing def but var not in params
+    return "unknown", "unknown source"
+
+
 def _enrich_single(code: str, finding: dict) -> dict:
     f = dict(finding)
     lineno = f.get("lineno", 0)
@@ -393,6 +436,11 @@ def _enrich_single(code: str, finding: dict) -> dict:
         end = min(len(code.splitlines()), lineno + 2)
         local_context = "\n".join(code.splitlines()[start:end])
         taint_source, source_snippet = _classify_source(traces, local_context + " " + line)
+
+        # If still unknown, check if arg is a function parameter of the enclosing function.
+        # e.g. def run(user_expr): eval(user_expr) — user_expr is a param, not traced.
+        if taint_source == "unknown" and arg and re.match(r"^\w+$", arg):
+            taint_source, source_snippet = _check_function_param(code, arg, lineno)
 
     # --- Exploitability score ---
     base = _EXPLOITABILITY_BASE.get(severity, 5)
@@ -731,18 +779,37 @@ def build_pr_narrative(
     lines.append("## IntelliCode Security Review\n")
     lines.append(f"**File:** {purpose}\n")
 
-    # ── Score explanation ──────────────────────────────────────────────────
+    # ── Score explanation (matches _compute_overall_score weights) ────────
+    # Security component = max(0, 100 - crit*20 - high*10 - med*4), weighted 30%
+    # A score of 23 with 1 critical + 6 high means security_score = max(0, 100-20-60) = 20
+    # contribution = 20 * 0.30 = 6 pts vs max possible 30 pts => -24 pts from security alone
     if overall_score is not None:
-        crit = sum(1 for g in groups if g["severity"] == "critical")
-        high = sum(1 for g in groups if g["severity"] == "high")
+        # Count from all enriched findings (before grouping)
+        all_real = [f for f in enriched if not f.get("false_positive")]
+        crit_n = sum(1 for f in all_real if f.get("severity") == "critical")
+        high_n = sum(1 for f in all_real if f.get("severity") == "high")
+        med_n  = sum(1 for f in all_real if f.get("severity") == "medium")
+        security_score = max(0, 100 - crit_n * 20 - high_n * 10 - med_n * 4)
+        security_contribution = round(security_score * 0.30)
+        max_security_contribution = 30
+        security_penalty = max_security_contribution - security_contribution
+
         score_reason_parts = []
-        if crit:
-            score_reason_parts.append(f"{crit} critical finding{'s' if crit > 1 else ''} (-{crit * 15} pts)")
-        if high:
-            score_reason_parts.append(f"{high} high-severity pattern{'s' if high > 1 else ''} (-{high * 8} pts)")
+        if crit_n:
+            score_reason_parts.append(f"{crit_n} critical (x20 pts each)")
+        if high_n:
+            score_reason_parts.append(f"{high_n} high (x10 pts each)")
+        if med_n:
+            score_reason_parts.append(f"{med_n} medium (x4 pts each)")
         if fp_count:
-            score_reason_parts.append(f"{fp_count} finding{'s' if fp_count > 1 else ''} likely false positive (excluded)")
-        score_reason = "; ".join(score_reason_parts) if score_reason_parts else "multiple quality signals"
+            score_reason_parts.append(f"{fp_count} filtered as false positive")
+
+        if score_reason_parts:
+            penalty_str = f"-{security_penalty} pts from security" if security_penalty else "no security penalty"
+            detail = ", ".join(score_reason_parts)
+            score_reason = f"{penalty_str} ({detail}); remaining score from complexity, bug risk, and debt"
+        else:
+            score_reason = "security scan clean; score reflects complexity and maintainability signals"
         lines.append(f"**Score: {overall_score}/100** — {score_reason}\n")
     elif analysis_summary:
         # Pull score line from summary
