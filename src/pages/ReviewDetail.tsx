@@ -757,7 +757,7 @@ function FindingGroup({
         <div className="p-3 space-y-3">
           {findings.map((f, i) => {
             const key = `${f.title}-${f.lineno}`;
-            return <FindingCard key={i} f={f} fb={feedbacks[key]} onReview={onReview} />;
+            return <FindingCard key={key} f={f} fb={feedbacks[key]} onReview={onReview} />;
           })}
         </div>
       )}
@@ -891,7 +891,7 @@ function SecurityTab({
             {showFPs ? "Hide" : "Show"} {fps.length} filtered false positive{fps.length > 1 ? "s" : ""}
           </button>
           {showFPs && fps.map((f, i) => (
-            <div key={i} className="bg-secondary/15 rounded-lg p-3 mb-2 border-l-4 border-l-border opacity-60">
+            <div key={`${f.title}-${f.lineno}`} className="bg-secondary/15 rounded-lg p-3 mb-2 border-l-4 border-l-border opacity-60">
               <div className="flex items-center gap-2">
                 <SevBadge sev={f.severity} />
                 <span className="text-xs text-muted-foreground line-through">{f.title}</span>
@@ -935,7 +935,7 @@ function ComplexityTab({ r }: { r: FullAnalysisResult }) {
           <h3 className="text-sm font-semibold text-foreground mb-2">Function Issues</h3>
           <div className="space-y-2">
             {c.function_issues.map((fi, i) => (
-              <div key={i} className="bg-secondary/20 rounded-lg p-3 flex items-center gap-3 text-sm">
+              <div key={fi.name ?? i} className="bg-secondary/20 rounded-lg p-3 flex items-center gap-3 text-sm">
                 <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
                 <span className="font-mono text-foreground">{fi.name}</span>
                 <span className="text-muted-foreground">{fi.issue} ({fi.value})</span>
@@ -984,7 +984,7 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
           <h3 className="text-sm font-semibold text-foreground mb-2">Risk Factors</h3>
           <ul className="space-y-2">
             {b.risk_factors.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <li key={`rf-${i}`} className="flex items-start gap-2 text-sm text-muted-foreground">
                 <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0 mt-0.5" />
                 {f}
               </li>
@@ -1000,7 +1000,7 @@ function BugTab({ r }: { r: FullAnalysisResult }) {
               const maxImp = b.top_feature_importances[0]?.importance ?? 1;
               const pctWidth = Math.round((fi.importance / maxImp) * 100);
               return (
-                <div key={i} className="space-y-1">
+                <div key={fi.feature} className="space-y-1">
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground font-mono">{fi.feature}</span>
                     <span className="text-muted-foreground">{(fi.importance * 100).toFixed(1)}%</span>
@@ -1153,7 +1153,7 @@ function ClonesTab({ r }: { r: FullAnalysisResult }) {
         <span>Blocks: <strong className="text-foreground">{c.total_blocks}</strong></span>
       </div>
       {c.clones.map((clone, i) => (
-        <div key={i} className="bg-secondary/30 rounded-xl p-4 space-y-2">
+        <div key={`${clone.start_line_a}-${clone.start_line_b}-${i}`} className="bg-secondary/30 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <SevBadge sev={typeSev[clone.clone_type] ?? "info"} />
             <Badge label={typeLabel[clone.clone_type] ?? clone.clone_type} />
@@ -1186,7 +1186,7 @@ function RefactoringTab({ r }: { r: FullAnalysisResult }) {
         ))}
       </div>
       {rf.suggestions.map((s, i) => (
-        <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[s.priority] ?? "border-l-border"}`}>
+        <div key={s.title ?? i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[s.priority] ?? "border-l-border"}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <SevBadge sev={s.priority} />
             <span className="font-semibold text-foreground text-sm">{s.title}</span>
@@ -1210,7 +1210,7 @@ function DeadCodeTab({ r }: { r: FullAnalysisResult }) {
         <span>Dead ratio: <strong className="text-foreground">{(d.dead_ratio * 100).toFixed(1)}%</strong></span>
       </div>
       {d.issues.map((issue, i) => (
-        <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-1 border-l-4 ${SEV_BORDER[issue.severity] ?? "border-l-border"}`}>
+        <div key={issue.title ?? i} className={`bg-secondary/30 rounded-xl p-4 space-y-1 border-l-4 ${SEV_BORDER[issue.severity] ?? "border-l-border"}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <SevBadge sev={issue.severity} />
             {issue.removable && (
@@ -1305,7 +1305,7 @@ function DocsTab({ r }: { r: FullAnalysisResult }) {
           </thead>
           <tbody>
             {d.symbol_scores.slice(0, 15).map((s, i) => (
-              <tr key={i} className="border-b border-border/40">
+              <tr key={s.name ?? i} className="border-b border-border/40">
                 <td className="py-2 pr-4 font-mono text-foreground">{s.name}</td>
                 <td className="py-2 pr-4 text-muted-foreground">{s.kind}</td>
                 <td className={`py-2 pr-4 font-bold ${s.has_docstring ? scoreText(s.quality_score) : "text-destructive"}`}>
@@ -1334,7 +1334,7 @@ function PerformanceTab({ r }: { r: FullAnalysisResult }) {
         ))}
       </div>
       {p.issues.map((issue, i) => (
-        <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[issue.severity] ?? "border-l-border"}`}>
+        <div key={issue.title ?? i} className={`bg-secondary/30 rounded-xl p-4 space-y-2 border-l-4 ${SEV_BORDER[issue.severity] ?? "border-l-border"}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <SevBadge sev={issue.severity} />
             <span className="font-semibold text-sm text-foreground">{issue.title}</span>
@@ -1389,7 +1389,7 @@ function DepsTab({ r }: { r: FullAnalysisResult }) {
         <div>
           <h3 className="text-sm font-semibold text-foreground mb-2">Coupling Issues</h3>
           {d.issues.map((issue, i) => (
-            <div key={i} className="bg-secondary/20 rounded-lg p-3 mb-2 space-y-1">
+            <div key={issue.title ?? i} className="bg-secondary/20 rounded-lg p-3 mb-2 space-y-1">
               <div className="flex items-center gap-2">
                 <SevBadge sev={issue.severity} />
                 <span className="text-sm font-medium text-foreground">{issue.title}</span>
@@ -1432,7 +1432,7 @@ function ReadabilityTab({ r }: { r: FullAnalysisResult }) {
           <h3 className="text-sm font-semibold text-foreground mb-2">Top Improvements</h3>
           <ul className="space-y-2">
             {rd.top_improvements.map((tip, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <li key={`tip-${i}`} className="flex items-start gap-2 text-sm text-muted-foreground">
                 <CheckCircle className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                 {tip}
               </li>
@@ -1770,7 +1770,7 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
       )}
       <p className="text-sm text-muted-foreground">{sorted.length} fix recommendation{sorted.length !== 1 ? "s" : ""} — sorted by priority</p>
       {sorted.map((fix, i) => (
-        <div key={i} className="bg-card border border-border rounded-xl overflow-hidden">
+        <div key={fix.title ?? i} className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="flex items-center gap-3 px-5 py-3 bg-secondary/20 border-b border-border">
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase shrink-0 ${PRI_CLS[fix.priority]}`}>{fix.priority}</span>
             <span className="text-xs text-muted-foreground font-medium">{fix.category}</span>
@@ -1890,7 +1890,7 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
         <p className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Actionable Summary</p>
         <ul className="space-y-2">
           {data.actionable_summary.map((item, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+            <li key={`as-${i}`} className="flex items-start gap-2 text-sm text-foreground">
               <span className="text-primary font-bold shrink-0">{i + 1}.</span>
               {item}
             </li>
@@ -2550,7 +2550,7 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
                       {prResult.issue_urls.length} critical finding{prResult.issue_urls.length > 1 ? "s" : ""} opened as GitHub Issues:
                     </p>
                     {prResult.issue_urls.map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                      <a key={url} href={url} target="_blank" rel="noopener noreferrer"
                         className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:underline">
                         <ExternalLink className="w-3 h-3" /> Issue #{i + 1}
                       </a>
