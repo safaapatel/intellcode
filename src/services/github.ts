@@ -7,9 +7,23 @@
 const TOKEN_KEY = "intellcode_github_token";
 const USER_KEY = "intellcode_github_user";
 
-// GitHub OAuth tokens are stored in sessionStorage (cleared on tab close) rather than
-// localStorage so they are not accessible across sessions or by other browser tabs.
-const _store = sessionStorage;
+// GitHub OAuth tokens are stored in localStorage so the connection persists across
+// sessions without requiring the user to reconnect every time.
+const _store = localStorage;
+
+// One-time migration: move any existing token from sessionStorage to localStorage.
+(function migrateLegacyToken() {
+  try {
+    const tok = sessionStorage.getItem(TOKEN_KEY);
+    const usr = sessionStorage.getItem(USER_KEY);
+    if (tok && !localStorage.getItem(TOKEN_KEY)) {
+      localStorage.setItem(TOKEN_KEY, tok);
+      if (usr) localStorage.setItem(USER_KEY, usr);
+    }
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(USER_KEY);
+  } catch { /* ignore */ }
+})();
 
 export interface GitHubUser {
   login: string;

@@ -3,7 +3,6 @@ import { AppNavigation } from "@/components/app/AppNavigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { getGitHubToken, isGitHubConnected } from "@/services/github";
 import {
   Github, AlertTriangle, CheckCircle, Loader2,
@@ -180,7 +179,7 @@ export default function PRReview() {
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Pull Request URL</label>
             <Input
-              placeholder="https://github.com/owner/repo/pull/123"
+              placeholder="Paste your GitHub pull request URL here..."
               value={prUrl}
               onChange={(e) => setPrUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
