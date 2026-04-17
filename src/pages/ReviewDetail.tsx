@@ -630,6 +630,21 @@ function SecurityTab({
         conformal={r.security.conformal_interval}
       />
 
+      {/* Re-analyze hint for old entries without taint data */}
+      {!enriched && findings.length > 0 && r.code && (
+        <div className="rounded-lg border border-border bg-secondary/20 px-4 py-3 flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">
+            Taint-flow analysis not available for this entry.
+          </span>
+          <a
+            href="/"
+            className="text-xs text-primary hover:underline ml-auto shrink-0"
+          >
+            Re-analyze to enable
+          </a>
+        </div>
+      )}
+
       {/* Taint analysis summary banner */}
       {enriched && (
         <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex flex-wrap items-center gap-3">
