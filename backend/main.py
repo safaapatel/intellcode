@@ -3375,47 +3375,91 @@ def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippe
         ),
     }
 
-    def _make_block(bad: str, good: str) -> str:
-        return (
+    def _make_block(bad: str, good: str, note: str = "") -> str:
+        out = (
             f"**Before (vulnerable):**\n```python\n{bad}\n```\n\n"
             f"**After (fixed):**\n```python\n{good}\n```"
         )
+        if note:
+            out += f"\n\n> {note}"
+        return out
 
-    # Try to auto-fix the actual line
+    def _make_canonical(bad: str, good: str) -> str:
+        return _make_block(bad, good, note="Example uses a representative variable name — adapt to your actual code.")
+
+    # Try to auto-fix the actual line using real code
     if before:
         stripped = before
 
         if vuln_type == "sql_injection":
+            # String concat pattern: "..." + var  OR  f"...{var}..."
             m = re.search(r'(["\'][^"\']*["\'])\s*\+\s*(\w+)', stripped)
             if m:
                 var = m.group(2)
                 fixed = re.sub(r'["\'][^"\']*["\'][\s]*\+[\s]*\w+',
-                               f'"%s"  # then: cursor.execute(query, ({var},))', stripped, count=1)
-                return _make_block(stripped, fixed)
+                               f'"%s"', stripped, count=1)
+                return _make_block(
+                    stripped,
+                    fixed + f"\n# Pass value safely: cursor.execute(query, ({var},))"
+                )
+            # f-string pattern: f"...{var}..."
+            m = re.search(r'\{(\w+)\}', stripped)
+            if m and "execute" not in stripped:
+                var = m.group(1)
+                return _make_block(
+                    stripped,
+                    f'# Replace f-string with parameterized query:\ncursor.execute("... WHERE col = %s", ({var},))'
+                )
 
-        if vuln_type == "command_injection" and "os.system" in stripped:
-            fixed = re.sub(r'os\.system\((.+)\)',
-                           r'subprocess.run(\1, shell=False)  # pass args as list', stripped)
-            if fixed != stripped:
-                return _make_block(stripped, fixed)
+        if vuln_type == "command_injection":
+            if "os.system" in stripped:
+                fixed = re.sub(r'os\.system\((.+)\)',
+                               r'subprocess.run(\1, shell=False)', stripped)
+                if fixed != stripped:
+                    return _make_block(stripped, fixed + "  # shell=False prevents injection")
+            if "shell=True" in stripped:
+                # Extract the command string variable
+                m = re.search(r'subprocess\.\w+\((.+),\s*shell=True\)', stripped)
+                if m:
+                    cmd = m.group(1).strip()
+                    return _make_block(
+                        stripped,
+                        re.sub(r',\s*shell=True', '', stripped) + "  # pass cmd as list: ['cmd', arg]",
+                    )
 
-        if vuln_type in ("hardcoded_secret", "hardcoded_password"):
+        if vuln_type in ("hardcoded_secret", "hardcoded_credential", "hardcoded_password"):
             m = re.match(r'^(\s*)([\w.]+)\s*=\s*["\'].*["\']', stripped)
             if m:
                 indent, var = m.group(1), m.group(2)
                 env_key = re.sub(r'[^A-Z0-9]', '_', var.upper())
-                fixed = f'{indent}{var} = os.environ["{env_key}"]'
+                fixed = f'{indent}{var} = os.environ["{env_key}"]  # store secret in env'
                 return _make_block(stripped, fixed)
 
-        if vuln_type == "xss":
-            fixed = stripped.replace("innerHTML", "textContent")
-            if fixed != stripped:
+        if vuln_type == "path_traversal":
+            # open(some_path) or open(base + path)
+            m = re.search(r'open\((.+)\)', stripped)
+            if m:
+                path_expr = m.group(1).strip().rstrip(",")
+                fixed = (
+                    f"_safe = os.path.realpath(os.path.join(BASE_DIR, {path_expr}))\n"
+                    f"if not _safe.startswith(os.path.realpath(BASE_DIR)):\n"
+                    f"    raise ValueError('Path traversal blocked')\n"
+                    f"open(_safe)"
+                )
                 return _make_block(stripped, fixed)
 
-        if vuln_type in ("eval_injection",):
-            fixed = stripped.replace("eval(", "ast.literal_eval(")
+        if vuln_type in ("eval_injection", "code_injection"):
+            fixed = stripped.replace("eval(", "ast.literal_eval(").replace("exec(", "# exec removed: ")
             if fixed != stripped:
-                return _make_block(stripped, fixed)
+                return _make_block(stripped, fixed,
+                    note="ast.literal_eval only accepts literals (str/int/list/dict). "
+                         "For expressions, use a safe sandboxed evaluator.")
+
+        if vuln_type == "insecure_deserialization":
+            fixed = re.sub(r'pickle\.loads?\((.+)\)', r'json.loads(\1)', stripped)
+            if fixed != stripped:
+                return _make_block(stripped, fixed,
+                    note="json.loads only accepts JSON — validate the schema after parsing.")
 
         if vuln_type in ("insecure_random",) and "random." in stripped:
             fixed = re.sub(r'random\.\w+\([^)]*\)', 'secrets.token_hex(32)', stripped)
@@ -3423,19 +3467,29 @@ def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippe
                 return _make_block(stripped, fixed)
 
         if vuln_type == "debug_enabled":
-            fixed = stripped.replace("debug=True", 'debug=os.environ.get("DEBUG","false")=="true"')
+            fixed = stripped.replace("debug=True", 'debug=os.environ.get("FLASK_DEBUG","false")=="true"')
             if fixed != stripped:
                 return _make_block(stripped, fixed)
 
-    # Fall back to canonical example for this vuln type
+        if vuln_type == "xss":
+            fixed = stripped.replace("innerHTML", "textContent")
+            if fixed != stripped:
+                return _make_block(stripped, fixed)
+
+        if vuln_type == "weak_crypto":
+            fixed = re.sub(r'hashlib\.(md5|sha1)\((.+)\)', r'hashlib.sha256(\2)', stripped)
+            if fixed != stripped:
+                return _make_block(stripped, fixed,
+                    note="For passwords use bcrypt/argon2; SHA-256 is safe for checksums only.")
+
+    # Fall back to canonical example
     if vuln_type in EXAMPLES:
         bad, good = EXAMPLES[vuln_type]
-        return _make_block(bad, good)
+        return _make_canonical(bad, good)
 
     # Last resort — generic advice
     return (
         f"**Issue:** {description}\n\n"
-        f"No automated fix template available for `{vuln_type}`.\n\n"
         f"**General guidance:** validate and sanitize all untrusted input, "
         f"apply the principle of least privilege, and consult OWASP for `{vuln_type}` remediation."
     )
@@ -3568,33 +3622,53 @@ async def analyze_pr(req: PRAnalyzeRequest, request: Request):
         except Exception as e:
             logger.warning("Failed to post PR summary comment: %s", e)
 
-        # Post inline review comments for security findings with suggestions
+        # Post inline review comments for security findings with suggestions.
+        # Skip findings that are low-confidence or filtered as false positives —
+        # posting unreliable comments is worse than posting nothing.
         inline_comments = []
         for r in file_results:
             if r.get("skipped"):
                 continue
-            # Build a lookup of line → code text for suggestion blocks
             file_source = r.get("_source", "")
             source_lines = file_source.splitlines() if file_source else []
+            language = detect_language(r["filename"], "python")
+            is_ood_file = _is_ood(language, len(source_lines), model="security")
 
             for finding in r.get("security", {}).get("findings", []):
-                lineno = finding.get("lineno", 1)
+                lineno     = finding.get("lineno", 1)
+                confidence = finding.get("confidence", 0.0)
                 if not lineno or lineno <= 0:
                     continue
-                vuln_type  = finding.get("vuln_type", "")
-                title      = finding.get("title", "")
-                severity   = finding.get("severity", "low").upper()
-                description = finding.get("description", "")
-                cwe        = finding.get("cwe", "")
-                confidence = finding.get("confidence", 0)
+                # Skip false positives (literal args, internal sources)
+                if finding.get("false_positive"):
+                    continue
+                # Skip low-confidence findings on OOD code — too noisy
+                if is_ood_file and confidence < 0.70:
+                    continue
+                # Skip very low confidence even for in-distribution code
+                if confidence < 0.45:
+                    continue
 
-                # Try to get the actual offending line for the suggestion
+                vuln_type   = finding.get("vuln_type", "")
+                title       = finding.get("title", "")
+                severity    = finding.get("severity", "low").upper()
+                description = finding.get("description", "")
+                cwe         = finding.get("cwe", "")
+                snippet     = finding.get("snippet", "")
+                context_sentence = finding.get("context_sentence", "")
+
                 code_line = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
-                fix_block = _generate_fix_suggestion(vuln_type, code_line, description)
+                fix_block = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
+
+                # Use context_sentence when available — it references real variable names
+                body_description = context_sentence if context_sentence else description
+                taint_info = ""
+                if finding.get("taint_path") and finding.get("user_controlled"):
+                    taint_info = f"\n\n**Data flow:** `{finding['taint_path']}`"
 
                 body = (
                     f"### {severity} — {title}\n\n"
-                    f"{description}\n\n"
+                    f"{body_description}{taint_info}\n\n"
                     f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
                     f"#### Suggested fix\n\n"
                     f"{fix_block}"
