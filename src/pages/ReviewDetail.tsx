@@ -594,6 +594,183 @@ function ExploitabilityBar({ score }: { score: number }) {
   );
 }
 
+// ─── Root cause descriptions (mirrors backend context_analyzer._ROOT_CAUSE_DESCRIPTIONS) ─
+const ROOT_CAUSE_DESC: Record<string, string> = {
+  sql_injection:             "String concatenation into SQL lets an attacker alter query logic and read or modify any data in the database.",
+  command_injection:         "Shell metacharacters in user input allow arbitrary OS command execution on the server.",
+  eval_injection:            "eval() / exec() on user-supplied input allows arbitrary Python code execution (full RCE).",
+  code_injection:            "Dynamic code execution on user input allows arbitrary Python code execution (full RCE).",
+  path_traversal:            "Unsanitized file paths let attackers escape the intended directory and read or overwrite arbitrary files.",
+  insecure_deserialization:  "pickle.loads() on untrusted bytes executes arbitrary code during deserialization.",
+  hardcoded_secret:          "API keys and passwords in source code are exposed to anyone with repo access or in compiled binaries.",
+  hardcoded_credential:      "Credentials in source code are exposed to anyone with repo access or in compiled binaries.",
+  ssrf:                      "User-controlled URLs in server-side requests allow attackers to reach internal services and metadata endpoints.",
+  xss:                       "Unsanitized output reflected into HTML lets attackers inject scripts that run in other users' browsers.",
+  weak_crypto:               "MD5/SHA-1 are broken for password hashing — offline brute-force cracks them in seconds.",
+  weak_cryptography:         "Weak cryptographic algorithms provide insufficient protection against modern attacks.",
+  debug_enabled:             "Debug mode exposes stack traces, interactive consoles, and internal state to the network.",
+  insecure_random:           "random.* is predictable — use secrets.* for tokens, session IDs, and cryptographic values.",
+  open_redirect:             "Unvalidated redirect targets let attackers redirect users to malicious sites after login.",
+  missing_auth:              "Endpoints without authentication checks are accessible to unauthenticated users.",
+};
+
+// Human-readable label for a vuln_type key
+function vulnLabel(vuln_type: string): string {
+  return vuln_type
+    .split("_")
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// A single finding card (used inside groups and standalone)
+function FindingCard({
+  f,
+  fb,
+  onReview,
+}: {
+  f: FullAnalysisResult["security"]["findings"][0];
+  fb?: FindingFeedback;
+  onReview: (key: string, title: string) => void;
+}) {
+  const key = `${f.title}-${f.lineno}`;
+  return (
+    <div className={`bg-secondary/30 rounded-xl p-4 space-y-2.5 border-l-4 ${SEV_BORDER[f.severity] ?? "border-l-border"}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <SevBadge sev={f.severity} />
+        <DecisionBadge decision={f.decision} />
+        {f.user_controlled && (
+          <span className="text-[10px] font-bold bg-destructive/15 text-destructive px-2 py-0.5 rounded-full uppercase tracking-wide">
+            user-controlled
+          </span>
+        )}
+        <span className="font-semibold text-foreground text-sm">{f.title}</span>
+        <span className="text-xs text-muted-foreground ml-auto">{f.cwe} · line {f.lineno}</span>
+      </div>
+
+      {f.context_sentence ? (
+        <p className="text-sm text-foreground/90 leading-relaxed">{f.context_sentence}</p>
+      ) : (
+        <p className="text-sm text-muted-foreground">{f.description}</p>
+      )}
+
+      {f.taint_path && f.taint_source && !["unknown", "constant", "internal"].includes(f.taint_source) && (
+        <div className="bg-secondary/60 rounded px-3 py-2">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Data flow</p>
+          <p className="text-xs font-mono text-foreground/80 break-all">{f.taint_path}</p>
+        </div>
+      )}
+
+      {f.snippet && (
+        <pre className="bg-destructive/10 border border-destructive/20 rounded p-3 text-xs font-mono text-foreground overflow-x-auto">
+          {f.snippet}
+        </pre>
+      )}
+
+      {f.exploitability !== undefined && <ExploitabilityBar score={f.exploitability} />}
+
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs text-muted-foreground">
+          Confidence: {Math.round(f.confidence * 100)}%
+          {f.decision && f.decision.action !== "unreliable" && (
+            <span className="ml-2 italic">{f.decision.explanation}</span>
+          )}
+        </p>
+        {fb ? (
+          <div className="flex items-center gap-2">
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${FB_BADGE[fb.status]}`}>
+              {FB_LABEL[fb.status]}
+            </span>
+            <span className="text-xs text-muted-foreground">by {fb.reviewer}</span>
+            <button className="text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>Edit</button>
+          </div>
+        ) : (
+          <button className="flex items-center gap-1 text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>
+            <MessageSquare className="w-3 h-3" />
+            Add Review
+          </button>
+        )}
+      </div>
+      {fb?.reasoning && (
+        <p className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">"{fb.reasoning}"</p>
+      )}
+    </div>
+  );
+}
+
+// A grouped finding block: header with root cause + collapsible instances
+function FindingGroup({
+  vulnType,
+  findings,
+  feedbacks,
+  onReview,
+}: {
+  vulnType: string;
+  findings: FullAnalysisResult["security"]["findings"];
+  feedbacks: Record<string, FindingFeedback>;
+  onReview: (key: string, title: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const maxSev = findings.reduce<string>((best, f) => {
+    const order = ["critical", "high", "medium", "low"];
+    return order.indexOf(f.severity) < order.indexOf(best) ? f.severity : best;
+  }, "low");
+  const userCtrl = findings.filter(f => f.user_controlled).length;
+  const rootCause = ROOT_CAUSE_DESC[vulnType];
+
+  // If only one finding, skip the group wrapper
+  if (findings.length === 1) {
+    const key = `${findings[0].title}-${findings[0].lineno}`;
+    return <FindingCard f={findings[0]} fb={feedbacks[key]} onReview={onReview} />;
+  }
+
+  return (
+    <div className={`rounded-xl border border-border overflow-hidden border-l-4 ${SEV_BORDER[maxSev] ?? "border-l-border"}`}>
+      {/* Group header */}
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 bg-secondary/40 hover:bg-secondary/60 transition-colors text-left"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <SevBadge sev={maxSev} />
+        <span className="font-semibold text-foreground text-sm">{vulnLabel(vulnType)}</span>
+        <span className="text-xs bg-secondary border border-border rounded-full px-2 py-0.5 text-muted-foreground font-medium">
+          {findings.length} instance{findings.length > 1 ? "s" : ""}
+        </span>
+        {userCtrl > 0 && (
+          <span className="text-[10px] font-bold bg-destructive/15 text-destructive px-2 py-0.5 rounded-full uppercase tracking-wide">
+            {userCtrl} user-controlled
+          </span>
+        )}
+        <ChevronDown className={`w-4 h-4 text-muted-foreground ml-auto shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Root cause explanation — always visible */}
+      {rootCause && (
+        <div className="px-4 py-2 bg-secondary/20 border-b border-border">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Root cause: </span>{rootCause}
+          </p>
+        </div>
+      )}
+
+      {/* Collapsible instances */}
+      {expanded && (
+        <div className="p-3 space-y-3">
+          {findings.map((f, i) => {
+            const key = `${f.title}-${f.lineno}`;
+            return <FindingCard key={i} f={f} fb={feedbacks[key]} onReview={onReview} />;
+          })}
+        </div>
+      )}
+
+      {!expanded && (
+        <div className="px-4 py-2 text-xs text-muted-foreground">
+          Lines: {findings.map(f => f.lineno).join(", ")} — click to expand
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SecurityTab({
   r,
   feedbacks,
@@ -611,15 +788,36 @@ function SecurityTab({
   if (findings.length === 0 && fps.length === 0)
     return <Empty msg="No security vulnerabilities detected." />;
 
-  // Sort by exploitability desc, then decision priority
+  const sevOrder = ["critical", "high", "medium", "low"];
   const priorityOf = (f: typeof findings[0]) =>
-    f.decision?.priority ?? (f.severity === "critical" ? 1 : f.severity === "high" ? 2 : 3);
-  const sorted = [...findings].sort((a, b) => {
-    const expDiff = (b.exploitability ?? 5) - (a.exploitability ?? 5);
-    return expDiff !== 0 ? expDiff : priorityOf(a) - priorityOf(b);
-  });
+    f.decision?.priority ?? (sevOrder.indexOf(f.severity) + 1);
+
+  // Group by vuln_type, sort within each group by exploitability desc
+  const groups = useMemo(() => {
+    const map = new Map<string, typeof findings>();
+    for (const f of findings) {
+      const key = f.vuln_type ?? "unknown";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(f);
+    }
+    // Sort instances within each group
+    for (const [, grp] of map) {
+      grp.sort((a, b) => {
+        const expDiff = (b.exploitability ?? 5) - (a.exploitability ?? 5);
+        return expDiff !== 0 ? expDiff : priorityOf(a) - priorityOf(b);
+      });
+    }
+    // Sort groups by their worst finding
+    return [...map.entries()].sort(([, a], [, b]) => {
+      const topA = a[0];
+      const topB = b[0];
+      const expDiff = (topB.exploitability ?? 5) - (topA.exploitability ?? 5);
+      return expDiff !== 0 ? expDiff : priorityOf(topA) - priorityOf(topB);
+    });
+  }, [findings]);
 
   const userControlledCount = findings.filter(f => f.user_controlled).length;
+  const uniqueVulnTypes = groups.length;
 
   return (
     <div className="space-y-4">
@@ -636,10 +834,7 @@ function SecurityTab({
           <span className="text-xs text-muted-foreground">
             Taint-flow analysis not available for this entry.
           </span>
-          <a
-            href="/"
-            className="text-xs text-primary hover:underline ml-auto shrink-0"
-          >
+          <a href="/" className="text-xs text-primary hover:underline ml-auto shrink-0">
             Re-analyze to enable
           </a>
         </div>
@@ -659,7 +854,9 @@ function SecurityTab({
               {fps.length} likely false positive{fps.length > 1 ? "s" : ""} filtered
             </span>
           )}
-          <span className="text-xs text-muted-foreground ml-auto">Data-flow traced · sorted by exploitability</span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {uniqueVulnTypes} pattern type{uniqueVulnTypes > 1 ? "s" : ""} · {findings.length} instance{findings.length > 1 ? "s" : ""} · sorted by exploitability
+          </span>
         </div>
       )}
 
@@ -672,77 +869,16 @@ function SecurityTab({
         ))}
       </div>
 
-      {sorted.map((f, i) => {
-        const key = `${f.title}-${f.lineno}`;
-        const fb = feedbacks[key];
-        return (
-          <div key={i} className={`bg-secondary/30 rounded-xl p-4 space-y-2.5 border-l-4 ${SEV_BORDER[f.severity] ?? "border-l-border"}`}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <SevBadge sev={f.severity} />
-              <DecisionBadge decision={f.decision} />
-              {f.user_controlled && (
-                <span className="text-[10px] font-bold bg-destructive/15 text-destructive px-2 py-0.5 rounded-full uppercase tracking-wide">
-                  user-controlled
-                </span>
-              )}
-              <span className="font-semibold text-foreground text-sm">{f.title}</span>
-              <span className="text-xs text-muted-foreground ml-auto">{f.cwe} · line {f.lineno}</span>
-            </div>
-
-            {/* AI context sentence — replaces generic description when available */}
-            {f.context_sentence ? (
-              <p className="text-sm text-foreground/90 leading-relaxed">{f.context_sentence}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">{f.description}</p>
-            )}
-
-            {/* Taint data-flow path */}
-            {f.taint_path && f.taint_source && !["unknown", "constant", "internal"].includes(f.taint_source) && (
-              <div className="bg-secondary/60 rounded px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Data flow</p>
-                <p className="text-xs font-mono text-foreground/80 break-all">{f.taint_path}</p>
-              </div>
-            )}
-
-            {f.snippet && (
-              <pre className="bg-destructive/10 border border-destructive/20 rounded p-3 text-xs font-mono text-foreground overflow-x-auto">
-                {f.snippet}
-              </pre>
-            )}
-
-            {/* Exploitability bar */}
-            {f.exploitability !== undefined && (
-              <ExploitabilityBar score={f.exploitability} />
-            )}
-
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs text-muted-foreground">
-                Confidence: {Math.round(f.confidence * 100)}%
-                {f.decision && f.decision.action !== "unreliable" && (
-                  <span className="ml-2 italic">{f.decision.explanation}</span>
-                )}
-              </p>
-              {fb ? (
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${FB_BADGE[fb.status]}`}>
-                    {FB_LABEL[fb.status]}
-                  </span>
-                  <span className="text-xs text-muted-foreground">by {fb.reviewer}</span>
-                  <button className="text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>Edit</button>
-                </div>
-              ) : (
-                <button className="flex items-center gap-1 text-xs text-primary hover:underline" onClick={() => onReview(key, f.title)}>
-                  <MessageSquare className="w-3 h-3" />
-                  Add Review
-                </button>
-              )}
-            </div>
-            {fb?.reasoning && (
-              <p className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">"{fb.reasoning}"</p>
-            )}
-          </div>
-        );
-      })}
+      {/* Grouped findings */}
+      {groups.map(([vulnType, grpFindings]) => (
+        <FindingGroup
+          key={vulnType}
+          vulnType={vulnType}
+          findings={grpFindings}
+          feedbacks={feedbacks}
+          onReview={onReview}
+        />
+      ))}
 
       {/* False positives section */}
       {fps.length > 0 && (
