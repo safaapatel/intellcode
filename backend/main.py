@@ -666,10 +666,12 @@ def get_stats():
     models_ready = _count_ready()
     if not _analysis_cache:
         return {"total_analyses": 0, "avg_score": None, "models_ready": models_ready}
-    scores = [v["overall_score"] for v in _analysis_cache.values() if v.get("overall_score") is not None]
+    # _analysis_cache stores {data: result_dict, ts: float} — unwrap via ["data"]
+    entries = [v["data"] for v in _analysis_cache.values() if "data" in v]
+    scores = [e["overall_score"] for e in entries if e.get("overall_score") is not None]
     sec_findings = sum(
-        len(v.get("security", {}).get("findings", []))
-        for v in _analysis_cache.values()
+        len(e.get("security", {}).get("findings", []))
+        for e in entries
     )
     return {
         "total_analyses": len(_analysis_cache),
@@ -1167,7 +1169,7 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
     Independent models execute in parallel via ThreadPoolExecutor.
     Results are cached by (code + filename + git_metadata) hash.
     """
-    _check_rate_limit(request)
+    # Note: rate limiting is handled by rate_limit_middleware for all /analyze/* paths
     cache_key = _cache_key(req.code, req.filename, req.git_metadata)
     cached = _cache_get(_analysis_cache, cache_key)
     if cached is not None:
@@ -2096,6 +2098,28 @@ async def analyze_stream(req: AnalyzeRequest):
         response_dict["dependencies"] = deps_out
         response_dict["readability"] = readability_out
 
+        # --- Taint enrichment (same as /analyze) ---
+        raw_findings = response_dict.get("security", {}).get("findings", [])
+        if raw_findings and language == "python":
+            try:
+                enriched_f = _enrich_findings(source, raw_findings)
+                real = [f for f in enriched_f if not f.get("false_positive")]
+                fps  = [f for f in enriched_f if f.get("false_positive")]
+                response_dict["security"]["findings"] = real
+                response_dict["security"]["false_positives"] = fps
+                response_dict["security"]["taint_enriched"] = True
+                sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+                for f in real:
+                    sev = f.get("severity", "low").lower()
+                    sev_counts[sev] = sev_counts.get(sev, 0) + 1
+                response_dict["security"]["summary"] = {
+                    **response_dict["security"].get("summary", {}),
+                    **sev_counts,
+                    "total": len(real),
+                }
+            except Exception as _e:
+                logger.warning("Stream taint enrichment failed (non-fatal): %s", _e)
+
         # --- Decision layer: attach per-finding decisions + trust summary ---
         # Estimate SLOC from source line count (fast proxy, no extra compute)
         sloc_val = len([l for l in source.splitlines() if l.strip() and not l.strip().startswith("#")])
@@ -2579,7 +2603,6 @@ async def analyze_batch(req: BatchAnalyzeRequest, request: Request):
     - Each file is independently cached
     - fail_fast=true returns 207 with partial results on first error
     """
-    _check_rate_limit(request)
     loop = asyncio.get_running_loop()
 
     async def _analyse_one(f: BatchFileRequest) -> dict:
@@ -2656,7 +2679,6 @@ async def analyze_batch_stream(req: BatchAnalyzeRequest, request: Request):
     This lets the frontend render per-file progress bars rather than waiting for
     all files to finish before showing anything.
     """
-    _check_rate_limit(request)
     loop = asyncio.get_running_loop()
 
     async def _generate():
@@ -3427,7 +3449,6 @@ async def analyze_pr(req: PRAnalyzeRequest, request: Request):
 
     Returns the full analysis results per file plus GitHub comment URLs.
     """
-    _check_rate_limit(request)
     owner, repo, pr_number = _parse_pr_url(req.pr_url)
     token = req.github_token
 
@@ -3659,7 +3680,6 @@ async def create_pr(req: CreatePRRequest, request: Request):
     4. Post `analysis_summary` as a PR comment
     Returns { pr_url, pr_number, comment_url, branch }
     """
-    _check_rate_limit(request)
     token = req.github_token
     owner, repo = req.repo_full_name.split("/", 1)
     loop = asyncio.get_running_loop()
