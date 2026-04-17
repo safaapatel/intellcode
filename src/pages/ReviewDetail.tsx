@@ -631,7 +631,7 @@ function SecurityTab({
       />
 
       {/* Re-analyze hint for old entries without taint data */}
-      {!enriched && findings.length > 0 && r.code && (
+      {!enriched && findings.length > 0 && (
         <div className="rounded-lg border border-border bg-secondary/20 px-4 py-3 flex items-center gap-3">
           <span className="text-xs text-muted-foreground">
             Taint-flow analysis not available for this entry.
