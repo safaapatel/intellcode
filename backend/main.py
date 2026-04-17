@@ -3420,13 +3420,14 @@ def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippe
 
 
 @app.post("/github/analyze-pr", tags=["github"])
-async def analyze_pr(req: PRAnalyzeRequest):
+async def analyze_pr(req: PRAnalyzeRequest, request: Request):
     """
     Fetch a GitHub PR's changed files, run analysis, and optionally post
     review comments inline on risky lines + a summary comment.
 
     Returns the full analysis results per file plus GitHub comment URLs.
     """
+    _check_rate_limit(request)
     owner, repo, pr_number = _parse_pr_url(req.pr_url)
     token = req.github_token
 
@@ -3633,15 +3634,15 @@ async def analyze_pr(req: PRAnalyzeRequest):
 # ---------------------------------------------------------------------------
 
 class CreatePRRequest(BaseModel):
-    github_token: str
-    repo_full_name: str          # "owner/repo"
-    filename: str                # path inside the repo, e.g. "src/utils.py"
-    code: str
-    branch_name: str = ""        # auto-generated if empty
-    pr_title: str = ""
-    base_branch: str = ""        # defaults to repo default branch
-    analysis_summary: str = ""   # pre-built markdown summary
-    security_findings: list = [] # list of {vuln_type, title, severity, description, cwe, confidence, lineno}
+    github_token: str = Field(..., min_length=1, max_length=200)
+    repo_full_name: str = Field(..., pattern=r"^[\w.\-]+/[\w.\-]+$")  # "owner/repo"
+    filename: str = Field(..., min_length=1, max_length=500)
+    code: str = Field(..., max_length=500_000)   # same ceiling as AnalyzeRequest
+    branch_name: str = Field(default="", max_length=200)
+    pr_title: str = Field(default="", max_length=200)
+    base_branch: str = Field(default="", max_length=200)
+    analysis_summary: str = Field(default="", max_length=20_000)
+    security_findings: list = Field(default=[])
 
 
 def _b64encode(s: str) -> str:
@@ -3650,7 +3651,7 @@ def _b64encode(s: str) -> str:
 
 
 @app.post("/github/create-pr", tags=["github"])
-async def create_pr(req: CreatePRRequest):
+async def create_pr(req: CreatePRRequest, request: Request):
     """
     1. Create a new branch off the repo's default branch
     2. Commit `code` to `filename` on that branch
@@ -3658,6 +3659,7 @@ async def create_pr(req: CreatePRRequest):
     4. Post `analysis_summary` as a PR comment
     Returns { pr_url, pr_number, comment_url, branch }
     """
+    _check_rate_limit(request)
     token = req.github_token
     owner, repo = req.repo_full_name.split("/", 1)
     loop = asyncio.get_running_loop()

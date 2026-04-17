@@ -108,20 +108,62 @@ def _get_line(code: str, lineno: int) -> str:
     return ""
 
 
+def _collect_call_block(code: str, lineno: int, max_extra: int = 10) -> str:
+    """
+    Starting at lineno, collect enough lines to form a syntactically complete
+    call expression by tracking open/close parenthesis depth.
+    Returns the joined block (may be multi-line).
+    """
+    lines = code.splitlines()
+    if lineno < 1 or lineno > len(lines):
+        return ""
+
+    block_lines: list[str] = []
+    depth = 0
+    for i in range(lineno - 1, min(len(lines), lineno - 1 + max_extra + 1)):
+        block_lines.append(lines[i])
+        for ch in lines[i]:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+        if depth <= 0 and block_lines:
+            break   # parentheses balanced — we have the full call
+
+    return "\n".join(block_lines)
+
+
 def _find_call_arg(code: str, lineno: int) -> str:
     """
-    Parse the line at lineno and extract the first argument to the function call.
-    Returns the argument as a string expression.
+    Extract the first argument of the function call starting at lineno.
+    Handles multi-line calls by collecting lines until parentheses balance.
+    Handles compound statements (with/if/for/while) that need a body to parse.
+    Returns the argument as a string expression, or "" if none found.
     """
-    line = _get_line(code, lineno)
-    try:
-        tree = ast.parse(line, mode="eval")
-    except SyntaxError:
-        # Try wrapping as a statement
-        try:
-            tree = ast.parse(line)
-        except SyntaxError:
-            return ""
+    block = _collect_call_block(code, lineno)
+    if not block:
+        return ""
+
+    tree = None
+    candidates = [block]
+    # If the block ends with ':' (compound stmt stub), append a minimal body
+    # so the parser accepts it (e.g. `with open(...) as f:` needs a body)
+    stripped = block.rstrip()
+    if stripped.endswith(":"):
+        candidates.append(stripped + "\n    pass")
+
+    for candidate in candidates:
+        for mode in ("eval", "exec"):
+            try:
+                tree = ast.parse(candidate, mode=mode)
+                break
+            except SyntaxError:
+                continue
+        if tree is not None:
+            break
+
+    if tree is None:
+        return ""
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and node.args:

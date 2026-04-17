@@ -36,14 +36,29 @@ function load(): HistoryEntry[] {
   }
 }
 
+let _quotaWarned = false;
+
 function save(entries: HistoryEntry[]) {
   try {
     localStorage.setItem(KEY, JSON.stringify(entries));
+    _quotaWarned = false; // reset if write succeeds
   } catch (e) {
     if (e instanceof DOMException && (e.name === "QuotaExceededError" || e.code === 22)) {
-      // Storage full — trim to oldest half and retry
+      // Storage full — trim to oldest half and retry once
       const trimmed = entries.slice(0, Math.floor(entries.length / 2));
-      try { localStorage.setItem(KEY, JSON.stringify(trimmed)); } catch { /* give up */ }
+      try {
+        localStorage.setItem(KEY, JSON.stringify(trimmed));
+        if (!_quotaWarned) {
+          _quotaWarned = true;
+          console.warn(
+            "IntelliCode: localStorage quota exceeded — oldest review history entries were removed. " +
+            "Consider clearing history from the Dashboard to free space."
+          );
+        }
+      } catch {
+        // Both attempts failed — history is not persisted this save
+        console.error("IntelliCode: could not save review history (localStorage full).");
+      }
     }
   }
 }
