@@ -60,6 +60,10 @@ from features.code_metrics import compute_all_metrics, compute_metrics_for_langu
 from features.ast_extractor import extract_ast_features
 from features.security_patterns import scan_security_patterns, scan_security_patterns_for_language
 from features.multi_lang.adapter import detect_language
+from features.context_analyzer import (
+    enrich_findings as _enrich_findings,
+    build_pr_narrative as _build_pr_narrative,
+)
 from models.security_detection import EnsembleSecurityModel
 from models.complexity_prediction import ComplexityPredictionModel, ComplexityResult
 from models.bug_predictor import BugPredictionModel, GitMetadata
@@ -1156,7 +1160,7 @@ def _compute_overall_score(
     )))
 
 
-@app.post("/analyze", response_model=FullAnalysisResponse, tags=["analysis"])
+@app.post("/analyze", tags=["analysis"])
 async def analyze_full(req: AnalyzeRequest, request: Request):
     """
     Full analysis: runs all ML models and returns a combined report.
@@ -1310,8 +1314,36 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
         apcr=apcr_out or None,
         function_risk=func_risk_out or None,
     )
-    _cache_put(_analysis_cache, cache_key, response.model_dump())
-    return response
+    result_dict = response.model_dump()
+
+    # Enrich security findings with taint-flow analysis (local, no API calls)
+    raw_findings = result_dict.get("security", {}).get("findings", [])
+    if raw_findings and language == "python":
+        try:
+            enriched = await loop.run_in_executor(
+                _EXECUTOR, lambda: _enrich_findings(source, raw_findings)
+            )
+            # Filter confirmed false positives to their own list, keep real ones
+            real = [f for f in enriched if not f.get("false_positive")]
+            fps  = [f for f in enriched if f.get("false_positive")]
+            result_dict["security"]["findings"] = real
+            result_dict["security"]["false_positives"] = fps
+            result_dict["security"]["taint_enriched"] = True
+            # Rebuild summary counts after FP removal
+            sev_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for f in real:
+                sev = f.get("severity", "low").lower()
+                sev_counts[sev] = sev_counts.get(sev, 0) + 1
+            result_dict["security"]["summary"] = {
+                **result_dict["security"].get("summary", {}),
+                **sev_counts,
+                "total": len(real),
+            }
+        except Exception as _e:
+            logger.warning("Taint enrichment failed (non-fatal): %s", _e)
+
+    _cache_put(_analysis_cache, cache_key, result_dict)
+    return result_dict
 
 
 @app.post("/analyze/security", tags=["analysis"])
@@ -3713,53 +3745,59 @@ async def create_pr(req: CreatePRRequest):
 
     comment_url = ""
 
-    # Build a single PR comment with summary + per-finding suggested fixes.
-    # We use a regular issue comment (not inline review) so it always renders
-    # regardless of whether the file diff is empty.
-    source_lines = req.code.splitlines() if req.code else []
-
-    # Group findings by vuln_type so identical patterns don't repeat the same fix block
-    from collections import defaultdict
-    grouped: dict[str, list] = defaultdict(list)
-    for f in req.security_findings:
-        grouped[f.get("vuln_type", "unknown")].append(f)
-
-    findings_md = ""
-    for vuln_type, group in list(grouped.items())[:8]:   # cap at 8 unique types
-        # Representative finding (highest severity, first occurrence)
-        rep = sorted(group, key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
-            x.get("severity", "low"), 4))[0]
-
-        lineno      = rep.get("lineno", 0)
-        code_line   = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
-        title       = rep.get("title", "")
-        severity    = rep.get("severity", "low").upper()
-        description = rep.get("description", "")
-        cwe         = rep.get("cwe", "")
-        confidence  = rep.get("confidence", 0)
-        snippet     = rep.get("snippet", "")
-        fix_block   = _generate_fix_suggestion(vuln_type, code_line, description, snippet)
-
-        # List all affected line numbers for this pattern
-        linenos = sorted({x.get("lineno", 0) for x in group if x.get("lineno")})
-        loc_str = (
-            f"L{linenos[0]}" if len(linenos) == 1
-            else f"L{linenos[0]}–L{linenos[-1]} ({len(linenos)} locations)"
-        )
-
-        findings_md += (
-            f"\n---\n\n"
-            f"#### {severity} — {title} ({loc_str})\n\n"
-            f"{description}\n\n"
-            f"**CWE:** `{cwe}` &nbsp;|&nbsp; **Confidence:** {confidence:.0%}\n\n"
-            f"**Suggested fix:**\n\n{fix_block}\n"
-        )
-
-    # The PR body already contains the analysis_summary — only post a comment if there are fix suggestions
+    # Build the PR comment using taint-flow-aware narrative (local, no API calls).
+    # _build_pr_narrative groups findings by root cause, traces data flow,
+    # filters false positives, and writes context-specific fix blocks.
     full_body = ""
-    if findings_md:
-        full_body = f"## Security Findings & Suggested Fixes\n{findings_md}"
-        full_body += "\n\n---\n_Posted by [IntelliCode Review](https://intellcode.onrender.com)_"
+    if req.security_findings and req.code:
+        try:
+            score_val = None
+            m = re.search(r"(\d+)/100", req.analysis_summary or "")
+            if m:
+                score_val = int(m.group(1))
+
+            full_body = await loop.run_in_executor(
+                _EXECUTOR,
+                lambda: _build_pr_narrative(
+                    code=req.code,
+                    filename=req.filename,
+                    findings=req.security_findings,
+                    overall_score=score_val,
+                    analysis_summary=req.analysis_summary or "",
+                ),
+            )
+        except Exception as _e:
+            logger.warning("PR narrative failed, falling back to template: %s", _e)
+
+    # Fallback: only reached when narrative() raised an exception
+    # (narrative always returns non-empty text when findings are non-empty)
+    if not full_body and req.security_findings:
+        from collections import defaultdict
+        source_lines = req.code.splitlines() if req.code else []
+        grouped: dict[str, list] = defaultdict(list)
+        for f in req.security_findings:
+            grouped[f.get("vuln_type", "unknown")].append(f)
+        findings_md = ""
+        for vuln_type, group in list(grouped.items())[:8]:
+            rep = sorted(group, key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(
+                x.get("severity", "low"), 4))[0]
+            lineno = rep.get("lineno", 0)
+            code_line = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
+            linenos = sorted({x.get("lineno", 0) for x in group if x.get("lineno")})
+            loc_str = (
+                f"L{linenos[0]}" if len(linenos) == 1
+                else f"L{linenos[0]}-L{linenos[-1]} ({len(linenos)} locations)"
+            )
+            fix = _generate_fix_suggestion(
+                vuln_type, code_line,
+                rep.get("description", ""), rep.get("snippet", "")
+            )
+            findings_md += (
+                f"\n---\n\n#### {rep.get('severity','').upper()} - {rep.get('title','')} ({loc_str})\n\n"
+                f"{rep.get('description','')}\n\n**Suggested fix:**\n\n{fix}\n"
+            )
+        if findings_md:
+            full_body = f"## Security Findings & Suggested Fixes\n{findings_md}"
 
     if full_body and pr_number:
         def _post_comment():
