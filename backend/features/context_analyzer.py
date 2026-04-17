@@ -362,20 +362,70 @@ _SOURCE_HUMAN = {
 }
 
 
+def _detect_framework_route_param(code: str, var_name: str, def_lineno: int) -> tuple[str, str] | None:
+    """
+    Check if var_name is a framework route parameter in the enclosing function:
+
+    Flask:   @app.route('/path/<var_name>') or @bp.route('/path/<type:var_name>')
+    FastAPI: def fn(var_name: T = Query(...)) / Path(...) / Body(...) / Form(...)
+    Django:  def view(request, var_name) — URL capture is user-supplied by convention
+
+    Returns ("request_input", description) if detected, else None.
+    """
+    lines = code.splitlines()
+
+    # Scan up to 8 lines above the def for framework decorators
+    for k in range(max(0, def_lineno - 8), def_lineno):
+        dline = lines[k] if k < len(lines) else ""
+        # Flask / Quart / Blueprint route decorator
+        if re.search(r"@\w+\.route\(", dline):
+            # Match <var_name> or <type:var_name> in the route string
+            if re.search(r"<(?:\w+:)?" + re.escape(var_name) + r">", dline):
+                return "request_input", f"Flask route parameter `<{var_name}>`"
+        # aiohttp / Sanic style
+        if re.search(r"@\w+\.(get|post|put|delete|patch)\(", dline):
+            if re.search(r"\{" + re.escape(var_name) + r"\}", dline):
+                return "request_input", f"route parameter `{{{var_name}}}`"
+
+    # FastAPI / Starlette: check if var_name has Query/Path/Body/Form annotation
+    # Look for `var_name: T = Query(...)` in the def signature block
+    def_block = ""
+    depth = 0
+    for k in range(def_lineno, min(len(lines), def_lineno + 15)):
+        def_block += lines[k] + " "
+        depth += lines[k].count("(") - lines[k].count(")")
+        if depth <= 0:
+            break
+    if re.search(
+        r"\b" + re.escape(var_name) + r"\s*:\s*\S+\s*=\s*(Query|Path|Body|Form|Header|Cookie)\(",
+        def_block,
+    ):
+        annotation_m = re.search(
+            r"\b" + re.escape(var_name) + r"\s*:\s*\S+\s*=\s*(Query|Path|Body|Form|Header|Cookie)\(",
+            def_block,
+        )
+        kind = annotation_m.group(1) if annotation_m else "FastAPI"
+        return "request_input", f"FastAPI {kind}() parameter `{var_name}`"
+
+    # Django: view function where first param is `request` and var_name is a sibling param
+    if re.search(r"def\s+\w+\s*\(\s*request\s*,", def_block):
+        if re.search(r"\b" + re.escape(var_name) + r"\b", def_block):
+            return "request_input", f"Django URL capture `{var_name}`"
+
+    return None
+
+
 def _check_function_param(code: str, var_name: str, lineno: int) -> tuple[str, str]:
     """
     Walk backwards from lineno to find the nearest enclosing def statement.
     If var_name appears in its parameter list, return ("function_param", param_description).
-    Also checks for common request-style parameter names.
+    Extends to framework-aware detection: Flask route params, FastAPI Query/Path,
+    Django URL captures are all classified as request_input (not just function_param).
     """
     lines = code.splitlines()
     for i in range(min(lineno - 1, len(lines) - 1), -1, -1):
         line = lines[i].strip()
-        m = re.match(r"def\s+\w+\s*\(([^)]*)\)\s*:", line)
-        if not m:
-            # Multi-line def: check if line starts with 'def '
-            m = re.match(r"def\s+\w+\s*\(", line)
-        if m:
+        if re.match(r"def\s+\w+\s*\(", line):
             # Collect the full parameter string (may span multiple lines)
             param_block = ""
             depth = 0
@@ -385,7 +435,11 @@ def _check_function_param(code: str, var_name: str, lineno: int) -> tuple[str, s
                 if depth <= 0:
                     break
             if re.search(r"\b" + re.escape(var_name) + r"\b", param_block):
-                # Check if param name suggests user input
+                # Framework-specific detection (Flask route, FastAPI, Django)
+                fw = _detect_framework_route_param(code, var_name, i)
+                if fw:
+                    return fw
+                # Heuristic: name suggests user input
                 user_param = re.search(
                     r"\b(request|req|user_\w+|client_\w+|payload|body|data|"
                     r"query|expr|formula|cmd|command|raw_\w+|untrusted)\b",

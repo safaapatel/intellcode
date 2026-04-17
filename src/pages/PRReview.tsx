@@ -38,21 +38,51 @@ const SEV_COLOR: Record<string, string> = {
   low:      "bg-blue-400/10 text-blue-400 border-blue-400/30",
 };
 
+// Summarise what will be posted as a comment preview
+function buildCommentPreview(result: PRAnalysisResult): string {
+  const real = result.results.filter((r) => !r.skipped);
+  const nSec = real.reduce((s, r) => s + (r.security?.findings?.length ?? 0), 0);
+  const highBug = real.filter((r) => ["high","critical"].includes(r.bug_prediction?.risk_level ?? "")).map((r) => r.filename);
+
+  let preview = `## IntelliCode Review\n\nAnalyzed **${real.length}** file(s)\n\n`;
+  if (nSec) preview += `- **${nSec} security finding(s)** will be posted inline\n`;
+  if (highBug.length) preview += `- High bug risk: ${highBug.map(f => `\`${f}\``).join(", ")}\n`;
+  if (!nSec && !highBug.length) preview += "- No critical issues found — clean summary comment only\n";
+
+  for (const r of real) {
+    const findings = r.security?.findings ?? [];
+    const postable = findings.filter((f: any) => !f.false_positive && f.confidence >= 0.45);
+    const skipped = findings.length - postable.length;
+    if (findings.length > 0) {
+      preview += `\n**\`${r.filename}\`**: ${postable.length} inline comment(s)`;
+      if (skipped > 0) preview += ` · ${skipped} low-confidence skipped`;
+      preview += "\n";
+    }
+  }
+
+  return preview;
+}
+
 export default function PRReview() {
   const navigate = useNavigate();
   const connected = isGitHubConnected();
   const [prUrl, setPrUrl] = useState("");
-  const [postComments, setPostComments] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [result, setResult] = useState<PRAnalysisResult | null>(null);
+  const [posted, setPosted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showPreview, setShowPreview] = useState(false);
 
+  // Step 1: analyze without posting
   async function handleAnalyze() {
     if (!prUrl.trim()) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setPosted(false);
+    setShowPreview(false);
 
     try {
       const token = getGitHubToken();
@@ -64,7 +94,7 @@ export default function PRReview() {
         body: JSON.stringify({
           pr_url: prUrl.trim(),
           github_token: token,
-          post_comments: postComments,
+          post_comments: false,   // always analyze first, post separately
           max_files: 10,
         }),
       });
@@ -74,9 +104,44 @@ export default function PRReview() {
       }
       setResult(await res.json());
     } catch (e: any) {
-      setError(e.message ?? "Unknown error");
+      setError((e as Error).message ?? "Unknown error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Step 2: post comments after user confirms preview
+  async function handlePostComments() {
+    if (!prUrl.trim()) return;
+    setPosting(true);
+    setError(null);
+
+    try {
+      const token = getGitHubToken();
+      if (!token) throw new Error("GitHub not connected.");
+
+      const res = await fetch(`${BASE_URL}/github/analyze-pr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pr_url: prUrl.trim(),
+          github_token: token,
+          post_comments: true,
+          max_files: 10,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      const posted_result = await res.json();
+      setResult(posted_result);
+      setPosted(true);
+      setShowPreview(false);
+    } catch (e: any) {
+      setError((e as Error).message ?? "Unknown error");
+    } finally {
+      setPosting(false);
     }
   }
 
@@ -123,18 +188,7 @@ export default function PRReview() {
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={postComments}
-                onCheckedChange={setPostComments}
-                disabled={!connected}
-                id="post-comments"
-              />
-              <label htmlFor="post-comments" className="text-sm text-muted-foreground cursor-pointer">
-                Post results as GitHub PR comments
-              </label>
-            </div>
+          <div className="flex items-center justify-end">
             <Button
               onClick={handleAnalyze}
               disabled={loading || !connected || !prUrl.trim()}
@@ -146,6 +200,10 @@ export default function PRReview() {
               )}
             </Button>
           </div>
+
+          <p className="text-xs text-muted-foreground">
+            Step 1: analyze your PR. Step 2: review findings, then choose to post comments.
+          </p>
         </div>
 
         {error && (
@@ -156,8 +214,8 @@ export default function PRReview() {
 
         {result && (
           <div className="space-y-4">
-            {/* Summary */}
-            <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+            {/* Summary header */}
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-semibold text-foreground">{result.pr_title}</p>
@@ -167,27 +225,67 @@ export default function PRReview() {
               </div>
               <div className="flex gap-4 text-sm text-muted-foreground">
                 <span>{result.files_analyzed} file(s) analyzed</span>
-                {result.comment_urls.length > 0 && (
-                  <span className="flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                    Comments posted
+                {posted && result.comment_urls.length > 0 && (
+                  <span className="flex items-center gap-1 text-green-500">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Comments posted to GitHub
                   </span>
                 )}
               </div>
-              {result.comment_urls.length > 0 && (
+
+              {/* Posted comment links */}
+              {posted && result.comment_urls.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {result.comment_urls.map((url, i) => (
-                    <a
-                      key={i}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-xs text-blue-500 hover:underline"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      View comment {i + 1}
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs text-blue-500 hover:underline">
+                      <ExternalLink className="w-3 h-3" />View comment {i + 1}
                     </a>
                   ))}
+                </div>
+              )}
+
+              {/* Preview / post controls — only before posting */}
+              {!posted && (
+                <div className="border-t border-border pt-3 space-y-3">
+                  {/* Comment preview */}
+                  <button
+                    className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                    onClick={() => setShowPreview(v => !v)}
+                  >
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showPreview ? "rotate-180" : ""}`} />
+                    {showPreview ? "Hide" : "Preview"} what will be posted to GitHub
+                  </button>
+
+                  {showPreview && (
+                    <div className="rounded-lg border border-border bg-muted/30 p-3">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                        Comment preview (markdown)
+                      </p>
+                      <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed">
+                        {buildCommentPreview(result)}
+                      </pre>
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Low-confidence and false-positive findings are automatically excluded.
+                      </p>
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={handlePostComments}
+                    disabled={posting}
+                    variant="default"
+                    className="w-full"
+                  >
+                    {posting ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Posting to GitHub...</>
+                    ) : (
+                      <><Github className="w-4 h-4 mr-2" />Post Comments to PR</>
+                    )}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Only high-confidence findings will be posted as inline comments.
+                  </p>
                 </div>
               )}
             </div>
