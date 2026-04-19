@@ -246,6 +246,7 @@ def _fetch_bandit_examples() -> list[dict]:
 
 # Repos with well-documented security patches in commit history
 SECURITY_CVE_REPOS = [
+    # Original web frameworks
     "https://github.com/django/django",
     "https://github.com/psf/requests",
     "https://github.com/paramiko/paramiko",
@@ -254,6 +255,17 @@ SECURITY_CVE_REPOS = [
     "https://github.com/aio-libs/aiohttp",
     "https://github.com/encode/httpx",
     "https://github.com/tornadoweb/tornado",
+    # High-CVE-count Python projects
+    "https://github.com/urllib3/urllib3",
+    "https://github.com/pallets/jinja",
+    "https://github.com/python-pillow/Pillow",
+    "https://github.com/lxml/lxml",
+    "https://github.com/sqlalchemy/sqlalchemy",
+    "https://github.com/celery/celery",
+    "https://github.com/scrapy/scrapy",
+    "https://github.com/encode/starlette",
+    "https://github.com/yaml/pyyaml",
+    "https://github.com/marshmallow-code/marshmallow",
 ]
 
 SECURITY_CVE_KEYWORDS = {
@@ -363,6 +375,7 @@ def _fetch_cve_security_samples(max_per_repo: int = 80) -> list[dict]:
 
 # Well-audited repos for clean samples (no cloning — direct GitHub API)
 SECURITY_CLEAN_REPOS = [
+    # Web frameworks (original)
     ("psf", "requests", "main"),
     ("pallets", "flask", "main"),
     ("pallets", "click", "main"),
@@ -370,10 +383,23 @@ SECURITY_CLEAN_REPOS = [
     ("encode", "httpx", "master"),
     ("tqdm", "tqdm", "master"),
     ("pypa", "pip", "main"),
+    # Well-audited security-conscious libraries
+    ("urllib3", "urllib3", "main"),
+    ("certifi", "python-certifi", "master"),
+    ("pyca", "cryptography", "main"),
+    ("paramiko", "paramiko", "main"),
+    # Async / networking
+    ("aio-libs", "aiohttp", "master"),
+    ("encode", "starlette", "master"),
+    ("tiangolo", "fastapi", "master"),
+    # Data handling
+    ("pydantic", "pydantic", "main"),
+    ("pallets", "jinja", "main"),
+    ("marshmallow-code", "marshmallow", "dev"),
 ]
 
 
-def fetch_security_dataset(n: int = 1500, out: str = "data/security_dataset.jsonl"):
+def fetch_security_dataset(n: int = 3000, out: str = "data/security_dataset.jsonl"):
     """
     Real security dataset:
       - Bandit's own labelled examples (real vulnerable Python, ~63 files)
@@ -425,6 +451,7 @@ def fetch_security_dataset(n: int = 1500, out: str = "data/security_dataset.json
 # ─────────────────────────────────────────────────────────────────────────────
 
 COMPLEXITY_REPOS = [
+    # Web frameworks (original)
     ("psf", "requests", "main"),
     ("pallets", "flask", "main"),
     ("pallets", "click", "main"),
@@ -435,10 +462,41 @@ COMPLEXITY_REPOS = [
     ("tiangolo", "fastapi", "master"),
     ("pydantic", "pydantic", "main"),
     ("sqlalchemy", "sqlalchemy", "main"),
+    # Data science / scientific computing
+    ("numpy", "numpy", "main"),
+    ("pandas-dev", "pandas", "main"),
+    ("scikit-learn", "scikit-learn", "main"),
+    ("matplotlib", "matplotlib", "main"),
+    ("scipy", "scipy", "main"),
+    # CLI / utilities
+    ("Textualize", "rich", "master"),
+    ("tiangolo", "typer", "master"),
+    ("httpie", "httpie", "master"),
+    ("psutil", "psutil", "master"),
+    ("giampaolo", "pyftpdlib", "master"),
+    # Infrastructure / DevOps
+    ("fabric", "fabric", "main"),
+    ("pypa", "virtualenv", "main"),
+    ("PyCQA", "flake8", "main"),
+    ("PyCQA", "pylint", "main"),
+    ("pytest-dev", "pytest", "main"),
+    # Databases / async
+    ("encode", "databases", "master"),
+    ("MagicStack", "asyncpg", "master"),
+    ("redis", "redis-py", "master"),
+    ("pymongo", "mongo-python-driver", "master"),
+    # Parsing / templating
+    ("pallets", "jinja", "main"),
+    ("yaml", "pyyaml", "master"),
+    ("Legrandin", "pycryptodome", "master"),
+    # Networking / security
+    ("paramiko", "paramiko", "main"),
+    ("urllib3", "urllib3", "main"),
+    ("certifi", "python-certifi", "master"),
 ]
 
 
-def fetch_complexity_dataset(n: int = 1200, out: str = "data/complexity_dataset.jsonl"):
+def fetch_complexity_dataset(n: int = 6000, out: str = "data/complexity_dataset.jsonl"):
     """
     Real complexity dataset from popular Python packages.
     Downloads Python files via GitHub raw API, computes maintainability index.
@@ -464,13 +522,17 @@ def fetch_complexity_dataset(n: int = 1200, out: str = "data/complexity_dataset.
         try:
             metrics = compute_all_metrics(source)
             feat_vec = metrics_to_feature_vector(metrics)
-            target = float(metrics.maintainability_index)
-            if not (0.0 <= target <= 100.0):
+            cog = float(metrics.cognitive_complexity)
+            if cog < 0:
                 continue
+            # Build 16-dim vector: insert cognitive_complexity at index 1
+            # (COG_IDX=1 in train_complexity.py; it is extracted as target there)
+            full_vec = [feat_vec[0], cog] + feat_vec[1:]
             samples.append({
-                "features": [float(x) for x in feat_vec],
-                "target": round(target, 4),
+                "features": [float(x) for x in full_vec],
+                "target": cog,
                 "origin": origin,
+                "code": source,
             })
         except Exception:
             continue
@@ -485,14 +547,14 @@ def fetch_complexity_dataset(n: int = 1200, out: str = "data/complexity_dataset.
 # ─────────────────────────────────────────────────────────────────────────────
 
 BUG_REPOS = [
-    # Original 6
+    # Original web framework set
     "https://github.com/django/django",
     "https://github.com/pallets/flask",
     "https://github.com/psf/requests",
     "https://github.com/pypa/pip",
     "https://github.com/tqdm/tqdm",
     "https://github.com/bottlepy/bottle",
-    # Added: major Python projects with rich commit histories
+    # Major Python projects (added previously)
     "https://github.com/scrapy/scrapy",
     "https://github.com/sqlalchemy/sqlalchemy",
     "https://github.com/celery/celery",
@@ -507,6 +569,23 @@ BUG_REPOS = [
     "https://github.com/fabric/fabric",
     "https://github.com/gitpython-developers/GitPython",
     "https://github.com/pypa/setuptools",
+    # Data science / scientific (diverse domain)
+    "https://github.com/pandas-dev/pandas",
+    "https://github.com/scikit-learn/scikit-learn",
+    "https://github.com/matplotlib/matplotlib",
+    "https://github.com/sympy/sympy",
+    # CLI / developer tools
+    "https://github.com/Textualize/rich",
+    "https://github.com/httpie/httpie",
+    "https://github.com/PyCQA/pylint",
+    "https://github.com/PyCQA/flake8",
+    "https://github.com/HypothesisWorks/hypothesis",
+    # Infrastructure / devops
+    "https://github.com/pypa/virtualenv",
+    "https://github.com/psutil/psutil",
+    "https://github.com/encode/starlette",
+    "https://github.com/urllib3/urllib3",
+    "https://github.com/marshmallow-code/marshmallow",
 ]
 
 BUG_KEYWORDS = {
@@ -515,7 +594,7 @@ BUG_KEYWORDS = {
 }
 
 
-def fetch_bug_dataset(n: int = 3000, out: str = "data/bug_dataset.jsonl"):
+def fetch_bug_dataset(n: int = 15000, out: str = "data/bug_dataset.jsonl"):
     """
     Real bug prediction dataset mined from commit history via PyDriller.
     Uses a persistent cache dir to avoid Windows temp cleanup issues.
@@ -618,6 +697,7 @@ def fetch_bug_dataset(n: int = 3000, out: str = "data/bug_dataset.jsonl"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 PATTERN_REPOS = [
+    # Web frameworks (original)
     ("pallets", "flask", "main"),
     ("psf", "requests", "main"),
     ("pallets", "click", "main"),
@@ -626,6 +706,30 @@ PATTERN_REPOS = [
     ("encode", "httpx", "master"),
     ("pypa", "pip", "main"),
     ("tiangolo", "fastapi", "master"),
+    # Data science
+    ("scikit-learn", "scikit-learn", "main"),
+    ("pandas-dev", "pandas", "main"),
+    ("matplotlib", "matplotlib", "main"),
+    # CLI / utilities
+    ("Textualize", "rich", "main"),
+    ("tiangolo", "typer", "master"),
+    ("httpie", "httpie", "master"),
+    # Testing / quality
+    ("pytest-dev", "pytest", "main"),
+    ("HypothesisWorks", "hypothesis", "master"),
+    # Infrastructure
+    ("fabric", "fabric", "main"),
+    ("PyCQA", "pylint", "main"),
+    ("PyCQA", "flake8", "main"),
+    # Async / networking
+    ("aio-libs", "aiohttp", "master"),
+    ("encode", "starlette", "master"),
+    ("MagicStack", "uvloop", "master"),
+    # Parsing / data handling
+    ("pallets", "jinja", "main"),
+    ("marshmallow-code", "marshmallow", "dev"),
+    ("pydantic", "pydantic", "main"),
+    ("sqlalchemy", "sqlalchemy", "main"),
 ]
 
 
@@ -669,7 +773,7 @@ def _label_function(node: ast.FunctionDef, source_lines: list[str]) -> str:
     return "clean"
 
 
-def fetch_pattern_dataset(n: int = 1200, out: str = "data/pattern_dataset.jsonl"):
+def fetch_pattern_dataset(n: int = 4000, out: str = "data/pattern_dataset.jsonl"):
     """
     Real pattern dataset: Python functions from public repos,
     labelled with code-quality heuristics.
@@ -737,7 +841,7 @@ def main():
         help="Which dataset to build (omit with --all)",
     )
     parser.add_argument("--all", action="store_true", help="Build all datasets")
-    parser.add_argument("--n", type=int, default=1200, help="Target samples per dataset")
+    parser.add_argument("--n", type=int, default=4000, help="Target samples per dataset")
     parser.add_argument("--out", default="data", help="Output directory")
     args = parser.parse_args()
 
