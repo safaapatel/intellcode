@@ -34,6 +34,7 @@ import {
   Github,
   ExternalLink,
   ChevronDown,
+  Info,
 } from "lucide-react";
 import { getEntry, getEntries } from "@/services/reviewHistory";
 import { getSession } from "@/services/auth";
@@ -1444,31 +1445,28 @@ function ReadabilityTab({ r }: { r: FullAnalysisResult }) {
   );
 }
 
+const AST_FEATURE_META: Record<string, { label: string; unit: string; warnAbove?: number; warnBelow?: number }> = {
+  n_functions:              { label: "Functions",           unit: "",    warnAbove: 10 },
+  n_classes:                { label: "Classes",             unit: "",    warnAbove: 5 },
+  n_try_blocks:             { label: "Try blocks",          unit: "",    warnAbove: 8 },
+  n_raises:                 { label: "Raises / throws",     unit: "",    warnAbove: 10 },
+  n_with_blocks:            { label: "With-statements",     unit: "",    warnAbove: 8 },
+  max_nesting_depth:        { label: "Max nesting depth",   unit: "",    warnAbove: 4 },
+  max_params:               { label: "Max parameters",      unit: "",    warnAbove: 5 },
+  avg_params:               { label: "Avg parameters",      unit: "",    warnAbove: 3.5 },
+  n_decorated_functions:    { label: "Decorated functions", unit: "",    warnAbove: 6 },
+  n_imports:                { label: "Imports",             unit: "",    warnAbove: 15 },
+  max_function_body_lines:  { label: "Max function length", unit: " ln", warnAbove: 50 },
+  avg_function_body_lines:  { label: "Avg function length", unit: " ln", warnAbove: 25 },
+};
+
 function PatternTab({ r }: { r: FullAnalysisResult }) {
   const p = r.patterns;
   if (!p) return <Empty msg="Pattern analysis not available." />;
   const criticalSecFindings = r.security?.summary?.critical ?? 0;
+  const astFeatures = p.raw_ast_features ?? {};
 
-  const LABEL_COLORS: Record<string, string> = {
-    clean: "text-green-500",
-    code_smell: "text-yellow-500",
-    anti_pattern: "text-orange-500",
-    style_violation: "text-primary",
-  };
-  const LABEL_BG: Record<string, string> = {
-    clean: "bg-green-500",
-    code_smell: "bg-yellow-500",
-    anti_pattern: "bg-orange-500",
-    style_violation: "bg-primary",
-  };
-  const LABEL_DESC: Record<string, string> = {
-    clean: "No significant code quality issues detected.",
-    code_smell: "Code has structural issues that may hinder maintainability.",
-    anti_pattern: "Common anti-patterns found that should be refactored.",
-    style_violation: "Code style deviates from best practices.",
-  };
-
-  const labelDisplay = p.label.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const hasAst = Object.keys(astFeatures).length > 0;
 
   return (
     <div className="space-y-6">
@@ -1476,53 +1474,62 @@ function PatternTab({ r }: { r: FullAnalysisResult }) {
         <div className="flex items-start gap-3 bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
           <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
           <p className="text-sm text-orange-300">
-            <strong>Note:</strong> The pattern model classifies code structure only — it does not evaluate security semantics.
-            This file has <strong>{criticalSecFindings} critical security finding{criticalSecFindings !== 1 ? "s" : ""}</strong>; review the Security tab for details.
+            <strong>Note:</strong> The pattern model evaluates code structure only — not security semantics.
+            This file has <strong>{criticalSecFindings} critical security finding{criticalSecFindings !== 1 ? "s" : ""}</strong>; see the Security tab.
           </p>
         </div>
       )}
-      <div className="flex items-center gap-4">
-        <div className={`p-4 rounded-full bg-secondary/40`}>
-          <Brain className={`w-8 h-8 ${LABEL_COLORS[p.label] ?? "text-foreground"}`} />
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Detected Pattern</p>
-          <p className={`text-2xl font-bold ${LABEL_COLORS[p.label] ?? "text-foreground"}`}>{labelDisplay}</p>
-          <p className="text-sm text-muted-foreground mt-1">{LABEL_DESC[p.label] ?? ""}</p>
-        </div>
+
+      <div className="flex items-start gap-3 bg-secondary/20 border border-border rounded-lg p-3">
+        <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-sm text-muted-foreground">
+          Structural quality scores extracted directly from the AST. No classifier label is shown because
+          inter-rater agreement on four-class pattern labels is low (kappa = 0.17); raw feature values
+          are more actionable than a predicted category.
+        </p>
       </div>
 
-      <div>
-        <p className="text-sm font-semibold text-foreground mb-3">Class Probabilities</p>
-        <div className="space-y-3">
-          {Object.entries(p.all_scores)
-            .sort(([, a], [, b]) => (b as number) - (a as number))
-            .map(([label, score]) => {
-              const pct = Math.round((score as number) * 100);
-              const display = label.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-              return (
-                <div key={label}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-foreground">{display}</span>
-                    <span className={`text-sm font-bold ${LABEL_COLORS[label] ?? "text-foreground"}`}>{pct}%</span>
+      {hasAst ? (
+        <div>
+          <p className="text-sm font-semibold text-foreground mb-3">Structural AST Features</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {Object.entries(AST_FEATURE_META)
+              .filter(([key]) => key in astFeatures)
+              .map(([key, meta]) => {
+                const val = astFeatures[key] ?? 0;
+                const warn = (meta.warnAbove !== undefined && val > meta.warnAbove) ||
+                             (meta.warnBelow !== undefined && val < meta.warnBelow);
+                return (
+                  <div
+                    key={key}
+                    className={`rounded-lg p-3 border ${warn ? "border-orange-500/40 bg-orange-500/5" : "border-border bg-secondary/20"}`}
+                  >
+                    <p className="text-xs text-muted-foreground mb-1">{meta.label}</p>
+                    <p className={`text-xl font-bold ${warn ? "text-orange-400" : "text-foreground"}`}>
+                      {typeof val === "number" ? (Number.isInteger(val) ? val : val.toFixed(1)) : val}
+                      <span className="text-sm font-normal text-muted-foreground">{meta.unit}</span>
+                    </p>
+                    {warn && (
+                      <p className="text-xs text-orange-400 mt-1">
+                        Above recommended threshold ({meta.warnAbove}{meta.unit})
+                      </p>
+                    )}
                   </div>
-                  <div className="w-full bg-secondary rounded-full h-2">
-                    <div
-                      className={`h-2 rounded-full ${LABEL_BG[label] ?? "bg-primary"}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="text-sm text-muted-foreground italic">
+          AST feature scores not available for this analysis. Re-analyse to get raw scores.
+        </div>
+      )}
 
       <div className="bg-secondary/20 rounded-xl p-4 flex items-center gap-3">
         <CheckCircle className="w-4 h-4 text-muted-foreground shrink-0" />
         <p className="text-sm text-muted-foreground">
-          Model confidence: <strong className="text-foreground">{Math.round(p.confidence * 100)}%</strong>
-          &nbsp;· Random Forest classifier trained on 26 code metric features
+          12 structural features extracted from AST node counts and control-flow depth.
+          Thresholds reflect empirical distributions from the training corpus.
         </p>
       </div>
     </div>

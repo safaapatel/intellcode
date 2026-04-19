@@ -61,6 +61,10 @@ class CodeMetricsResult:
     max_line_length: int = 0
     avg_line_length: float = 0.0
     n_lines_over_80: int = 0
+    # Graph-based structural features (added to close the LOC baseline gap)
+    max_nesting_depth: int = 0      # maximum AST nesting depth (proxy for call-graph depth)
+    n_branches: int = 0             # total branch count (if/elif/for/while/with/try)
+    cc_per_sloc: float = 0.0        # cyclomatic density: CC / max(1, SLOC)
 
 
 # ---------------------------------------------------------------------------
@@ -445,18 +449,50 @@ def compute_all_metrics(source: str) -> CodeMetricsResult:
         line_length_metrics(source)
     )
 
+    # Graph-based structural features
+    try:
+        tree = ast.parse(source)
+        _BRANCH_NODES = (
+            ast.If, ast.For, ast.While, ast.With,
+            ast.Try, ast.ExceptHandler,
+        )
+        branch_count = 0
+        max_depth = 0
+
+        def _walk_depth(node, depth=0):
+            nonlocal max_depth, branch_count
+            max_depth = max(max_depth, depth)
+            if isinstance(node, _BRANCH_NODES):
+                branch_count += 1
+            for child in ast.iter_child_nodes(node):
+                _walk_depth(child, depth + 1)
+
+        _walk_depth(tree)
+        result.max_nesting_depth = max_depth
+        result.n_branches = branch_count
+    except SyntaxError:
+        pass
+
+    sloc = max(1, result.lines.sloc)
+    result.cc_per_sloc = round(result.cyclomatic_complexity / sloc, 4)
+
     return result
 
 
 def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
     """
-    Flatten a CodeMetricsResult into a 15-element numeric feature vector.
+    Flatten a CodeMetricsResult into an 18-element numeric feature vector.
     Order must stay consistent with FEATURE_NAMES in complexity_prediction.py.
 
     EXCLUDED:
       - cognitive_complexity : this is the prediction TARGET (leakage fix Mar 2026)
       - maintainability_index: closed-form formula of halstead_volume * cyclomatic
                                * sloc — all already in the vector, causing R²≈1.0
+
+    dims 15-17 (added to close the LOC naive-baseline gap on Spearman):
+      15 max_nesting_depth — AST depth proxy for call-graph depth
+      16 n_branches        — total decision/loop/exception branch count
+      17 cc_per_sloc       — cyclomatic density (CC normalised by file size)
     """
     return [
         float(m.cyclomatic_complexity),        # 0
@@ -474,6 +510,9 @@ def metrics_to_feature_vector(m: CodeMetricsResult) -> list[float]:
         float(m.max_line_length),              # 12
         float(m.avg_line_length),              # 13
         float(m.n_lines_over_80),              # 14
+        float(m.max_nesting_depth),            # 15
+        float(m.n_branches),                   # 16
+        float(m.cc_per_sloc),                  # 17
     ]
 
 

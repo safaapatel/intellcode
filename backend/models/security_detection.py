@@ -265,6 +265,27 @@ RF_FEATURE_NAMES = [
     "taint_sources", "weak_crypto", "hardcoded_secrets", "network_usage",
 ]
 
+# PIFF-derived stability labels: features with high cross-project CV are "volatile"
+# (encode project style, not portable vulnerability signal).
+# Derived from the 31-project LOPO ablation: removing n_calls+n_imports collapses
+# AUC to 0.500 — those features carry discriminative signal that is non-transferable.
+# Pattern-scan and taint features are "stable" (measure code properties, not style).
+_PIFF_VOLATILE_FEATURES = frozenset({
+    "n_calls",           # project-style: call density varies by framework convention
+    "n_string_literals", # project-style: string usage varies by domain
+    "sloc",              # size proxy: correlated with project code style
+    "comments",          # project-style: commenting conventions vary widely
+    "blank",             # project-style: whitespace conventions vary
+    "n_try_blocks",      # project-style: error-handling patterns vary by project
+})
+
+_PIFF_STABLE_FEATURES = frozenset({
+    "scan_critical", "scan_high", "scan_total",   # pattern-based, code-property signal
+    "taint_sources", "weak_crypto", "hardcoded_secrets",  # security-specific
+    "injection_api_count", "injection_density", "format_inject",
+    "dangerous_imports", "dangerous_calls",
+})
+
 
 # ---------------------------------------------------------------------------
 # Random Forest model wrapper
@@ -310,6 +331,45 @@ class RandomForestSecurityModel:
         verify_checkpoint(path)
         with open(path, "rb") as f:
             self._clf = pickle.load(f)
+
+    def get_feature_importances(self, top_n: int = 8) -> list[dict]:
+        """Return RF feature importances ranked by mean impurity decrease."""
+        if self._clf is None:
+            return []
+        try:
+            clf = self._clf
+            # CalibratedClassifierCV wraps the base RF — average across calibrated estimators
+            if hasattr(clf, "calibrated_classifiers_"):
+                importances_list = []
+                for cal in clf.calibrated_classifiers_:
+                    base = cal.estimator if hasattr(cal, "estimator") else cal.base_estimator
+                    if hasattr(base, "feature_importances_"):
+                        importances_list.append(base.feature_importances_)
+                if not importances_list:
+                    return []
+                importances = np.mean(importances_list, axis=0)
+            elif hasattr(clf, "feature_importances_"):
+                importances = clf.feature_importances_
+            else:
+                return []
+
+            names = RF_FEATURE_NAMES[:len(importances)]
+            pairs = sorted(zip(names, importances), key=lambda x: x[1], reverse=True)
+            return [
+                {
+                    "feature": name,
+                    "importance": round(float(imp), 4),
+                    "impact": "high" if imp > 0.10 else "medium" if imp > 0.04 else "low",
+                    "piff_stability": (
+                        "stable" if name in _PIFF_STABLE_FEATURES
+                        else "volatile" if name in _PIFF_VOLATILE_FEATURES
+                        else "unknown"
+                    ),
+                }
+                for name, imp in pairs[:top_n]
+            ]
+        except Exception:
+            return []
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +603,12 @@ class EnsembleSecurityModel:
             r.lineno,
         ))
 
+    def get_feature_importances(self, top_n: int = 8) -> list[dict]:
+        """Return RF feature importances for the security ensemble."""
+        if self._rf_ready:
+            return self._rf.get_feature_importances(top_n=top_n)
+        return []
+
     def vulnerability_score(self, source: str) -> float:
         """Return a single 0-1 probability of any vulnerability."""
         scan = scan_security_patterns(source)
@@ -591,6 +657,12 @@ class EnsembleSecurityModel:
                 feat = feat[:31]
                 if len(feat) < 31:
                     feat = np.pad(feat, (0, 31 - len(feat)))
+
+                # Apply PIFF at inference: zero volatile features to match training
+                from training.train_security import PIFF_VOLATILE_INDICES
+                for _idx in PIFF_VOLATILE_INDICES:
+                    if _idx < len(feat):
+                        feat[_idx] = 0.0
 
                 rf_feat = feat
                 rf_p = self._rf.predict_proba(feat)

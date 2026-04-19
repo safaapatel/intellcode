@@ -93,26 +93,43 @@ def _extract_features(source: str) -> np.ndarray:
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_dataset(path: str) -> tuple[list[str], list[int]]:
-    """Load pattern_dataset.jsonl and return texts and integer labels."""
+def load_dataset(path: str, binary: bool = False) -> tuple[list[str], list[int]]:
+    """
+    Load pattern_dataset.jsonl and return texts and integer labels.
+
+    Args:
+        binary: if True, collapse all non-clean labels to 1 (pattern present)
+            and clean to 0. Produces a binary classifier that avoids the uncertain
+            four-class label boundaries (kappa=0.168 inter-rater agreement).
+    """
     texts, labels = [], []
     skipped = 0
     with open(path) as f:
         for line in f:
-            rec = json.loads(line.strip())
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
             code = rec.get("code", "")
             label_str = rec.get("label", "clean")
             if not code or label_str not in LABEL2ID:
                 skipped += 1
                 continue
             texts.append(code)
-            labels.append(LABEL2ID[label_str])
+            if binary:
+                labels.append(0 if label_str == "clean" else 1)
+            else:
+                labels.append(LABEL2ID[label_str])
 
     from collections import Counter
     counts = Counter(labels)
-    print(f"Loaded {len(texts)} samples ({skipped} skipped) from {path}")
-    for lid, count in sorted(counts.items()):
-        print(f"  {ID2LABEL[lid]:20s}: {count}")
+    mode = "binary" if binary else "4-class"
+    print(f"Loaded {len(texts)} samples ({skipped} skipped) [{mode}] from {path}")
+    if binary:
+        print(f"  clean=0: {counts[0]}  pattern=1: {counts[1]}")
+    else:
+        for lid, count in sorted(counts.items()):
+            print(f"  {ID2LABEL[lid]:20s}: {count}")
     return texts, labels
 
 
@@ -125,8 +142,18 @@ def train(
     output_dir: str = "checkpoints/pattern",
     test_split: float = 0.15,
     n_estimators: int = 300,
+    binary: bool = False,
     **kwargs,
 ) -> dict:
+    """
+    Train the pattern classifier.
+
+    Args:
+        binary: if True, train as binary (clean vs pattern_present) instead of
+            4-class. Recommended after the kappa=0.168 finding — the four-class
+            boundary labels have low inter-rater agreement, so collapsing to
+            binary reduces circular label confusion while keeping the AUC signal.
+    """
     from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.calibration import CalibratedClassifierCV
@@ -135,7 +162,8 @@ def train(
     )
     from sklearn.preprocessing import label_binarize
 
-    texts, labels = load_dataset(data_path)
+    texts, labels = load_dataset(data_path, binary=binary)
+    n_classes = 2 if binary else len(LABEL_NAMES)
 
     if len(texts) == 0:
         print("[WARN] No samples loaded — skipping pattern training.")
@@ -174,19 +202,23 @@ def train(
 
     y_pred = clf.predict(X_te)
     test_acc = accuracy_score(y_te, y_pred)
+    target_names = ["clean", "pattern_present"] if binary else LABEL_NAMES
     test_f1 = f1_score(y_te, y_pred, average="macro")
     print(f"\nTest Accuracy:   {test_acc:.4f}")
     print(f"Test F1 (macro): {test_f1:.4f}")
-    print(classification_report(y_te, y_pred, target_names=LABEL_NAMES))
+    print(classification_report(y_te, y_pred, target_names=target_names))
 
-    # Multi-class AUC (one-vs-rest)
-    y_te_bin = label_binarize(y_te, classes=list(range(4)))
+    # AUC — binary uses standard, 4-class uses OvR macro
     y_prob = clf.predict_proba(X_te)
     try:
-        test_auc = float(roc_auc_score(y_te_bin, y_prob, multi_class="ovr", average="macro"))
+        if binary:
+            test_auc = float(roc_auc_score(y_te, y_prob[:, 1]))
+        else:
+            y_te_bin = label_binarize(y_te, classes=list(range(4)))
+            test_auc = float(roc_auc_score(y_te_bin, y_prob, multi_class="ovr", average="macro"))
     except Exception:
         test_auc = 0.0
-    print(f"Test AUC (macro OvR): {test_auc:.4f}")
+    print(f"Test AUC: {test_auc:.4f}")
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -208,7 +240,8 @@ def train(
         "n_test": len(X_te),
         "n_features": int(X.shape[1]),
         "feature_names": FEATURE_NAMES,
-        "label_names": LABEL_NAMES,
+        "label_names": ["clean", "pattern_present"] if binary else LABEL_NAMES,
+        "binary_mode": binary,
         "debiased": True,
         "leaky_features_excluded": [
             "CC", "cog", "maxCC", "avgCC", "sloc", "comments", "comment_ratio",
@@ -229,9 +262,16 @@ def main():
     parser.add_argument("--data", required=True, help="Path to pattern_dataset.jsonl")
     parser.add_argument("--out", default="checkpoints/pattern")
     parser.add_argument("--trees", type=int, default=300)
+    parser.add_argument(
+        "--binary", action="store_true",
+        help=(
+            "Binary mode: collapse code_smell/anti_pattern/style_violation -> 1, "
+            "clean -> 0. Avoids kappa=0.168 four-class label uncertainty."
+        ),
+    )
     args = parser.parse_args()
 
-    train(data_path=args.data, output_dir=args.out, n_estimators=args.trees)
+    train(data_path=args.data, output_dir=args.out, n_estimators=args.trees, binary=args.binary)
 
 
 if __name__ == "__main__":

@@ -87,12 +87,53 @@ ALL_FEATURE_NAMES = STATIC_FEATURE_NAMES + JIT_FEATURE_NAMES
 
 # -- Data loading --------------------------------------------------------------
 
-def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list]:
+def _consensus_buggy(sf: list[float], gf: dict) -> bool:
+    """
+    Multi-signal consensus check for buggy label.
+    Returns True only when at least 2 independent signals agree the commit is risky.
+
+    This reduces false positives from SZZ keyword matching ("fix typo", "fix import")
+    that produce a label=1 but carry no actual defect signal.
+
+    Signals:
+      1. High cyclomatic complexity (index 0 of static_features)
+      2. High code churn (lines_added + lines_deleted from git_features)
+      3. Past bug history (n_past_bugs > 0)
+      4. Many files changed (n_files > 1 — scatter changes are riskier)
+    """
+    cc  = float(sf[0]) if sf else 0.0
+    la  = float(gf.get("lines_added", 0) or 0)
+    ld  = float(gf.get("lines_deleted", 0) or 0)
+    nb  = float(gf.get("n_past_bugs", 0) or 0)
+    nf  = float(gf.get("n_files", 0) or 0)
+
+    signals = [
+        cc > 8,               # high complexity
+        (la + ld) > 50,       # significant churn
+        nb > 0,               # file has prior bug history
+        nf > 1,               # scattered change across files
+    ]
+    return sum(signals) >= 2
+
+
+def load_dataset(
+    path: str,
+    consensus_filter: bool = False,
+    min_fix_lag_days: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list]:
     """
     Load bug_dataset.jsonl.
 
     Supports both the legacy 5-feature git format and the extended 14-feature
     JIT format. Missing JIT features default to 0.
+
+    Args:
+        path: path to JSONL dataset
+        consensus_filter: if True, require 2+ bug signals for label=1 records;
+            records labelled buggy with only 1 signal are dropped (likely SZZ
+            false positives from trivial "fix typo" commits).
+        min_fix_lag_days: drop label=1 records where fix_lag_days < this value
+            (very fast fixes are likely not real bugs — misattributed keyword commits).
 
     Returns:
         X_static : (N, 17)
@@ -102,6 +143,8 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
         dates    : list[str] author_date per sample (empty string if absent)
     """
     X_static, X_jit, y, repos, dates = [], [], [], [], []
+    n_dropped_consensus = 0
+    n_dropped_lag = 0
 
     with open(path) as f:
         for line in f:
@@ -115,6 +158,21 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
             if not sf:
                 continue
 
+            # Post-fix lag filter: fast fixes (< min_fix_lag_days) are likely
+            # routine maintenance misattributed as bugs by the SZZ keyword heuristic.
+            if label == 1 and min_fix_lag_days > 0:
+                lag = float(gf.get("fix_lag_days", min_fix_lag_days) or min_fix_lag_days)
+                if lag < min_fix_lag_days:
+                    n_dropped_lag += 1
+                    continue
+
+            # Consensus filter: require 2+ independent bug signals for label=1.
+            # Single-signal label=1 records are dropped (likely "fix: typo" commits).
+            if label == 1 and consensus_filter:
+                if not _consensus_buggy(sf, gf):
+                    n_dropped_consensus += 1
+                    continue
+
             jit_vec = [float(gf.get(k, 0.0)) for k in JIT_FEATURE_NAMES]
             X_static.append([float(x) for x in sf])
             X_jit.append(jit_vec)
@@ -127,6 +185,10 @@ def load_dataset(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[st
     y_arr = np.array(y, dtype=np.int32)
 
     print(f"Loaded {len(y_arr)} samples  |  buggy: {y_arr.sum()}  clean: {(y_arr==0).sum()}")
+    if n_dropped_consensus:
+        print(f"  Dropped {n_dropped_consensus} label=1 records (consensus filter: <2 bug signals)")
+    if n_dropped_lag:
+        print(f"  Dropped {n_dropped_lag} label=1 records (fix-lag filter: <{min_fix_lag_days} days)")
     print(f"  Static features: {X_s.shape[1]}  JIT features: {X_j.shape[1]}")
     unique_repos = sorted(set(repos))
     print(f"  Repositories ({len(unique_repos)}): {unique_repos}")
@@ -514,12 +576,18 @@ def train(
     epochs: int = 50,
     test_split: float = 0.15,
     test_repos: Optional[list[str]] = None,
+    consensus_filter: bool = False,
+    min_fix_lag_days: int = 0,
 ) -> dict:
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import roc_auc_score, accuracy_score, average_precision_score
     from scipy.stats import wilcoxon
 
-    X_static, X_jit, y, repos, dates = load_dataset(data_path)
+    X_static, X_jit, y, repos, dates = load_dataset(
+        data_path,
+        consensus_filter=consensus_filter,
+        min_fix_lag_days=min_fix_lag_days,
+    )
     X_full = np.hstack([X_static, X_jit])
 
     # -- Split -----------------------------------------------------------------
@@ -762,6 +830,14 @@ def main():
         "--test-repos", nargs="+", default=None, metavar="REPO",
         help="Repo URLs/names to hold out entirely as test set.",
     )
+    parser.add_argument(
+        "--consensus-filter", action="store_true",
+        help="Require 2+ bug signals for label=1 (drops weak SZZ false positives).",
+    )
+    parser.add_argument(
+        "--min-fix-lag-days", type=int, default=0, metavar="DAYS",
+        help="Drop label=1 commits fixed in < DAYS (likely routine keyword commits).",
+    )
     args = parser.parse_args()
 
     train(
@@ -771,6 +847,8 @@ def main():
         use_mlp=not args.no_mlp,
         epochs=args.epochs,
         test_repos=args.test_repos,
+        consensus_filter=args.consensus_filter,
+        min_fix_lag_days=args.min_fix_lag_days,
     )
 
 

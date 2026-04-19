@@ -98,6 +98,23 @@ def cross_project_split(
 # Feature extraction
 # ---------------------------------------------------------------------------
 
+# PIFF-derived volatile feature indices (high cross-project CV — encode style, not signal).
+# Derived from 31-project LOPO ablation: zeroing these at training time prevents
+# the RF from memorising project-style correlations that don't transfer cross-project.
+# Indices match RF_FEATURE_NAMES in models/security_detection.py:
+#   3=sloc, 4=comments, 5=blank, 21=n_try_blocks, 22=n_string_literals, 23=n_calls
+PIFF_VOLATILE_INDICES: list[int] = [3, 4, 5, 21, 22, 23]
+
+
+def apply_piff_filter(X: np.ndarray) -> np.ndarray:
+    """Zero out project-volatile features so the RF learns portable signal only."""
+    Xf = X.copy()
+    for idx in PIFF_VOLATILE_INDICES:
+        if idx < Xf.shape[1]:
+            Xf[:, idx] = 0.0
+    return Xf
+
+
 def build_rf_features(records: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     """Extract RF structured features from dataset records."""
     from models.security_detection import _build_rf_feature_vector
@@ -257,11 +274,22 @@ def train(
     logger.info("Train: %d | Test: %d", len(train_records), len(test_records))
 
     # ----------------------------------------------------------------
-    # Random Forest
+    # Random Forest  (PIFF-filtered training)
     # ----------------------------------------------------------------
-    logger.info("=== Training Random Forest (%d estimators) ===", rf_estimators)
-    X_rf_tr, y_rf_tr = build_rf_features(train_records)
-    X_rf_te, y_rf_te = build_rf_features(test_records)
+    logger.info("=== Training Random Forest (%d estimators, PIFF-filtered) ===", rf_estimators)
+    X_rf_tr_raw, y_rf_tr = build_rf_features(train_records)
+    X_rf_te,     y_rf_te = build_rf_features(test_records)
+
+    # Apply PIFF at training time: zero volatile features so the RF cannot learn
+    # project-style correlations. Test features are left unmodified — inference
+    # applies the same zeroing at prediction time via _PIFF_VOLATILE_FEATURES.
+    X_rf_tr = apply_piff_filter(X_rf_tr_raw)
+    X_rf_te_piff = apply_piff_filter(X_rf_te)
+    logger.info(
+        "PIFF: zeroed %d volatile feature columns (%s)",
+        len(PIFF_VOLATILE_INDICES),
+        PIFF_VOLATILE_INDICES,
+    )
 
     rf_auc = rf_ap = rf_recall = rf_threshold = 0.0
     rf_preds_prob = np.array([])
@@ -271,7 +299,7 @@ def train(
         rf_model.fit(X_rf_tr, y_rf_tr, n_estimators=rf_estimators)
         rf_model.save(str(out_dir / "rf_model.pkl"))
 
-        rf_preds_prob = np.array([rf_model.predict_proba(x) for x in X_rf_te])
+        rf_preds_prob = np.array([rf_model.predict_proba(x) for x in X_rf_te_piff])
 
         # Threshold via Youden's J on TRAINING set to avoid test-set leakage.
         # Selecting the threshold on the test set inflates reported recall/precision

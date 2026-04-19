@@ -48,7 +48,9 @@ FEATURE_NAMES = [
     "bugs_delivered",
     "n_long_functions", "n_complex_functions",
     "max_line_length", "avg_line_length", "n_lines_over_80",
-]  # 15 features
+    # Graph-based structural features (dims 15-17, added to close LOC baseline gap)
+    "max_nesting_depth", "n_branches", "cc_per_sloc",
+]  # 18 features
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────

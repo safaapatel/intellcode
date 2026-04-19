@@ -2,17 +2,24 @@
 Complexity Prediction Model — XGBoost
 Predicts the cognitive complexity of a Python file.
 
-Features (15-dim vector — cognitive_complexity EXCLUDED to prevent leakage):
+Features (18-dim vector — cognitive_complexity EXCLUDED to prevent leakage):
   cyclomatic_complexity, max_function_complexity, avg_function_complexity,
   sloc, comments, blank_lines,
   halstead_volume, halstead_difficulty, halstead_effort, bugs_delivered,
   n_long_functions, n_complex_functions,
-  max_line_length, avg_line_length, n_lines_over_80
+  max_line_length, avg_line_length, n_lines_over_80,
+  max_nesting_depth, n_branches, cc_per_sloc  <- graph-based features (dims 15-17)
 
   NOTE: cognitive_complexity is the training TARGET so it is excluded from
   features.  maintainability_index is also excluded — it is a closed-form
   formula of halstead_volume * cyclomatic * sloc (all already in features),
   which previously caused trivial R²≈1.0 target leakage.
+
+  Dims 15-17 added to close the LOC naive-baseline gap on Spearman rank
+  correlation: max_nesting_depth captures AST structural depth beyond raw
+  line count; n_branches captures decision density; cc_per_sloc normalises
+  cyclomatic complexity by file size so small complex files are not penalised
+  the same as large complex ones.
 
 Target: cognitive_complexity (non-negative integer; lower = simpler)
 """
@@ -58,7 +65,11 @@ FEATURE_NAMES = [
     "max_line_length",
     "avg_line_length",
     "n_lines_over_80",
-]  # 15 features
+    # Graph-based structural features (dims 15-17)
+    "max_nesting_depth",
+    "n_branches",
+    "cc_per_sloc",
+]  # 18 features
 
 
 @dataclass
@@ -186,13 +197,14 @@ class ComplexityPredictionModel:
     def predict_from_features(self, feat: list) -> float:
         """Predict cognitive_complexity from a raw dataset feature vector.
 
-        Mirrors train_complexity.py: COG_IDX=1 is excluded from X,
-        so the model input is [feat[i] for i in range(16) if i != 1].
+        Mirrors train_complexity.py: COG_IDX=1 is excluded from X.
+        The feature vector is expected to be 19-dim (raw dataset format with
+        cognitive_complexity at index 1); the model input is the remaining 18 dims.
         """
         if self._regressor is None:
             raise RuntimeError("Model not loaded.")
         COG_IDX = 1
-        x_vec = [feat[i] for i in range(16) if i != COG_IDX]  # 15-dim
+        x_vec = [feat[i] for i in range(len(feat)) if i != COG_IDX]
         feat_vec = np.array([x_vec], dtype=np.float32)
         return float(self._regressor.predict(feat_vec)[0])
 

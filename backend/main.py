@@ -575,6 +575,7 @@ class PatternOut(BaseModel):
     label: str
     confidence: float
     all_scores: dict
+    raw_ast_features: dict = Field(default_factory=dict)
 
 
 class FullAnalysisResponse(BaseModel):
@@ -1373,6 +1374,12 @@ def analyze_security(req: AnalyzeRequest):
             ),
         }
 
+        # RF feature importances (which structural signals drive the score)
+        try:
+            result["feature_importances"] = registry.security.get_feature_importances(top_n=8)
+        except Exception:
+            pass
+
         # OOD check for security
         try:
             import numpy as _np
@@ -1445,10 +1452,43 @@ def analyze_patterns(req: AnalyzeRequest):
         )
 
     pred = registry.pattern_model.predict(req.code)
+
+    # Raw AST structural feature scores — surfaced directly so users see
+    # the underlying measurements rather than only an uncertain class label.
+    # These are the 12 debiased features the RF was trained on; displaying
+    # them avoids the kappa=0.168 label uncertainty problem entirely.
+    raw_features: dict = {}
+    try:
+        from features.ast_extractor import ASTExtractor
+        ast_feats = ASTExtractor().extract(req.code)
+        raw_features = {
+            "n_functions":           int(ast_feats.get("n_functions", 0)),
+            "max_nesting_depth":     int(ast_feats.get("max_nesting_depth", 0)),
+            "max_params":            int(ast_feats.get("max_params", 0)),
+            "avg_params":            round(float(ast_feats.get("avg_params", 0.0)), 2),
+            "max_function_body_lines": int(ast_feats.get("max_function_body_lines", 0)),
+            "avg_function_body_lines": round(float(ast_feats.get("avg_function_body_lines", 0.0)), 1),
+            "n_try_blocks":          int(ast_feats.get("n_try_blocks", 0)),
+            "n_raises":              int(ast_feats.get("n_raises", 0)),
+            "n_with_blocks":         int(ast_feats.get("n_with_blocks", 0)),
+            "n_decorated_functions": int(ast_feats.get("n_decorated_functions", 0)),
+            "n_imports":             int(ast_feats.get("n_imports", 0)),
+            "n_classes":             int(ast_feats.get("n_classes", 0)),
+        }
+        # Annotate each feature with a plain-language interpretation
+        raw_features["_thresholds"] = {
+            "max_function_body_lines": {"warn": 50, "critical": 80},
+            "max_nesting_depth":       {"warn": 4,  "critical": 5},
+            "max_params":              {"warn": 5,  "critical": 7},
+        }
+    except Exception:
+        pass
+
     return {
         "label": pred.label,
         "confidence": pred.confidence,
         "all_scores": pred.all_scores,
+        "raw_ast_features": raw_features,
         "duration_seconds": round(time.perf_counter() - t_start, 3),
     }
 
@@ -1807,6 +1847,20 @@ def _step_security(source: str, language: str = "python") -> dict:
                     f"Input is {ood_meta.get('sigma_distance', 0):.1f} sigma from training "
                     f"distribution — predictions may be unreliable for this code pattern."
                 )
+
+        # RF feature importances with PIFF stability annotation
+        try:
+            result["feature_importances"] = registry.security.get_feature_importances(top_n=6)
+        except Exception:
+            pass
+
+        # Conformal interval for vulnerability_score
+        if registry.conformal_security:
+            try:
+                result["conformal_interval"] = registry.conformal_security.to_dict(sec_score)
+            except Exception:
+                pass
+
         return result
     result = scan_security_patterns_for_language(source, language).to_dict()
     result["ml_disabled"] = True
@@ -1876,7 +1930,18 @@ def _step_pattern(source: str):
     if registry.pattern_model and registry.pattern_model.ready:
         try:
             pred = registry.pattern_model.predict(source)
-            return PatternOut(label=pred.label, confidence=pred.confidence, all_scores=pred.all_scores)
+            raw: dict = {}
+            try:
+                from features.ast_extractor import ASTExtractor
+                raw = ASTExtractor().extract(source)
+            except Exception:
+                pass
+            return PatternOut(
+                label=pred.label,
+                confidence=pred.confidence,
+                all_scores=pred.all_scores,
+                raw_ast_features=raw,
+            )
         except Exception as e:
             logger.warning("Pattern model prediction failed: %s", e)
     return None
@@ -2824,36 +2889,48 @@ async def analyze_explain(req: AnalyzeRequest):
     # ── Security explanation ────────────────────────────────────────────────
     try:
         from features.security_patterns import scan_security_patterns
+        from models.security_detection import _build_rf_feature_vector, RF_FEATURE_NAMES
         sec_scan = scan_security_patterns(source)
         vuln_categories: dict[str, int] = {}
         for f in sec_scan.findings:
             cat = getattr(f, "vuln_type", getattr(f, "category", "unknown"))
             vuln_categories[cat] = vuln_categories.get(cat, 0) + 1
 
-        rf_feat_names = [
-            "n_tokens", "n_defs", "n_imports", "n_calls", "n_attrs",
-            "n_lines", "n_try", "n_except", "n_return", "n_raise",
-            "n_os_calls", "n_subprocess", "n_eval", "n_exec", "n_open", "vocab_size",
-        ]
+        # Build feature vector and pair with names
         try:
-            from models.security_detection import _build_rf_feature_vector
             rf_feats = _build_rf_feature_vector(source)
-            rf_dict = dict(zip(rf_feat_names, [round(float(v), 2) for v in rf_feats[:16]]))
+            rf_feature_values = {
+                name: round(float(val), 3)
+                for name, val in zip(RF_FEATURE_NAMES, rf_feats)
+            }
         except Exception:
-            rf_dict = {}
+            rf_feature_values = {}
+
+        # Get model-learned importance scores from the RF
+        rf_importances = []
+        if registry.security:
+            try:
+                rf_importances = registry.security.get_feature_importances(top_n=8)
+            except Exception:
+                pass
+
+        high_risk = [
+            name for name, val in rf_feature_values.items()
+            if name in ("n_eval", "n_exec", "format_inject", "taint_sources",
+                        "weak_crypto", "hardcoded_secrets", "dangerous_calls") and val > 0
+        ]
 
         explanations["models"]["security"] = {
             "pattern_findings": len(sec_scan.findings),
             "finding_categories": vuln_categories,
-            "rf_features": rf_dict,
-            "high_risk_signals": [
-                name for name, val in rf_dict.items()
-                if name in ("n_eval", "n_exec", "n_subprocess", "n_os_calls") and val > 0
-            ],
+            "rf_feature_values": rf_feature_values,
+            "top_feature_importances": rf_importances,
+            "high_risk_signals": high_risk,
             "interpretation": (
                 f"{len(sec_scan.findings)} pattern-based finding(s) detected. "
-                + (f"High-risk calls: {[n for n in ('n_eval','n_exec','n_subprocess') if rf_dict.get(n,0) > 0]}."
-                   if rf_dict else "")
+                + (f"High-risk signals present: {high_risk}." if high_risk else "No high-risk API calls detected.")
+                + (f" Top RF driver: {rf_importances[0]['feature']} (importance={rf_importances[0]['importance']})."
+                   if rf_importances else "")
             ),
         }
     except Exception as e:

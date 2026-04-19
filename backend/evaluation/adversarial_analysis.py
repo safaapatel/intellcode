@@ -468,6 +468,7 @@ def run_complexity_adversarial(model) -> dict:
 
         err = abs(predicted - true_cog)
         errors.append(err)
+        error_magnitude = "large" if err > 10.0 else "moderate" if err > 5.0 else "small"
         results.append({
             "name": name,
             "category": info["category"],
@@ -475,7 +476,7 @@ def run_complexity_adversarial(model) -> dict:
             "true_cognitive_complexity": true_cog,
             "predicted_cognitive_complexity": round(predicted, 2),
             "absolute_error": round(err, 2),
-            "fooled": err > 10.0,
+            "error_magnitude": error_magnitude,
         })
 
     # Clean baseline
@@ -493,7 +494,13 @@ def run_complexity_adversarial(model) -> dict:
 
     mean_adv = sum(errors) / len(errors) if errors else 0.0
     mean_clean = sum(clean_errors) / len(clean_errors) if clean_errors else 0.0
-    fooling_rate = sum(1 for r in results if r["fooled"]) / len(results) if results else 0.0
+
+    # Per-category mean error — more informative than an aggregate "fooling rate"
+    # which conflates categories with different error magnitudes
+    categories: dict[str, list[float]] = {}
+    for r in results:
+        categories.setdefault(r["category"], []).append(r["absolute_error"])
+    per_category = {cat: round(sum(v) / len(v), 2) for cat, v in categories.items()}
 
     return {
         "results": results,
@@ -501,9 +508,13 @@ def run_complexity_adversarial(model) -> dict:
             "n_adversarial": len(results),
             "mean_adv_error": round(mean_adv, 2),
             "mean_clean_error": round(mean_clean, 2),
-            "degradation": round(mean_adv - mean_clean, 2),
-            "fooling_rate": round(fooling_rate, 4),
-            "fooled_count": sum(1 for r in results if r["fooled"]),
+            "mean_error_degradation": round(mean_adv - mean_clean, 2),
+            "per_category_mean_error": per_category,
+            "note": (
+                "No aggregate fooling rate reported. These cases were constructed "
+                "to target known feature weaknesses; any percentage derived from "
+                "them estimates targeted-attack success, not production error frequency."
+            ),
         },
     }
 
@@ -547,7 +558,6 @@ def run_security_adversarial(model) -> dict:
             "predicted_prob": round(prob, 4),
             "predicted_label": pred_label,
             "error_type": error_type,
-            "fooled": wrong,
         })
 
     # Clean baseline
@@ -562,20 +572,33 @@ def run_security_adversarial(model) -> dict:
         pred_lbl = 1 if prob_c >= threshold else 0
         clean_errors.append(1 if pred_lbl != true_lbl else 0)
 
-    fooling_rate = sum(errors) / len(errors) if errors else 0.0
     clean_err_rate = sum(clean_errors) / len(clean_errors) if clean_errors else 0.0
+    n_fn = sum(1 for r in results if r["error_type"] == "false_negative")
+    n_fp = sum(1 for r in results if r["error_type"] == "false_positive")
+
+    # Per-category breakdown — more informative than a single aggregate rate
+    categories: dict[str, dict] = {}
+    for r in results:
+        cat = r["category"]
+        if cat not in categories:
+            categories[cat] = {"total": 0, "false_negative": 0, "false_positive": 0, "correct": 0}
+        categories[cat]["total"] += 1
+        categories[cat][r["error_type"]] += 1
 
     return {
         "results": results,
         "summary": {
             "n_adversarial": len(results),
-            "adversarial_error_rate": round(fooling_rate, 4),
+            "false_negatives": n_fn,
+            "false_positives": n_fp,
+            "correct": len(results) - n_fn - n_fp,
             "clean_error_rate": round(clean_err_rate, 4),
-            "degradation": round(fooling_rate - clean_err_rate, 4),
-            "fooling_rate": round(fooling_rate, 4),
-            "fooled_count": sum(errors),
-            "false_negatives": sum(1 for r in results if r["error_type"] == "false_negative"),
-            "false_positives": sum(1 for r in results if r["error_type"] == "false_positive"),
+            "per_category": categories,
+            "note": (
+                "No aggregate fooling rate reported. Cases were constructed to target "
+                "specific failure modes; per-category breakdown is more informative "
+                "than an aggregate rate across purposely adversarial inputs."
+            ),
         },
     }
 
@@ -584,11 +607,11 @@ def print_complexity_table(data: dict):
     results = data["results"]
     summary = data["summary"]
     print()
-    print("=== Adversarial Complexity Results ===")
-    col_w = [32, 24, 8, 10, 8, 7]
+    print("=== Adversarial Complexity Diagnostic Results ===")
+    col_w = [32, 24, 8, 10, 8, 10]
     header = (
         f"{'Name':<{col_w[0]}} {'Category':<{col_w[1]}} {'TrueCog':>{col_w[2]}} "
-        f"{'Predicted':>{col_w[3]}} {'AbsErr':>{col_w[4]}} {'Fooled':>{col_w[5]}}"
+        f"{'Predicted':>{col_w[3]}} {'AbsErr':>{col_w[4]}} {'ErrSize':>{col_w[5]}}"
     )
     sep = "-" * sum(col_w + [5])
     print(sep)
@@ -597,29 +620,27 @@ def print_complexity_table(data: dict):
     for r in results:
         name = r["name"][:col_w[0]]
         cat = r["category"][:col_w[1]]
-        fooled_str = "YES" if r["fooled"] else "no"
         print(
             f"{name:<{col_w[0]}} {cat:<{col_w[1]}} {r['true_cognitive_complexity']:>{col_w[2]}} "
             f"{r['predicted_cognitive_complexity']:>{col_w[3]}.2f} "
-            f"{r['absolute_error']:>{col_w[4]}.2f} {fooled_str:>{col_w[5]}}"
+            f"{r['absolute_error']:>{col_w[4]}.2f} {r['error_magnitude']:>{col_w[5]}}"
         )
     print(sep)
     print(
-        f"Fooling rate: {summary['fooling_rate']:.1%}  "
-        f"({summary['fooled_count']}/{summary['n_adversarial']})"
-    )
-    print(
         f"Mean adv error: {summary['mean_adv_error']:.2f}  "
         f"Mean clean error: {summary['mean_clean_error']:.2f}  "
-        f"Degradation: {summary['degradation']:.2f}"
+        f"Error degradation: {summary['mean_error_degradation']:.2f}"
     )
+    print("Per-category mean error:")
+    for cat, mean_err in summary["per_category_mean_error"].items():
+        print(f"  {cat}: {mean_err:.2f}")
 
 
 def print_security_table(data: dict):
     results = data["results"]
     summary = data["summary"]
     print()
-    print("=== Adversarial Security Results ===")
+    print("=== Adversarial Security Diagnostic Results ===")
     col_w = [36, 28, 6, 8, 6, 18]
     header = (
         f"{'Name':<{col_w[0]}} {'Category':<{col_w[1]}} {'TrueL':>{col_w[2]}} "
@@ -639,14 +660,12 @@ def print_security_table(data: dict):
         )
     print(sep)
     print(
-        f"Fooling rate: {summary['fooling_rate']:.1%}  "
-        f"({summary['fooled_count']}/{summary['n_adversarial']})"
+        f"FN: {summary['false_negatives']}  FP: {summary['false_positives']}  "
+        f"Correct: {summary['correct']}  Clean error rate: {summary['clean_error_rate']:.1%}"
     )
-    print(
-        f"Adv error rate: {summary['adversarial_error_rate']:.1%}  "
-        f"Clean error rate: {summary['clean_error_rate']:.1%}  "
-        f"Degradation: {summary['degradation']:.4f}"
-    )
+    print("Per-category breakdown:")
+    for cat, counts in summary["per_category"].items():
+        print(f"  {cat}: {counts}")
 
 
 def main():
@@ -679,11 +698,12 @@ def main():
     c_summ = complexity_data["summary"]
     s_summ = security_data["summary"]
     print()
-    print("=== Overall Summary ===")
-    print(f"Complexity fooling rate : {c_summ['fooling_rate']:.1%}")
-    print(f"Complexity degradation  : {c_summ['degradation']:.2f} (mean |error| adv - clean)")
-    print(f"Security fooling rate   : {s_summ['fooling_rate']:.1%}")
-    print(f"Security degradation    : {s_summ['degradation']:.4f} (error rate adv - clean)")
+    print("=== Overall Diagnostic Summary ===")
+    print(f"Complexity mean error (adversarial): {c_summ['mean_adv_error']:.2f}")
+    print(f"Complexity mean error (clean):       {c_summ['mean_clean_error']:.2f}")
+    print(f"Complexity error degradation:        {c_summ['mean_error_degradation']:.2f}")
+    print(f"Security FN (targeted misses):       {s_summ['false_negatives']}")
+    print(f"Security FP (targeted false alarms): {s_summ['false_positives']}")
 
 
 if __name__ == "__main__":

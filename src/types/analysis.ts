@@ -104,6 +104,7 @@ export interface PatternResult {
   label: string;
   confidence: number;
   all_scores: Record<string, number>;
+  raw_ast_features?: Record<string, number>;
 }
 
 // ─── Code Clones ─────────────────────────────────────────────────────────────
