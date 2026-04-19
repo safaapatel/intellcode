@@ -1855,6 +1855,20 @@ def _step_bug(source: str, git_metadata: Optional[dict]):
     except Exception:
         pass
 
+    # Populate reliability_context so callers understand the evaluation limitations
+    out_dict.setdefault("reliability_context", {
+        "in_distribution_auc": 0.676,
+        "temporal_cv_auc": 0.544,
+        "lopo_auc": 0.567,
+        "recommended_use": (
+            "The random-split AUC of 0.676 is inflated by temporal leakage. "
+            "Under a strict temporal split the model scores 0.544 (walk-forward CV) "
+            "and 0.567 (LOPO), both near chance. Treat this score as a structural "
+            "complexity signal — high values flag hard-to-read files — not a reliable "
+            "forecast of future bug introduction."
+        ),
+    })
+
     return BugPredictionOut(**out_dict), r
 
 

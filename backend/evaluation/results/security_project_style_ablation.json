@@ -1,0 +1,654 @@
+{
+  "full_16dim": {
+    "description": "No ablation (baseline)",
+    "folds": [
+      {
+        "repo": "tornado",
+        "n_test": 104,
+        "auc": 0.6049
+      },
+      {
+        "repo": "jinja",
+        "n_test": 83,
+        "auc": 0.5833
+      },
+      {
+        "repo": "httpx",
+        "n_test": 148,
+        "auc": 0.389
+      },
+      {
+        "repo": "urllib3/urllib3",
+        "n_test": 75,
+        "auc": 0.7454
+      },
+      {
+        "repo": "Pillow",
+        "n_test": 87,
+        "auc": 0.3482
+      },
+      {
+        "repo": "pydantic/pydantic",
+        "n_test": 121,
+        "auc": 0.6215
+      },
+      {
+        "repo": "marshmallow",
+        "n_test": 83,
+        "auc": 0.0458
+      },
+      {
+        "repo": "django",
+        "n_test": 115,
+        "auc": 0.5079
+      },
+      {
+        "repo": "tqdm/tqdm",
+        "n_test": 64,
+        "auc": 0.8661
+      },
+      {
+        "repo": "aiohttp",
+        "n_test": 114,
+        "auc": 0.6178
+      },
+      {
+        "repo": "pip",
+        "n_test": 88,
+        "auc": 0.4562
+      },
+      {
+        "repo": "pypa/pip",
+        "n_test": 121,
+        "auc": 0.4613
+      },
+      {
+        "repo": "pyyaml",
+        "n_test": 138,
+        "auc": 0.5014
+      },
+      {
+        "repo": "paramiko/paramiko",
+        "n_test": 82,
+        "auc": 0.5583
+      },
+      {
+        "repo": "bandit/examples",
+        "n_test": 68,
+        "auc": 0.2476
+      },
+      {
+        "repo": "pyca/cryptography",
+        "n_test": 121,
+        "auc": 0.5509
+      },
+      {
+        "repo": "celery",
+        "n_test": 91,
+        "auc": 0.7966
+      },
+      {
+        "repo": "scrapy",
+        "n_test": 94,
+        "auc": 0.6589
+      },
+      {
+        "repo": "psf/requests",
+        "n_test": 34,
+        "auc": 0.8485
+      },
+      {
+        "repo": "aio-libs/aiohttp",
+        "n_test": 121,
+        "auc": 0.5794
+      },
+      {
+        "repo": "paramiko",
+        "n_test": 160,
+        "auc": 0.4837
+      },
+      {
+        "repo": "sqlalchemy",
+        "n_test": 85,
+        "auc": 0.525
+      },
+      {
+        "repo": "lxml",
+        "n_test": 81,
+        "auc": 0.4125
+      },
+      {
+        "repo": "flask",
+        "n_test": 93,
+        "auc": 0.5034
+      },
+      {
+        "repo": "starlette",
+        "n_test": 133,
+        "auc": 0.6581
+      },
+      {
+        "repo": "encode/httpx",
+        "n_test": 57,
+        "auc": 0.4692
+      },
+      {
+        "repo": "urllib3",
+        "n_test": 83,
+        "auc": 0.2458
+      },
+      {
+        "repo": "tiangolo/fastapi",
+        "n_test": 121,
+        "auc": 0.6933
+      },
+      {
+        "repo": "requests",
+        "n_test": 90,
+        "auc": 0.6406
+      },
+      {
+        "repo": "pallets/jinja",
+        "n_test": 59,
+        "auc": 0.7259
+      },
+      {
+        "repo": "pallets/click",
+        "n_test": 59,
+        "auc": 0.0862
+      }
+    ],
+    "mean_auc": 0.5300925477549977,
+    "std_auc": 0.19235825994035088,
+    "n_folds": 31
+  },
+  "remove_calls_imports": {
+    "description": "Zero out n_calls + n_imports (project-style)",
+    "folds": [
+      {
+        "repo": "tornado",
+        "n_test": 104,
+        "auc": 0.5
+      },
+      {
+        "repo": "jinja",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "httpx",
+        "n_test": 148,
+        "auc": 0.5
+      },
+      {
+        "repo": "urllib3/urllib3",
+        "n_test": 75,
+        "auc": 0.5
+      },
+      {
+        "repo": "Pillow",
+        "n_test": 87,
+        "auc": 0.5
+      },
+      {
+        "repo": "pydantic/pydantic",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "marshmallow",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "django",
+        "n_test": 115,
+        "auc": 0.5
+      },
+      {
+        "repo": "tqdm/tqdm",
+        "n_test": 64,
+        "auc": 0.5
+      },
+      {
+        "repo": "aiohttp",
+        "n_test": 114,
+        "auc": 0.5
+      },
+      {
+        "repo": "pip",
+        "n_test": 88,
+        "auc": 0.5
+      },
+      {
+        "repo": "pypa/pip",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "pyyaml",
+        "n_test": 138,
+        "auc": 0.5
+      },
+      {
+        "repo": "paramiko/paramiko",
+        "n_test": 82,
+        "auc": 0.5
+      },
+      {
+        "repo": "bandit/examples",
+        "n_test": 68,
+        "auc": 0.5
+      },
+      {
+        "repo": "pyca/cryptography",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "celery",
+        "n_test": 91,
+        "auc": 0.5
+      },
+      {
+        "repo": "scrapy",
+        "n_test": 94,
+        "auc": 0.5
+      },
+      {
+        "repo": "psf/requests",
+        "n_test": 34,
+        "auc": 0.5
+      },
+      {
+        "repo": "aio-libs/aiohttp",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "paramiko",
+        "n_test": 160,
+        "auc": 0.5
+      },
+      {
+        "repo": "sqlalchemy",
+        "n_test": 85,
+        "auc": 0.5
+      },
+      {
+        "repo": "lxml",
+        "n_test": 81,
+        "auc": 0.5
+      },
+      {
+        "repo": "flask",
+        "n_test": 93,
+        "auc": 0.5
+      },
+      {
+        "repo": "starlette",
+        "n_test": 133,
+        "auc": 0.5
+      },
+      {
+        "repo": "encode/httpx",
+        "n_test": 57,
+        "auc": 0.5
+      },
+      {
+        "repo": "urllib3",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "tiangolo/fastapi",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "requests",
+        "n_test": 90,
+        "auc": 0.5
+      },
+      {
+        "repo": "pallets/jinja",
+        "n_test": 59,
+        "auc": 0.5
+      },
+      {
+        "repo": "pallets/click",
+        "n_test": 59,
+        "auc": 0.5
+      }
+    ],
+    "mean_auc": 0.5,
+    "std_auc": 0.0,
+    "n_folds": 31
+  },
+  "remove_size_proxies": {
+    "description": "Zero out n_bytes + n_lines (size proxies)",
+    "folds": [
+      {
+        "repo": "tornado",
+        "n_test": 104,
+        "auc": 0.6049
+      },
+      {
+        "repo": "jinja",
+        "n_test": 83,
+        "auc": 0.5833
+      },
+      {
+        "repo": "httpx",
+        "n_test": 148,
+        "auc": 0.389
+      },
+      {
+        "repo": "urllib3/urllib3",
+        "n_test": 75,
+        "auc": 0.7454
+      },
+      {
+        "repo": "Pillow",
+        "n_test": 87,
+        "auc": 0.3482
+      },
+      {
+        "repo": "pydantic/pydantic",
+        "n_test": 121,
+        "auc": 0.6215
+      },
+      {
+        "repo": "marshmallow",
+        "n_test": 83,
+        "auc": 0.0458
+      },
+      {
+        "repo": "django",
+        "n_test": 115,
+        "auc": 0.5079
+      },
+      {
+        "repo": "tqdm/tqdm",
+        "n_test": 64,
+        "auc": 0.8661
+      },
+      {
+        "repo": "aiohttp",
+        "n_test": 114,
+        "auc": 0.6178
+      },
+      {
+        "repo": "pip",
+        "n_test": 88,
+        "auc": 0.4562
+      },
+      {
+        "repo": "pypa/pip",
+        "n_test": 121,
+        "auc": 0.4613
+      },
+      {
+        "repo": "pyyaml",
+        "n_test": 138,
+        "auc": 0.5014
+      },
+      {
+        "repo": "paramiko/paramiko",
+        "n_test": 82,
+        "auc": 0.5583
+      },
+      {
+        "repo": "bandit/examples",
+        "n_test": 68,
+        "auc": 0.2476
+      },
+      {
+        "repo": "pyca/cryptography",
+        "n_test": 121,
+        "auc": 0.5509
+      },
+      {
+        "repo": "celery",
+        "n_test": 91,
+        "auc": 0.7966
+      },
+      {
+        "repo": "scrapy",
+        "n_test": 94,
+        "auc": 0.6589
+      },
+      {
+        "repo": "psf/requests",
+        "n_test": 34,
+        "auc": 0.8485
+      },
+      {
+        "repo": "aio-libs/aiohttp",
+        "n_test": 121,
+        "auc": 0.5794
+      },
+      {
+        "repo": "paramiko",
+        "n_test": 160,
+        "auc": 0.4837
+      },
+      {
+        "repo": "sqlalchemy",
+        "n_test": 85,
+        "auc": 0.525
+      },
+      {
+        "repo": "lxml",
+        "n_test": 81,
+        "auc": 0.4125
+      },
+      {
+        "repo": "flask",
+        "n_test": 93,
+        "auc": 0.5034
+      },
+      {
+        "repo": "starlette",
+        "n_test": 133,
+        "auc": 0.6581
+      },
+      {
+        "repo": "encode/httpx",
+        "n_test": 57,
+        "auc": 0.4692
+      },
+      {
+        "repo": "urllib3",
+        "n_test": 83,
+        "auc": 0.2458
+      },
+      {
+        "repo": "tiangolo/fastapi",
+        "n_test": 121,
+        "auc": 0.6933
+      },
+      {
+        "repo": "requests",
+        "n_test": 90,
+        "auc": 0.6406
+      },
+      {
+        "repo": "pallets/jinja",
+        "n_test": 59,
+        "auc": 0.7259
+      },
+      {
+        "repo": "pallets/click",
+        "n_test": 59,
+        "auc": 0.0862
+      }
+    ],
+    "mean_auc": 0.5300925477549977,
+    "std_auc": 0.19235825994035088,
+    "n_folds": 31
+  },
+  "remove_all_style": {
+    "description": "Zero out n_calls + n_imports + n_bytes + n_lines",
+    "folds": [
+      {
+        "repo": "tornado",
+        "n_test": 104,
+        "auc": 0.5
+      },
+      {
+        "repo": "jinja",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "httpx",
+        "n_test": 148,
+        "auc": 0.5
+      },
+      {
+        "repo": "urllib3/urllib3",
+        "n_test": 75,
+        "auc": 0.5
+      },
+      {
+        "repo": "Pillow",
+        "n_test": 87,
+        "auc": 0.5
+      },
+      {
+        "repo": "pydantic/pydantic",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "marshmallow",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "django",
+        "n_test": 115,
+        "auc": 0.5
+      },
+      {
+        "repo": "tqdm/tqdm",
+        "n_test": 64,
+        "auc": 0.5
+      },
+      {
+        "repo": "aiohttp",
+        "n_test": 114,
+        "auc": 0.5
+      },
+      {
+        "repo": "pip",
+        "n_test": 88,
+        "auc": 0.5
+      },
+      {
+        "repo": "pypa/pip",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "pyyaml",
+        "n_test": 138,
+        "auc": 0.5
+      },
+      {
+        "repo": "paramiko/paramiko",
+        "n_test": 82,
+        "auc": 0.5
+      },
+      {
+        "repo": "bandit/examples",
+        "n_test": 68,
+        "auc": 0.5
+      },
+      {
+        "repo": "pyca/cryptography",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "celery",
+        "n_test": 91,
+        "auc": 0.5
+      },
+      {
+        "repo": "scrapy",
+        "n_test": 94,
+        "auc": 0.5
+      },
+      {
+        "repo": "psf/requests",
+        "n_test": 34,
+        "auc": 0.5
+      },
+      {
+        "repo": "aio-libs/aiohttp",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "paramiko",
+        "n_test": 160,
+        "auc": 0.5
+      },
+      {
+        "repo": "sqlalchemy",
+        "n_test": 85,
+        "auc": 0.5
+      },
+      {
+        "repo": "lxml",
+        "n_test": 81,
+        "auc": 0.5
+      },
+      {
+        "repo": "flask",
+        "n_test": 93,
+        "auc": 0.5
+      },
+      {
+        "repo": "starlette",
+        "n_test": 133,
+        "auc": 0.5
+      },
+      {
+        "repo": "encode/httpx",
+        "n_test": 57,
+        "auc": 0.5
+      },
+      {
+        "repo": "urllib3",
+        "n_test": 83,
+        "auc": 0.5
+      },
+      {
+        "repo": "tiangolo/fastapi",
+        "n_test": 121,
+        "auc": 0.5
+      },
+      {
+        "repo": "requests",
+        "n_test": 90,
+        "auc": 0.5
+      },
+      {
+        "repo": "pallets/jinja",
+        "n_test": 59,
+        "auc": 0.5
+      },
+      {
+        "repo": "pallets/click",
+        "n_test": 59,
+        "auc": 0.5
+      }
+    ],
+    "mean_auc": 0.5,
+    "std_auc": 0.0,
+    "n_folds": 31
+  }
+}
