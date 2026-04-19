@@ -3039,13 +3039,13 @@ Evidently, Alibi-Detect) measure shift after deployment on live traffic; SAEF is
 designed as a pre-deployment audit, and the negative shift-AUC correlation finding is
 a concrete output of running it.
 
-\textbf{Cross-Project Calibration Monitoring (CACM)} tracks how well the model's
-confidence estimates hold up outside the training distribution. In-distribution
-Expected Calibration Error (ECE) for the security classifier is 0.0875, meaning the model's confidence scores roughly match its actual accuracy within the training domain.
-Under LOPO evaluation, ECE rises to 0.2645, a threefold degradation. This means
-that a security finding the model reports at 90\% confidence outside its training
-distribution is substantially less reliable than that figure suggests. CACM makes
-this degradation explicit rather than leaving it implicit in the AUC drop.
+\textbf{Calibration monitoring} tracks how well the model's confidence estimates hold
+up outside the training distribution. In-distribution Expected Calibration Error (ECE)
+for the security classifier is 0.0875, meaning confidence scores roughly match actual
+accuracy within the training domain. Under LOPO evaluation, ECE rises to 0.2645, a
+threefold degradation. A security finding reported at 90\% confidence outside the
+training distribution is substantially less reliable than that figure suggests. This
+degradation is made explicit rather than leaving it implicit in the AUC drop.
 
 \textbf{Simplicity Baseline Comparison} tests whether a hand-engineered single
 metric outperforms the trained model under cross-project evaluation. Under LOPO,
@@ -3104,34 +3104,34 @@ that is the production checkpoint.
 
 \subsection{Actionability and failure analysis}
 
-\textbf{Actionability Analysis (ACT)} measures whether security findings are useful
-in practice, not just whether they are statistically discriminating. Two metrics are
-reported. Proportion of Bugs in the top-20 findings (PofB@20) is 0.283: of the 20
-highest-confidence security findings the model produces, 28.3\% correspond to genuine
-vulnerabilities. False Discovery Rate at the 0.5 threshold (FDR@0.5) is 0.696: nearly
-70\% of findings above the mid-range confidence threshold are false positives. These
-numbers are not evidence of a broken tool; they reflect the difficulty of the task and the class imbalance in the dataset. They are the honest figures a practitioner
-needs to calibrate how much review time to spend on each alert.
+\textbf{Actionability analysis} measures whether security findings are useful in
+practice, not just statistically discriminating. Two metrics are reported. Proportion
+of Bugs in the top-20 findings (PofB@20) is 0.283: of the 20 highest-confidence
+security findings the model produces, 28.3\% correspond to genuine vulnerabilities.
+False Discovery Rate at the 0.5 threshold (FDR@0.5) is 0.696: nearly 70\% of
+findings above the mid-range confidence threshold are false positives. These numbers
+are not evidence of a broken tool; they reflect the difficulty of the task and class
+imbalance in the dataset. They are the honest figures a practitioner needs to
+calibrate how much review time to spend on each alert.
 
-\textbf{Failure Taxonomy (FTAX)} applies a structured classification to every LOPO
-failure case, assigning each to one of four root-cause categories: label noise,
-distribution shift, feature scope mismatch, or oracle circularity. Across the LOPO
-evaluation, 19 cases are classified as \textsc{label\_noise} (the ground-truth label
-is unreliable for that sample) and 13 are classified as severe, meaning the model's
-prediction is confidently wrong rather than merely uncertain. Having a named taxonomy
-of failure modes rather than a single aggregate AUC figure gives practitioners a basis
-for deciding which failures are correctable (label noise can be reduced with better
-annotation) and which are structural (feature scope mismatch requires a different
-model architecture).
+\textbf{Failure taxonomy} applies a structured classification to every LOPO failure
+case, assigning each to one of four root-cause categories: label noise, distribution
+shift, feature scope mismatch, or oracle circularity. Across the LOPO evaluation,
+19 cases are classified as \textsc{label\_noise} and 13 as severe, meaning the
+model's prediction is confidently wrong rather than merely uncertain. A named
+taxonomy of failure modes rather than a single aggregate AUC gives practitioners a
+basis for deciding which failures are correctable (label noise can be reduced with
+better annotation) and which are structural (feature scope mismatch requires a
+different model architecture).
 
-\textbf{Statistical Significance Tests (SIG)} applies Wilcoxon signed-rank tests and
+\textbf{Statistical significance testing} applies Wilcoxon signed-rank tests and
 reports Cohen's $d$ effect sizes for all pairwise model comparisons. At $n = 4$
 LOPO folds, the minimum achievable $p$-value is 0.0625, so significance at the
-conventional $\alpha = 0.05$ threshold is unattainable regardless of effect size.
-SIG makes this power limitation explicit in every comparison table rather than
-suppressing it. The pattern leakage comparison ($p = 0.031$, $n = 5$ cross-validation
-folds) is the one case where sufficient observations are available for a statistically
-significant result; all others are reported with effect size and direction only.
+conventional $\alpha = 0.05$ threshold is structurally unattainable. This power
+limitation is made explicit in every comparison table rather than suppressed. The
+pattern leakage comparison ($p = 0.031$, $n = 5$ cross-validation folds) is the
+one case where a statistically significant result is achievable; all others are
+reported with effect size and direction only.
 
 %% ----------------------------------------------------------------
 \section{Discussion}
@@ -3534,7 +3534,7 @@ $0.676$ became $0.460$ under temporal evaluation. In each case, the standard eva
 would have been misleading. The instruments in this thesis are designed to make those
 collapses visible before deployment rather than after.
 
-An integrated evaluation protocol comprising ten diagnostic checks (Section~\ref{sec:novel-contributions}) was developed to address these gaps: PIFF and SAEF for generalisation diagnostics, CACM for calibration monitoring, TDCP for temporal robustness, LAMV and PLF for leakage detection, and ACT, FTAX, and SIG for actionability and failure analysis. Adding five-seed variance, LOPO benchmarks, walk-forward temporal CV, conformal intervals, and SonarQube calibration, these give a picture of deployable performance that a single split cannot provide.
+An integrated evaluation protocol comprising ten diagnostic checks (Section~\ref{sec:novel-contributions}) was developed to address these gaps: PIFF and SAEF for generalisation diagnostics, calibration monitoring, TDCP for temporal robustness, LAMV and PLF for leakage detection, and actionability analysis, failure taxonomy, and significance testing for practical assessment. Adding five-seed variance, LOPO benchmarks, walk-forward temporal CV, conformal intervals, and SonarQube calibration, these give a picture of deployable performance that a single split cannot provide.
 
 The protocol is a concrete, runnable artefact. \texttt{backend/evaluation/} contains one Python module per instrument, each with a command-line interface; \texttt{backend/run\_novel\_contributions.py} runs the full suite via \texttt{--only PIFF SAEF LAMV} flags and persists JSON results to \texttt{evaluation/results/}. Any researcher with a dataset conforming to the documented schema can substitute their own trained models and run the full protocol without modifying IntelliCode Review itself.
 
