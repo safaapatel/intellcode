@@ -1,0 +1,377 @@
+{
+  "dataset": {
+    "total_cases": 25,
+    "flawed": 10,
+    "clean": 15,
+    "rules_covered": 8
+  },
+  "overall": {
+    "micro_precision": 0.9091,
+    "micro_recall": 0.9091,
+    "micro_f1": 0.9091,
+    "macro_precision": 0.8125,
+    "macro_recall": 0.875,
+    "macro_f1": 0.8333,
+    "false_positive_rate": 0.0667,
+    "tp": 10,
+    "fp": 1,
+    "fn": 1
+  },
+  "per_rule": {
+    "bare_except": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "empty_except": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0
+    },
+    "redundant_else": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "unreachable_code": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "unused_function": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "unused_import": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "unused_parameter": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 1
+    },
+    "unused_variable": {
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "tp": 1,
+      "fp": 1,
+      "fn": 0
+    }
+  },
+  "case_results": [
+    {
+      "desc": "FLAWED: code after return",
+      "expected": [
+        "unreachable_code"
+      ],
+      "detected": [
+        "unreachable_code",
+        "unused_variable"
+      ],
+      "tp": [
+        "unreachable_code"
+      ],
+      "fp": [
+        "unused_variable"
+      ],
+      "fn": [],
+      "outcome": "FP"
+    },
+    {
+      "desc": "FLAWED: code after raise",
+      "expected": [
+        "unreachable_code"
+      ],
+      "detected": [
+        "unreachable_code"
+      ],
+      "tp": [
+        "unreachable_code"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "FLAWED: code after break",
+      "expected": [
+        "unreachable_code"
+      ],
+      "detected": [
+        "unreachable_code"
+      ],
+      "tp": [
+        "unreachable_code"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: clean return, no trailing code",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: variable used before return",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: helper defined but never called",
+      "expected": [
+        "unused_function"
+      ],
+      "detected": [
+        "unused_function"
+      ],
+      "tp": [
+        "unused_function"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: process() is called by main",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: os imported but not used",
+      "expected": [
+        "unused_import"
+      ],
+      "detected": [
+        "unused_import"
+      ],
+      "tp": [
+        "unused_import"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: both imports used",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: Path used in function",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: x assigned but never read",
+      "expected": [
+        "unused_variable"
+      ],
+      "detected": [
+        "unused_variable"
+      ],
+      "tp": [
+        "unused_variable"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: x is returned",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: total accumulated and returned",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: both parameters unused",
+      "expected": [
+        "unused_parameter"
+      ],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [
+        "unused_parameter"
+      ],
+      "outcome": "FN"
+    },
+    {
+      "desc": "SAFE: name is used",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: both params used",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: bare except swallows errors",
+      "expected": [
+        "bare_except",
+        "empty_except"
+      ],
+      "detected": [
+        "bare_except",
+        "empty_except"
+      ],
+      "tp": [
+        "bare_except",
+        "empty_except"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "FLAWED: except Exception: pass also empty",
+      "expected": [
+        "empty_except"
+      ],
+      "detected": [
+        "empty_except"
+      ],
+      "tp": [
+        "empty_except"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: exception handled",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: except has fallback logic",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: else after return is redundant",
+      "expected": [
+        "redundant_else"
+      ],
+      "detected": [
+        "redundant_else"
+      ],
+      "tp": [
+        "redundant_else"
+      ],
+      "fp": [],
+      "fn": [],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: no else, direct fallthrough",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: simple clean function",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: import used in function",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: class instantiated and used",
+      "expected": [],
+      "detected": [],
+      "tp": [],
+      "fp": [],
+      "fn": [],
+      "outcome": "TN"
+    }
+  ]
+}

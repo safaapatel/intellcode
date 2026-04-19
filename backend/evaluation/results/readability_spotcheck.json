@@ -1,0 +1,195 @@
+{
+  "dataset": {
+    "total_cases": 25,
+    "by_band": {
+      "high": 10,
+      "medium": 7,
+      "low": 8
+    }
+  },
+  "overall": {
+    "accuracy": 0.56,
+    "micro_precision": 0.56,
+    "micro_recall": 0.56,
+    "micro_f1": 0.56,
+    "macro_f1": 0.5597
+  },
+  "per_band": {
+    "high": {
+      "precision": 0.7143,
+      "recall": 0.5,
+      "f1": 0.5882,
+      "tp": 5,
+      "fp": 2,
+      "fn": 5
+    },
+    "medium": {
+      "precision": 0.4,
+      "recall": 0.8571,
+      "f1": 0.5455,
+      "tp": 6,
+      "fp": 9,
+      "fn": 1
+    },
+    "low": {
+      "precision": 1.0,
+      "recall": 0.375,
+      "f1": 0.5455,
+      "tp": 3,
+      "fp": 0,
+      "fn": 5
+    }
+  },
+  "case_results": [
+    {
+      "desc": "Clean: docstring, guard clause, meaningful names",
+      "expected": "high",
+      "predicted": "high",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Clean: clear naming, simple logic, docstring",
+      "expected": "high",
+      "predicted": "high",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Clean: short, one responsibility, descriptive parameter",
+      "expected": "high",
+      "predicted": "high",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Clean: meaningful intermediate variables, no magic numbers",
+      "expected": "high",
+      "predicted": "high",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Clean: consistent naming, guard clauses, docstrings implied",
+      "expected": "high",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Clean: clear variable names, linear logic",
+      "expected": "high",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Clean: minimal, self-documenting via naming",
+      "expected": "high",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Clean: docstring, typed annotation, clear names",
+      "expected": "high",
+      "predicted": "high",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Clean: meaningful names, no magic numbers",
+      "expected": "high",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Clean: guard clause, explicit None return, descriptive names",
+      "expected": "high",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Medium: short names, index loop instead of iteration, no docstring",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Medium: nested ifs, vague parameter names, no docstring",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Medium: unclear flag parameter, abbreviated names",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Medium: no docstring, vague function name, acceptable structure",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Medium: no docstring, magic number 3, otherwise clear",
+      "expected": "medium",
+      "predicted": "high",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Medium: no docstring, recursive but readable, vague name",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Medium: magic 0.8, short names, no type hints",
+      "expected": "medium",
+      "predicted": "medium",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Poor: single-letter params, 5-level nesting, no spaces",
+      "expected": "low",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Poor: compressed layout, single-letter vars, no docstring",
+      "expected": "low",
+      "predicted": "low",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Poor: 10 single-letter parameters, no semantics, no docstring",
+      "expected": "low",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Poor: single-letter name for recursive function, compressed",
+      "expected": "low",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Poor: magic numbers, meaningless intermediate vars, no docstring",
+      "expected": "low",
+      "predicted": "high",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Poor: 8 single-letter params, no docstring, compressed",
+      "expected": "low",
+      "predicted": "medium",
+      "outcome": "WRONG"
+    },
+    {
+      "desc": "Poor: single-letter names throughout, compressed layout",
+      "expected": "low",
+      "predicted": "low",
+      "outcome": "TP"
+    },
+    {
+      "desc": "Poor: abbreviated everything, flag parameters, no docstring",
+      "expected": "low",
+      "predicted": "low",
+      "outcome": "TP"
+    }
+  ]
+}

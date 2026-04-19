@@ -1,0 +1,114 @@
+{
+  "dataset": {
+    "total_cases": 12,
+    "by_band": {
+      "documented": 4,
+      "partial": 3,
+      "undocumented": 5
+    }
+  },
+  "overall": {
+    "accuracy": 0.75,
+    "macro_f1": 0.5758
+  },
+  "per_band": {
+    "documented": {
+      "precision": 0.5714,
+      "recall": 1.0,
+      "f1": 0.7273,
+      "tp": 4,
+      "fp": 3,
+      "fn": 0
+    },
+    "partial": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 3
+    },
+    "undocumented": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 5,
+      "fp": 0,
+      "fn": 0
+    }
+  },
+  "case_results": [
+    {
+      "desc": "Full docstring with summary, Args and Returns",
+      "expected": "documented",
+      "predicted": "documented",
+      "correct": true
+    },
+    {
+      "desc": "Full docstring with all sections",
+      "expected": "documented",
+      "predicted": "documented",
+      "correct": true
+    },
+    {
+      "desc": "Docstring with Args (no return for None function)",
+      "expected": "documented",
+      "predicted": "documented",
+      "correct": true
+    },
+    {
+      "desc": "Class and __init__ both documented",
+      "expected": "documented",
+      "predicted": "documented",
+      "correct": true
+    },
+    {
+      "desc": "Docstring exists but missing Args and Returns",
+      "expected": "partial",
+      "predicted": "documented",
+      "correct": false
+    },
+    {
+      "desc": "Docstring exists but missing Args section",
+      "expected": "partial",
+      "predicted": "documented",
+      "correct": false
+    },
+    {
+      "desc": "Docstring exists but missing Args and Returns sections",
+      "expected": "partial",
+      "predicted": "documented",
+      "correct": false
+    },
+    {
+      "desc": "No docstring at all",
+      "expected": "undocumented",
+      "predicted": "undocumented",
+      "correct": true
+    },
+    {
+      "desc": "No docstring on function with parameters",
+      "expected": "undocumented",
+      "predicted": "undocumented",
+      "correct": true
+    },
+    {
+      "desc": "Class and all methods missing docstrings",
+      "expected": "undocumented",
+      "predicted": "undocumented",
+      "correct": true
+    },
+    {
+      "desc": "4-param function with no docstring",
+      "expected": "undocumented",
+      "predicted": "undocumented",
+      "correct": true
+    },
+    {
+      "desc": "Multi-branch function with no docstring",
+      "expected": "undocumented",
+      "predicted": "undocumented",
+      "correct": true
+    }
+  ]
+}

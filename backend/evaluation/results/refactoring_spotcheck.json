@@ -1,0 +1,188 @@
+{
+  "dataset": {
+    "total_cases": 17,
+    "flawed": 6,
+    "clean": 11,
+    "rules_covered": 5
+  },
+  "overall": {
+    "micro_precision": 1.0,
+    "micro_recall": 1.0,
+    "micro_f1": 1.0,
+    "macro_f1": 1.0,
+    "false_positive_rate": 0.0,
+    "tp": 6,
+    "fp": 0,
+    "fn": 0
+  },
+  "per_rule": {
+    "extract_constant": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "extract_method": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "introduce_explaining_variable": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    },
+    "introduce_parameter_object": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0
+    },
+    "reduce_nesting": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0
+    }
+  },
+  "case_results": [
+    {
+      "desc": "FLAWED: 42-line function body triggers extract_method",
+      "expected": [
+        "extract_method"
+      ],
+      "detected": [
+        "extract_method"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: 2-line function is fine",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: 5-line function, well under threshold",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: 5 parameters (> 4)",
+      "expected": [
+        "introduce_parameter_object"
+      ],
+      "detected": [
+        "introduce_parameter_object"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "FLAWED: 7 parameters",
+      "expected": [
+        "introduce_parameter_object"
+      ],
+      "detected": [
+        "introduce_parameter_object"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: 3 parameters (at or below threshold)",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: exactly 4 parameters (threshold is > 4)",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: 4-level nesting (if/for/if/for)",
+      "expected": [
+        "reduce_nesting"
+      ],
+      "detected": [
+        "reduce_nesting"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: 3-level nesting (if/for/if), at threshold not above",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: 3 'and' operators in one condition",
+      "expected": [
+        "introduce_explaining_variable"
+      ],
+      "detected": [
+        "introduce_explaining_variable"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: only 1 boolean operator",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "FLAWED: 3 magic numbers (1.08, 42.5, 3.14)",
+      "expected": [
+        "extract_constant"
+      ],
+      "detected": [
+        "extract_constant"
+      ],
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: only one literal, named constant pattern",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: literal 1 is not counted as magic number",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: minimal clean function",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: one-liner with type hints",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: clean class, short methods",
+      "expected": [],
+      "detected": [],
+      "outcome": "TN"
+    }
+  ]
+}

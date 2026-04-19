@@ -1,0 +1,528 @@
+{
+  "n_projects": 21,
+  "features_used": [
+    "n_calls",
+    "n_imports",
+    "sloc"
+  ],
+  "shift_auc_correlation": {
+    "pearson_r": 0.1282,
+    "pearson_p": 0.5798,
+    "spearman_r": 0.1754,
+    "spearman_p": 0.447,
+    "interpretation": "r=0.128 (p=0.580, n=21): style-feature distribution shift does NOT significantly predict per-project LOPO AUC. The confounding is uniform across projects rather than varying by shift magnitude. The model uses n_calls/n_imports as style fingerprints that carry no cross-project vulnerability signal, but all projects are similarly affected \u2014 not just those with high shift."
+  },
+  "per_project": [
+    {
+      "repo": "paramiko",
+      "style_shift": 0.025658,
+      "auc": 0.4837,
+      "n_records": 242,
+      "mean_n_calls": 47.95,
+      "mean_n_imports": 7.29
+    },
+    {
+      "repo": "urllib3",
+      "style_shift": 0.032429,
+      "auc": 0.2458,
+      "n_records": 158,
+      "mean_n_calls": 52.63,
+      "mean_n_imports": 9.78
+    },
+    {
+      "repo": "httpx",
+      "style_shift": 0.035441,
+      "auc": 0.4692,
+      "n_records": 148,
+      "mean_n_calls": 43.36,
+      "mean_n_imports": 12.22
+    },
+    {
+      "repo": "pyyaml",
+      "style_shift": 0.036903,
+      "auc": 0.5014,
+      "n_records": 138,
+      "mean_n_calls": 44.98,
+      "mean_n_imports": 3.68
+    },
+    {
+      "repo": "pydantic",
+      "style_shift": 0.040631,
+      "auc": 0.6215,
+      "n_records": 121,
+      "mean_n_calls": 94.53,
+      "mean_n_imports": 14.32
+    },
+    {
+      "repo": "tqdm",
+      "style_shift": 0.042608,
+      "auc": 0.8661,
+      "n_records": 64,
+      "mean_n_calls": 49.58,
+      "mean_n_imports": 7.55
+    },
+    {
+      "repo": "django",
+      "style_shift": 0.044538,
+      "auc": 0.5079,
+      "n_records": 115,
+      "mean_n_calls": 28.3,
+      "mean_n_imports": 3.13
+    },
+    {
+      "repo": "starlette",
+      "style_shift": 0.052057,
+      "auc": 0.6581,
+      "n_records": 133,
+      "mean_n_calls": 31.12,
+      "mean_n_imports": 7.13
+    },
+    {
+      "repo": "marshmallow-code",
+      "style_shift": 0.053716,
+      "auc": 0.0458,
+      "n_records": 36,
+      "mean_n_calls": 116.5,
+      "mean_n_imports": 8.39
+    },
+    {
+      "repo": "jinja",
+      "style_shift": 0.056703,
+      "auc": 0.7259,
+      "n_records": 83,
+      "mean_n_calls": 20.46,
+      "mean_n_imports": 1.7
+    },
+    {
+      "repo": "lxml",
+      "style_shift": 0.057634,
+      "auc": 0.4125,
+      "n_records": 81,
+      "mean_n_calls": 76.01,
+      "mean_n_imports": 2.93
+    },
+    {
+      "repo": "sqlalchemy",
+      "style_shift": 0.063782,
+      "auc": 0.525,
+      "n_records": 85,
+      "mean_n_calls": 34.49,
+      "mean_n_imports": 2.52
+    },
+    {
+      "repo": "pillow",
+      "style_shift": 0.06588,
+      "auc": 0.3482,
+      "n_records": 87,
+      "mean_n_calls": 19.09,
+      "mean_n_imports": 1.48
+    },
+    {
+      "repo": "tornado",
+      "style_shift": 0.073331,
+      "auc": 0.6049,
+      "n_records": 104,
+      "mean_n_calls": 38.43,
+      "mean_n_imports": 3.71
+    },
+    {
+      "repo": "marshmallow",
+      "style_shift": 0.074642,
+      "auc": 0.0458,
+      "n_records": 83,
+      "mean_n_calls": 49.88,
+      "mean_n_imports": 6.3
+    },
+    {
+      "repo": "aiohttp",
+      "style_shift": 0.08065,
+      "auc": 0.5794,
+      "n_records": 114,
+      "mean_n_calls": 109.51,
+      "mean_n_imports": 6.25
+    },
+    {
+      "repo": "scrapy",
+      "style_shift": 0.086816,
+      "auc": 0.6589,
+      "n_records": 94,
+      "mean_n_calls": 11.4,
+      "mean_n_imports": 2.98
+    },
+    {
+      "repo": "requests",
+      "style_shift": 0.092461,
+      "auc": 0.6406,
+      "n_records": 90,
+      "mean_n_calls": 29.5,
+      "mean_n_imports": 3.27
+    },
+    {
+      "repo": "flask",
+      "style_shift": 0.098468,
+      "auc": 0.5034,
+      "n_records": 93,
+      "mean_n_calls": 19.01,
+      "mean_n_imports": 4.12
+    },
+    {
+      "repo": "celery",
+      "style_shift": 0.10218,
+      "auc": 0.7966,
+      "n_records": 91,
+      "mean_n_calls": 9.49,
+      "mean_n_imports": 3.01
+    },
+    {
+      "repo": "pip",
+      "style_shift": 0.125392,
+      "auc": 0.4613,
+      "n_records": 88,
+      "mean_n_calls": 5.65,
+      "mean_n_imports": 1.6
+    }
+  ],
+  "per_project_stats": [
+    {
+      "repo": "pallets",
+      "n_records": 195,
+      "style_jsd": 0.019032,
+      "n_calls_jsd": 0.023054,
+      "n_imports_jsd": 0.014907,
+      "sloc_jsd": 0.019135,
+      "mean_n_calls": 73.47,
+      "mean_n_imports": 9.01,
+      "mean_sloc": 111.53
+    },
+    {
+      "repo": "pyca",
+      "n_records": 121,
+      "style_jsd": 0.022855,
+      "n_calls_jsd": 0.022727,
+      "n_imports_jsd": 0.014607,
+      "sloc_jsd": 0.031232,
+      "mean_n_calls": 89.82,
+      "mean_n_imports": 8.33,
+      "mean_sloc": 96.89
+    },
+    {
+      "repo": "paramiko",
+      "n_records": 242,
+      "style_jsd": 0.025658,
+      "n_calls_jsd": 0.013669,
+      "n_imports_jsd": 0.007113,
+      "sloc_jsd": 0.056193,
+      "mean_n_calls": 47.95,
+      "mean_n_imports": 7.29,
+      "mean_sloc": 140.34
+    },
+    {
+      "repo": "pypa",
+      "n_records": 121,
+      "style_jsd": 0.026544,
+      "n_calls_jsd": 0.01762,
+      "n_imports_jsd": 0.041826,
+      "sloc_jsd": 0.020186,
+      "mean_n_calls": 65.7,
+      "mean_n_imports": 12.08,
+      "mean_sloc": 116.79
+    },
+    {
+      "repo": "urllib3",
+      "n_records": 158,
+      "style_jsd": 0.032429,
+      "n_calls_jsd": 0.013727,
+      "n_imports_jsd": 0.022666,
+      "sloc_jsd": 0.060894,
+      "mean_n_calls": 52.63,
+      "mean_n_imports": 9.78,
+      "mean_sloc": 125.09
+    },
+    {
+      "repo": "httpx",
+      "n_records": 148,
+      "style_jsd": 0.035441,
+      "n_calls_jsd": 0.022994,
+      "n_imports_jsd": 0.0426,
+      "sloc_jsd": 0.040729,
+      "mean_n_calls": 43.36,
+      "mean_n_imports": 12.22,
+      "mean_sloc": 114.72
+    },
+    {
+      "repo": "pyyaml",
+      "n_records": 138,
+      "style_jsd": 0.036903,
+      "n_calls_jsd": 0.015815,
+      "n_imports_jsd": 0.023851,
+      "sloc_jsd": 0.071042,
+      "mean_n_calls": 44.98,
+      "mean_n_imports": 3.68,
+      "mean_sloc": 122.75
+    },
+    {
+      "repo": "encode",
+      "n_records": 57,
+      "style_jsd": 0.040235,
+      "n_calls_jsd": 0.045823,
+      "n_imports_jsd": 0.012573,
+      "sloc_jsd": 0.062309,
+      "mean_n_calls": 73.49,
+      "mean_n_imports": 8.98,
+      "mean_sloc": 141.6
+    },
+    {
+      "repo": "pydantic",
+      "n_records": 121,
+      "style_jsd": 0.040631,
+      "n_calls_jsd": 0.029553,
+      "n_imports_jsd": 0.063804,
+      "sloc_jsd": 0.028536,
+      "mean_n_calls": 94.53,
+      "mean_n_imports": 14.32,
+      "mean_sloc": 115.08
+    },
+    {
+      "repo": "tqdm",
+      "n_records": 64,
+      "style_jsd": 0.042608,
+      "n_calls_jsd": 0.023643,
+      "n_imports_jsd": 0.014157,
+      "sloc_jsd": 0.090023,
+      "mean_n_calls": 49.58,
+      "mean_n_imports": 7.55,
+      "mean_sloc": 73.23
+    },
+    {
+      "repo": "django",
+      "n_records": 115,
+      "style_jsd": 0.044538,
+      "n_calls_jsd": 0.043811,
+      "n_imports_jsd": 0.030462,
+      "sloc_jsd": 0.059341,
+      "mean_n_calls": 28.3,
+      "mean_n_imports": 3.13,
+      "mean_sloc": 88.71
+    },
+    {
+      "repo": "starlette",
+      "n_records": 133,
+      "style_jsd": 0.052057,
+      "n_calls_jsd": 0.034575,
+      "n_imports_jsd": 0.032226,
+      "sloc_jsd": 0.089371,
+      "mean_n_calls": 31.12,
+      "mean_n_imports": 7.13,
+      "mean_sloc": 83.33
+    },
+    {
+      "repo": "marshmallow-code",
+      "n_records": 36,
+      "style_jsd": 0.053716,
+      "n_calls_jsd": 0.047695,
+      "n_imports_jsd": 0.037554,
+      "sloc_jsd": 0.0759,
+      "mean_n_calls": 116.5,
+      "mean_n_imports": 8.39,
+      "mean_sloc": 103.81
+    },
+    {
+      "repo": "tiangolo",
+      "n_records": 121,
+      "style_jsd": 0.054713,
+      "n_calls_jsd": 0.052689,
+      "n_imports_jsd": 0.033966,
+      "sloc_jsd": 0.077485,
+      "mean_n_calls": 17.12,
+      "mean_n_imports": 4.38,
+      "mean_sloc": 65.85
+    },
+    {
+      "repo": "psf",
+      "n_records": 34,
+      "style_jsd": 0.055225,
+      "n_calls_jsd": 0.032007,
+      "n_imports_jsd": 0.075511,
+      "sloc_jsd": 0.058157,
+      "mean_n_calls": 42.38,
+      "mean_n_imports": 12.06,
+      "mean_sloc": 94.62
+    },
+    {
+      "repo": "jinja",
+      "n_records": 83,
+      "style_jsd": 0.056703,
+      "n_calls_jsd": 0.039798,
+      "n_imports_jsd": 0.079864,
+      "sloc_jsd": 0.050447,
+      "mean_n_calls": 20.46,
+      "mean_n_imports": 1.7,
+      "mean_sloc": 122.29
+    },
+    {
+      "repo": "lxml",
+      "n_records": 81,
+      "style_jsd": 0.057634,
+      "n_calls_jsd": 0.048445,
+      "n_imports_jsd": 0.048991,
+      "sloc_jsd": 0.075466,
+      "mean_n_calls": 76.01,
+      "mean_n_imports": 2.93,
+      "mean_sloc": 130.27
+    },
+    {
+      "repo": "sqlalchemy",
+      "n_records": 85,
+      "style_jsd": 0.063782,
+      "n_calls_jsd": 0.016169,
+      "n_imports_jsd": 0.04884,
+      "sloc_jsd": 0.126338,
+      "mean_n_calls": 34.49,
+      "mean_n_imports": 2.52,
+      "mean_sloc": 122.13
+    },
+    {
+      "repo": "pillow",
+      "n_records": 87,
+      "style_jsd": 0.06588,
+      "n_calls_jsd": 0.034415,
+      "n_imports_jsd": 0.087512,
+      "sloc_jsd": 0.075713,
+      "mean_n_calls": 19.09,
+      "mean_n_imports": 1.48,
+      "mean_sloc": 129.61
+    },
+    {
+      "repo": "bottlepy",
+      "n_records": 28,
+      "style_jsd": 0.070217,
+      "n_calls_jsd": 0.05514,
+      "n_imports_jsd": 0.034408,
+      "sloc_jsd": 0.121102,
+      "mean_n_calls": 87.68,
+      "mean_n_imports": 6.82,
+      "mean_sloc": 84.75
+    },
+    {
+      "repo": "tornado",
+      "n_records": 104,
+      "style_jsd": 0.073331,
+      "n_calls_jsd": 0.026042,
+      "n_imports_jsd": 0.048894,
+      "sloc_jsd": 0.145057,
+      "mean_n_calls": 38.43,
+      "mean_n_imports": 3.71,
+      "mean_sloc": 150.62
+    },
+    {
+      "repo": "aio-libs",
+      "n_records": 121,
+      "style_jsd": 0.073825,
+      "n_calls_jsd": 0.051776,
+      "n_imports_jsd": 0.08091,
+      "sloc_jsd": 0.088788,
+      "mean_n_calls": 147.11,
+      "mean_n_imports": 17.87,
+      "mean_sloc": 145.21
+    },
+    {
+      "repo": "marshmallow",
+      "n_records": 83,
+      "style_jsd": 0.074642,
+      "n_calls_jsd": 0.074483,
+      "n_imports_jsd": 0.06928,
+      "sloc_jsd": 0.080164,
+      "mean_n_calls": 49.88,
+      "mean_n_imports": 6.3,
+      "mean_sloc": 102.88
+    },
+    {
+      "repo": "aiohttp",
+      "n_records": 114,
+      "style_jsd": 0.08065,
+      "n_calls_jsd": 0.079185,
+      "n_imports_jsd": 0.024356,
+      "sloc_jsd": 0.13841,
+      "mean_n_calls": 109.51,
+      "mean_n_imports": 6.25,
+      "mean_sloc": 160.27
+    },
+    {
+      "repo": "scrapy",
+      "n_records": 94,
+      "style_jsd": 0.086816,
+      "n_calls_jsd": 0.060624,
+      "n_imports_jsd": 0.050146,
+      "sloc_jsd": 0.149678,
+      "mean_n_calls": 11.4,
+      "mean_n_imports": 2.98,
+      "mean_sloc": 45.82
+    },
+    {
+      "repo": "requests",
+      "n_records": 90,
+      "style_jsd": 0.092461,
+      "n_calls_jsd": 0.058549,
+      "n_imports_jsd": 0.068278,
+      "sloc_jsd": 0.150555,
+      "mean_n_calls": 29.5,
+      "mean_n_imports": 3.27,
+      "mean_sloc": 148.88
+    },
+    {
+      "repo": "flask",
+      "n_records": 93,
+      "style_jsd": 0.098468,
+      "n_calls_jsd": 0.048884,
+      "n_imports_jsd": 0.051135,
+      "sloc_jsd": 0.195384,
+      "mean_n_calls": 19.01,
+      "mean_n_imports": 4.12,
+      "mean_sloc": 150.67
+    },
+    {
+      "repo": "celery",
+      "n_records": 91,
+      "style_jsd": 0.10218,
+      "n_calls_jsd": 0.077904,
+      "n_imports_jsd": 0.055444,
+      "sloc_jsd": 0.173192,
+      "mean_n_calls": 9.49,
+      "mean_n_imports": 3.01,
+      "mean_sloc": 53.45
+    },
+    {
+      "repo": "pip",
+      "n_records": 88,
+      "style_jsd": 0.125392,
+      "n_calls_jsd": 0.077383,
+      "n_imports_jsd": 0.095384,
+      "sloc_jsd": 0.203411,
+      "mean_n_calls": 5.65,
+      "mean_n_imports": 1.6,
+      "mean_sloc": 128.25
+    },
+    {
+      "repo": "bandit",
+      "n_records": 68,
+      "style_jsd": 0.141687,
+      "n_calls_jsd": 0.065953,
+      "n_imports_jsd": 0.083098,
+      "sloc_jsd": 0.276011,
+      "mean_n_calls": 14.4,
+      "mean_n_imports": 2.46,
+      "mean_sloc": 23.66
+    },
+    {
+      "repo": "certifi",
+      "n_records": 5,
+      "style_jsd": 0.212218,
+      "n_calls_jsd": 0.103581,
+      "n_imports_jsd": 0.13604,
+      "sloc_jsd": 0.397032,
+      "mean_n_calls": 7.2,
+      "mean_n_imports": 3.4,
+      "mean_sloc": 30.2
+    }
+  ]
+}

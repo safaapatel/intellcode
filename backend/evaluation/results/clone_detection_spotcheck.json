@@ -1,0 +1,83 @@
+{
+  "dataset": {
+    "total_cases": 9,
+    "cloned": 4,
+    "clean": 5
+  },
+  "overall": {
+    "accuracy": 0.8889,
+    "precision": 0.8,
+    "recall": 1.0,
+    "f1": 0.8889,
+    "false_positive_rate": 0.2,
+    "tp": 4,
+    "fp": 1,
+    "tn": 4,
+    "fn": 0
+  },
+  "case_results": [
+    {
+      "desc": "T2: order vs invoice processing \u2014 identical structure, renamed vars",
+      "expected_clone": true,
+      "clone_type": "type2",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "desc": "T2: validate_user vs validate_product \u2014 renamed fields",
+      "expected_clone": true,
+      "clone_type": "type2",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "desc": "T2: statistics vs metrics \u2014 renamed variables throughout",
+      "expected_clone": true,
+      "clone_type": "type2",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "desc": "T3: email vs SMS notification \u2014 similar flow, added log + truncation",
+      "expected_clone": true,
+      "clone_type": "type3",
+      "detected": true,
+      "outcome": "TP"
+    },
+    {
+      "desc": "SAFE: two unrelated trivial functions",
+      "expected_clone": false,
+      "clone_type": null,
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: load and save are complementary, not clones",
+      "expected_clone": false,
+      "clone_type": null,
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: related but structurally distinct one-liners",
+      "expected_clone": false,
+      "clone_type": null,
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: similar ORM queries but different return type and filter",
+      "expected_clone": false,
+      "clone_type": null,
+      "detected": false,
+      "outcome": "TN"
+    },
+    {
+      "desc": "SAFE: structurally dissimilar classes with same method name",
+      "expected_clone": false,
+      "clone_type": null,
+      "detected": true,
+      "outcome": "FP"
+    }
+  ]
+}
