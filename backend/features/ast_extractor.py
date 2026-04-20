@@ -262,6 +262,54 @@ class ASTExtractor(ast.NodeVisitor):
         self.generic_visit(node)
         self._current_depth -= 1
 
+    def visit_Lambda(self, node: ast.Lambda):
+        self._node_counts["Lambda"] += 1
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node: ast.ListComp):
+        self._node_counts["ListComp"] += 1
+        self.generic_visit(node)
+
+    def visit_DictComp(self, node: ast.DictComp):
+        self._node_counts["DictComp"] += 1
+        self.generic_visit(node)
+
+    def visit_SetComp(self, node: ast.SetComp):
+        self._node_counts["SetComp"] += 1
+        self.generic_visit(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp):
+        self._node_counts["GeneratorExp"] += 1
+        self.generic_visit(node)
+
+    def visit_Yield(self, node: ast.Yield):
+        self._node_counts["Yield"] += 1
+        self.generic_visit(node)
+
+    def visit_YieldFrom(self, node: ast.YieldFrom):
+        self._node_counts["YieldFrom"] += 1
+        self.generic_visit(node)
+
+    def visit_Assert(self, node: ast.Assert):
+        self._node_counts["Assert"] += 1
+        self.generic_visit(node)
+
+    def visit_Global(self, node: ast.Global):
+        self._node_counts["Global"] += 1
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        self._node_counts["AnnAssign"] += 1
+        self.generic_visit(node)
+
+    def visit_IfExp(self, node: ast.IfExp):
+        self._node_counts["IfExp"] += 1
+        self.generic_visit(node)
+
+    def visit_BoolOp(self, node: ast.BoolOp):
+        self._node_counts["BoolOp"] += 1
+        self.generic_visit(node)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

@@ -41,13 +41,13 @@ const ALL_MODELS = [
     useCase: "Detects: clean, code_smell, anti_pattern, style_violation",
     techStack: ["scikit-learn", "Python AST", "radon"],
     metrics: [
-      { label: "Test Accuracy",   value: "86.1%", pct: 86 },
-      { label: "Test AUC (OvR)", value: "0.969",  pct: 97 },
-      { label: "CV F1 (macro)",  value: "0.797",  pct: 80 },
-      { label: "Train / Test",   value: "1 551 / 274", pct: 85 },
+      { label: "Test Accuracy",   value: "67.1%", pct: 67 },
+      { label: "Test AUC (OvR)", value: "0.848",  pct: 85 },
+      { label: "CV F1 (macro)",  value: "0.653",  pct: 65 },
+      { label: "Train / Test",   value: "980 / 173", pct: 80 },
     ],
     description:
-      "Lightweight Random Forest trained on 26 static code-metric and AST features. Four-class classifier (clean / code_smell / anti_pattern / style_violation) with calibrated probabilities — no GPU or model download required.",
+      "XGBoost classifier trained on 22 structural AST features (leaky complexity metrics excluded). Four-class classifier (clean / code_smell / anti_pattern / style_violation) with calibrated probabilities — no GPU or model download required.",
     endpoint: "POST /analyze/patterns",
   },
   {

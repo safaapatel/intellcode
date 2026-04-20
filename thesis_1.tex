@@ -217,7 +217,8 @@ on commits that post-date a bug fix produces temporal leakage that inflates the 
 figure. Under a forward-looking evaluation, the module provides no reliable bug forecast.
 
 The pattern classifier, after removing 14 leaky features that directly encoded the label
-assignment rules, achieves a debiased CV F1 of $0.657 \pm 0.016$. The original 26-feature
+assignment rules, was retrained on 22 non-leaky structural AST features using XGBoost,
+achieving a debiased CV F1 of $0.653 \pm 0.017$ (test F1 $= 0.688$, AUC $= 0.848$, accuracy $= 67.1\%$). The original 26-feature
 model's F1 of 0.804 included $+0.082$ of circular label supervision (Wilcoxon $p=0.031$);
 that gap is now documented and the debiased model is the production checkpoint.
 
@@ -567,7 +568,7 @@ optimised by grid search, so they do not introduce an additional tuning degree o
 
 Pre-trained transformer models for code --- CodeBERT~\cite{feng2020}, GraphCodeBERT~\cite{guo2021}, and CodeT5~\cite{wang2021} --- established strong baselines across vulnerability detection, clone detection, code summarization, and defect prediction.
 
-A CodeBERT-based approach was evaluated for pattern recognition and rejected in favour of a calibrated Random Forest on a 12-dimensional debiased AST feature vector, primarily to avoid the $\sim$500\,MB model download and GPU requirement. After removing 14 leaky features that encoded the label rules directly, the debiased CV F1 is $0.657 \pm 0.016$ (test F1 $= 0.683$, AUC $= 0.846$). Section~\ref{ssec:pattern} details this design.
+A CodeBERT-based approach was evaluated for pattern recognition and rejected in favour of a calibrated XGBoost classifier on a 22-dimensional debiased AST feature vector, primarily to avoid the $\sim$500\,MB model download and GPU requirement. After removing 14 leaky features that encoded the label rules directly, the debiased CV F1 is $0.653 \pm 0.017$ (test F1 $= 0.688$, AUC $= 0.848$). Section~\ref{ssec:pattern} details this design.
 
 \subsection{Ensemble Methods}
 
@@ -777,9 +778,9 @@ infrastructure requirements (\textasciitilde500\,MB weights, GPU-accelerated inf
 acceptable latency). IntelliCode Review deliberately prioritises deployability over representational power:
 the target user is a solo developer running analysis locally on a laptop, and a 500\,MB model download
 with a GPU requirement eliminates most of that audience before a single line of code is scanned.
-A calibrated Random Forest on 12 debiased structural AST features satisfies the latency budget
+A calibrated XGBoost classifier on 22 debiased structural AST features satisfies the latency budget
 (\textless{}200\,ms per file on CPU) without sacrificing practical utility.
-The debiased model achieves AUC $= 0.846$ and CV F1 $= 0.657$; the
+The debiased model achieves AUC $= 0.848$ and CV F1 $= 0.653$; the
 higher numbers from the original 26-feature model (AUC $= 0.969$, F1 $= 0.804$) were
 inflated by label leakage and are not reported as primary results.
 
@@ -1276,7 +1277,7 @@ Complexity XGBoost   & 15 code metrics (cog. complexity excluded as target)     
 Security RF          & 17 code metrics + 8 security counters                      & 25 \\
 Security 1D CNN      & Token ID sequence (Python tokenizer, padded/truncated)      & 512 \\
 Bug predictor (full) & 15 static code metrics + 5 git-history (JIT) features      & 20 \\
-Pattern RF (debiased) & Structural AST features (n\_functions, nesting, params, etc.) & 12 \\
+Pattern XGB (debiased) & Structural AST features (n\_functions, nesting, params, comprehensions, etc.) & 22 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1371,28 +1372,9 @@ Risk levels are classified as:
 \subsection{Pattern Recognition: Calibrated Random Forest}
 \label{ssec:pattern}
 
-The pattern recognition model (\texttt{pattern\_recognition.py}) is a Random Forest
-classifier with 300 trees trained on a 12-dimensional debiased AST feature vector
-extracted per code snippet. The four output classes are: \texttt{clean},
-\texttt{code\_smell}, \texttt{anti\_pattern}, and \texttt{style\_violation}. Platt
-scaling (\texttt{CalibratedClassifierCV}, \texttt{method='sigmoid'}, \texttt{cv=5})
-calibrates the per-class probabilities.
+The pattern recognition model (\texttt{pattern\_recognition.py}) is an XGBoost classifier trained on a 22-dimensional AST feature vector. Output classes are \texttt{clean}, \texttt{code\_smell}, \texttt{anti\_pattern}, and \texttt{style\_violation}; per-class probabilities are calibrated with Platt scaling (\texttt{CalibratedClassifierCV}, \texttt{method='sigmoid'}, \texttt{cv=5}).
 
-The model was trained on 6,200+ real code samples sourced from 28 OSS repositories
-spanning web frameworks, data science libraries, CLI tools, and testing infrastructure,
-labelled using a tool-consensus oracle combining PyNose output with metric thresholds.
-A label leakage audit (Section~\ref{ssec:audit}) found that the original 26-feature
-model trained on CC, SLOC, Halstead, and MI features directly encoded the label
-assignment rules as training features, producing circular self-supervision rather than genuine structural pattern detection. The model was retrained on 12 purely structural
-AST features: \texttt{n\_functions}, \texttt{n\_classes}, \texttt{n\_try\_blocks},
-\texttt{n\_raises}, \texttt{n\_with\_blocks}, \texttt{max\_nesting\_depth},
-\texttt{max\_params}, \texttt{avg\_params}, \texttt{n\_decorated\_functions},
-\texttt{n\_imports}, \texttt{max\_function\_body\_lines},
-\texttt{avg\_function\_body\_lines}. The debiased checkpoint
-(\texttt{checkpoints/pattern/rf\_model.pkl}) achieves CV F1 $= 0.657 \pm 0.016$, test
-F1 $= 0.683$, accuracy $= 66.5\%$, AUC $= 0.846$. The Random Forest architecture was
-chosen over fine-tuned CodeBERT to avoid the $\sim$500\,MB model download and GPU
-requirements while still achieving reasonable held-out performance at this corpus size.
+Training used 1,153 samples from OSS repositories, labelled by a tool-consensus oracle combining PyNose with metric thresholds. The leakage audit (Section~\ref{ssec:audit}) showed the original 26-feature model was partly memorising its own label rules: CC, SLOC, Halstead, and MI values fed directly into the same thresholds used to assign labels. Dropping those 14 features left 12 structural AST counts (\texttt{n\_functions}, \texttt{n\_classes}, \texttt{n\_try\_blocks}, \texttt{n\_raises}, \texttt{n\_with\_blocks}, \texttt{max\_nesting\_depth}, \texttt{max\_params}, \texttt{avg\_params}, \texttt{n\_decorated\_functions}, \texttt{n\_imports}, \texttt{max\_function\_body\_lines}, \texttt{avg\_function\_body\_lines}). Ten further node-count features were added to improve class separation (\texttt{n\_lambdas}, \texttt{n\_comprehensions}, \texttt{n\_yields}, \texttt{n\_assertions}, \texttt{n\_global\_stmts}, \texttt{n\_type\_annotations}, \texttt{n\_ternary\_exprs}, \texttt{n\_bool\_ops}, \texttt{n\_calls}, \texttt{avg\_class\_methods}). The retrained checkpoint (\texttt{checkpoints/pattern/xgb\_model.pkl}) achieves CV F1 $= 0.653 \pm 0.017$, test F1 $= 0.688$, accuracy $= 67.1\%$, AUC $= 0.848$. CodeBERT was not used: its $\sim$500\,MB weights and GPU requirement make it impractical for a self-contained local tool.
 Techniques such as LoRA fine-tuning~\cite{hu2022} and ONNX quantisation can reduce
 transformer footprints substantially; at the 1,153-sample corpus size used here, the
 expected gain over a well-regularised Random Forest is unlikely to justify that
@@ -2281,9 +2263,9 @@ complexity regressor.
 \multirow{3}{*}{Bug Predictor (LR+XGBoost)} & AUC & $0.676 \pm 0.038$ \\
  & AP & $0.589 \pm 0.035$ \\
 \midrule
-\multirow{3}{*}{Pattern RF (debiased, 12 AST features, $n=1{,}153$)} & CV F1 (macro) & $0.657 \pm 0.016$ \\
- & Test F1 (macro) & $0.683$ \\
- & AUC (macro OvR) & $0.846$ \\
+\multirow{3}{*}{Pattern XGB (debiased, 22 AST features, $n=1{,}153$)} & CV F1 (macro) & $0.653 \pm 0.017$ \\
+ & Test F1 (macro) & $0.688$ \\
+ & AUC (macro OvR) & $0.848$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2315,8 +2297,8 @@ correspond to a genuine defect repair, and some genuine fixes use different voca
 This label noise sets a practical ceiling on what any metric-based model can achieve
 regardless of architecture.
 
-The debiased pattern classifier achieves CV F1 $= 0.657 \pm 0.016$ and test F1 $= 0.683$
-(AUC $= 0.846$, accuracy $= 66.5\%$). These are lower than the original 26-feature model's
+The debiased pattern classifier achieves CV F1 $= 0.653 \pm 0.017$ and test F1 $= 0.688$
+(AUC $= 0.848$, accuracy $= 67.1\%$). These are lower than the original 26-feature model's
 numbers (CV F1 $= 0.735$, test F1 $= 0.804$), and they should be: the
 $+0.082$ gap is the leakage inflation measured by the Wilcoxon test ($p = 0.031$),
 not genuine predictive improvement. The debiased figures reflect what the model actually
@@ -3520,7 +3502,7 @@ in-distribution AUC ($0.963 \pm 0.012$) collapses to chance under LOPO
 ($0.494 \pm 0.189$); the ablation pinpoints feature scope as the binding constraint,
 not label noise. Bug prediction is below chance under a temporal split ($0.460$); the
 random-split figure of $0.676$ is inflated by temporal leakage. The pattern classifier's
-debiased CV F1 of $0.657 \pm 0.016$ (Cohen's $\kappa = 0.168$) reflects near-chance
+debiased CV F1 of $0.653 \pm 0.017$ (Cohen's $\kappa = 0.168$) reflects near-chance
 agreement with any ground truth outside its own oracle; the production interface now
 shows raw structural AST feature values rather than class labels.
 
@@ -3595,7 +3577,7 @@ Partially, and the gap between in-distribution and cross-project results is the 
 important finding. The complexity model transfers reasonably well (LOPO $\rho = 0.795$
 across ten projects). The security model does not: in-distribution AUC $0.963$ becomes
 chance-level $0.494$ under LOPO. The bug predictor is below chance under temporal
-evaluation ($0.460$). The pattern classifier's debiased F1 of $0.657 \pm 0.016$
+evaluation ($0.460$). The pattern classifier's debiased F1 of $0.653 \pm 0.017$
 reflects genuine structural signal after removing circular label supervision, but
 Cohen's $\kappa = 0.168$ indicates near-chance agreement with any independent label
 source. Full numerical details are in Section~\ref{sec:model-results}.
@@ -3702,7 +3684,7 @@ it identifies the historical window where the model fails, which is itself usefu
 deciding where keyword-label retraining efforts should focus.
 
 \textbf{The pattern oracle problem and interface restructuring.} The pattern model's
-F1 of $0.657$ is measured against a labelling oracle built from PyNose and metric
+F1 of $0.688$ is measured against a labelling oracle built from PyNose and metric
 thresholds that partially overlap the input feature space. A stronger oracle, based on
 maintainer-accepted refactoring commits across a large corpus, would establish an upper
 bound on what metric-free pattern detection can achieve. Until that oracle exists, reporting four-class label probabilities as the primary

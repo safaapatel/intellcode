@@ -37,7 +37,7 @@ MAX_LENGTH = 512
 # ---------------------------------------------------------------------------
 
 """
-Debiased RF feature set — 12 structural AST features.
+Debiased feature set — 22 structural AST features.
 Matches training/train_pattern.py FEATURE_NAMES exactly.
 
 Excluded (leaky — encode label rules directly):
@@ -50,16 +50,23 @@ _RF_FEATURE_NAMES = [
     "max_nesting_depth", "max_params", "avg_params",
     "n_decorated_functions", "n_imports",
     "max_function_body_lines", "avg_function_body_lines",
+    "n_lambdas", "n_comprehensions", "n_yields",
+    "n_assertions", "n_global_stmts", "n_type_annotations",
+    "n_ternary_exprs", "n_bool_ops", "n_calls", "avg_class_methods",
 ]
-_RF_N_FEATURES = len(_RF_FEATURE_NAMES)  # 12
+_RF_N_FEATURES = len(_RF_FEATURE_NAMES)  # 22
 
 
 def _rf_extract_features(source: str):
-    """Extract debiased structural AST feature vector (12-dim) for the RF pattern model."""
+    """Extract debiased structural AST feature vector (22-dim)."""
     import numpy as np
     try:
         from features.ast_extractor import ASTExtractor
         ast_feats = ASTExtractor().extract(source)
+        nc = ast_feats.get("node_counts", {})
+        n_comp = (nc.get("ListComp", 0) + nc.get("DictComp", 0)
+                  + nc.get("SetComp", 0) + nc.get("GeneratorExp", 0))
+        n_yields = nc.get("Yield", 0) + nc.get("YieldFrom", 0)
         return np.array([
             float(ast_feats.get("n_functions", 0)),
             float(ast_feats.get("n_classes", 0)),
@@ -73,6 +80,16 @@ def _rf_extract_features(source: str):
             float(ast_feats.get("n_imports", 0)),
             float(ast_feats.get("max_function_body_lines", 0)),
             float(ast_feats.get("avg_function_body_lines", 0.0)),
+            float(nc.get("Lambda", 0)),
+            float(n_comp),
+            float(n_yields),
+            float(nc.get("Assert", 0)),
+            float(nc.get("Global", 0)),
+            float(nc.get("AnnAssign", 0)),
+            float(nc.get("IfExp", 0)),
+            float(nc.get("BoolOp", 0)),
+            float(ast_feats.get("n_calls", 0)),
+            float(ast_feats.get("avg_class_methods", 0.0)),
         ], dtype=np.float32)
     except Exception:
         import numpy as np
@@ -88,7 +105,12 @@ class PatternRFModel:
 
     def __init__(self, checkpoint_path: Optional[str] = None):
         self._clf = None
-        self._checkpoint = checkpoint_path or "checkpoints/pattern/rf_model.pkl"
+        # Prefer XGBoost checkpoint if available; fall back to RF
+        if checkpoint_path:
+            self._checkpoint = checkpoint_path
+        else:
+            xgb_path = Path("checkpoints/pattern/xgb_model.pkl")
+            self._checkpoint = str(xgb_path) if xgb_path.exists() else "checkpoints/pattern/rf_model.pkl"
         self._try_load()
 
     def _try_load(self):
