@@ -368,6 +368,7 @@ const Repositories = () => {
       const BATCH_CONCURRENCY = 3;
       const results: Array<{ overall_score?: number; security?: { findings?: unknown[]; summary?: { total?: number } } }> = [];
       let done = 0;
+      let firstBatchError = "";
       setScanProgress((prev) => ({ ...prev, [repo.id]: { done: 0, total: fetched.length } }));
       const batches: typeof fetched[] = [];
       for (let bi = 0; bi < fetched.length; bi += BATCH_SIZE) batches.push(fetched.slice(bi, bi + BATCH_SIZE));
@@ -379,7 +380,9 @@ const Repositories = () => {
                 batchFiles.map((f) => ({ code: f.code, filename: f.path, language: f.lang }))
               );
               results.push(...batchResult.results);
-            } catch { /* batch failed, count as skipped */ }
+            } catch (err: unknown) {
+              if (!firstBatchError) firstBatchError = (err as Error).message ?? "batch failed";
+            }
             done += batchFiles.length;
             setScanProgress((prev) => ({ ...prev, [repo.id]: { done, total: fetched.length } }));
           })
@@ -388,7 +391,13 @@ const Repositories = () => {
 
       // 4. Aggregate
       if (results.length === 0) {
-        toast.error("No files could be analyzed — is the backend running?");
+        const isBackendCold = firstBatchError.includes("405") || firstBatchError.includes("503") || firstBatchError.includes("Failed to fetch");
+        toast.error(
+          isBackendCold
+            ? "Backend is waking up — wait ~30s and try again"
+            : "No files could be analyzed — is the backend running?",
+          isBackendCold ? { description: "Render free tier takes ~50s to start. The badge will turn green when ready." } : undefined
+        );
         setRepos((prev) => {
           const updated = prev.map((r) =>
             r.id === repo.id ? { ...r, status: "error" as RepoStatus } : r

@@ -112,7 +112,7 @@ export const AppNavigation = () => {
     const check = () => {
       if (inflight) return;
       inflight = true;
-      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(40000) })
+      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(70000) })
         .then((r) => { failCount.current = 0; setBackendUp(r.ok); })
         .catch(() => { failCount.current++; if (failCount.current >= 2) setBackendUp(false); })
         .finally(() => { inflight = false; });
