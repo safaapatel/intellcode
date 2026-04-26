@@ -112,13 +112,13 @@ export const AppNavigation = () => {
     const check = () => {
       if (inflight) return;
       inflight = true;
-      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(20000) })
+      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(40000) })
         .then((r) => { failCount.current = 0; setBackendUp(r.ok); })
         .catch(() => { failCount.current++; if (failCount.current >= 2) setBackendUp(false); })
         .finally(() => { inflight = false; });
     };
     check();
-    const id = setInterval(check, 30_000);
+    const id = setInterval(check, 15_000);
     return () => clearInterval(id);
   }, []);
 

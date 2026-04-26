@@ -12,22 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, Github, Loader2, AlertCircle, AlertTriangle, X, FolderOpen, ScanLine, Braces, Settings2, CheckCircle2, Copy, Check, Zap } from "lucide-react";
+import { Upload, Github, Loader2, AlertCircle, AlertTriangle, X, FolderOpen, ScanLine, Braces, CheckCircle2, Copy, Check, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { analyzeCode, analyzeCodeStream, analyzeCodeQuick } from "@/services/api";
+import { analyzeCodeStream, analyzeCodeQuick, analyzeBatch } from "@/services/api";
+import { addEntry } from "@/services/reviewHistory";
 import { authHeaders } from "@/services/github";
 
 import { STORAGE_KEYS } from "@/constants/storage";
-
-function loadRuleSets() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.rules);
-    const saved = raw ? JSON.parse(raw) : null;
-    return saved?.ruleSets ?? [];
-  } catch {
-    return [];
-  }
-}
 
 function loadConnectedRepos(): Array<{ id: string; fullName: string; defaultBranch: string; language: string }> {
   try {
@@ -158,19 +149,16 @@ const Submit = () => {
   };
   const [analysisMode, setAnalysisMode] = useState<"full" | "quick">("full");
   const [submissionMethod, setSubmissionMethod] = useState<"upload" | "github">("upload");
-  const [ruleSets, setRuleSets] = useState(loadRuleSets);
   const [connectedRepos, setConnectedRepos] = useState(loadConnectedRepos);
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEYS.repositories) setConnectedRepos(loadConnectedRepos());
-      if (e.key === STORAGE_KEYS.rules) setRuleSets(loadRuleSets());
     };
     window.addEventListener("storage", onStorage);
     // Reload on tab focus (user coming back from Repositories / Rules page)
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         setConnectedRepos(loadConnectedRepos());
-        setRuleSets(loadRuleSets());
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -188,8 +176,6 @@ const Submit = () => {
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const [selectedRuleSet, setSelectedRuleSet] = useState("");
-  const [priority, setPriority] = useState<"normal" | "high" | "critical">("normal");
   const [code, setCode] = useState(SAMPLE_CODE);
   const [filename, setFilename] = useState(hintFilename ?? "snippet.py");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -201,13 +187,6 @@ const Submit = () => {
     setCodeCopied(true);
     setTimeout(() => setCodeCopied(false), 2000);
   };
-  const [options, setOptions] = useState({
-    securityScan: true,
-    codeSmell: true,
-    mlSuggestions: true,
-    refactoring: true,
-  });
-
   // Fetch branches when repo changes
   useEffect(() => {
     if (!selectedRepo) return;
@@ -390,7 +369,10 @@ const Submit = () => {
     }
   };
 
-  // GitHub mode: scan ALL files in repo
+  // GitHub mode: full 12-model scan of all files via /analyze/batch
+  // Phase 1 — fetch all raw files concurrently from GitHub CDN (~instant)
+  // Phase 2 — send to backend in batches of 8, 3 batches in parallel (24 files at once)
+  // Estimated time: ~2 min for 180 files (vs 45 min serial)
   const handleGitHubScanAll = async () => {
     const repo = connectedRepos.find((r) => r.id === selectedRepo);
     if (!repo) { toast.error("Select a repository first"); return; }
@@ -400,40 +382,81 @@ const Submit = () => {
     setError(null);
     setScanProgress({ done: 0, total: ghFiles.length });
 
-    const results: Awaited<ReturnType<typeof analyzeCode>>[] = [];
-    const failedFiles: string[] = [];
-    for (let i = 0; i < ghFiles.length; i++) {
-      const file = ghFiles[i];
-      try {
-        const rawRes = await fetch(
-          `https://raw.githubusercontent.com/${repo.fullName}/${selectedBranch}/${file.path}`
-        );
-        if (!rawRes.ok) { failedFiles.push(file.path); continue; }
-        const rawCode = await rawRes.text();
-        const fileCode = file.path.endsWith(".ipynb") ? extractNotebookCode(rawCode) : rawCode;
-        if (fileCode.trim().length < 20) { failedFiles.push(file.path); continue; }
-        const result = await analyzeCode(fileCode, file.path, detectLanguage(file.path), undefined, repo.fullName);
-        results.push(result);
-      } catch {
-        failedFiles.push(file.path);
+    // Phase 1: fetch file contents from GitHub CDN, 20 concurrent
+    const FETCH_CONCURRENCY = 20;
+    const fetched: Array<{ path: string; code: string; lang: string }> = [];
+    for (let i = 0; i < ghFiles.length; i += FETCH_CONCURRENCY) {
+      const settled = await Promise.allSettled(
+        ghFiles.slice(i, i + FETCH_CONCURRENCY).map(async (file) => {
+          const res = await fetch(
+            `https://raw.githubusercontent.com/${repo.fullName}/${selectedBranch}/${file.path}`
+          );
+          if (!res.ok) throw new Error(`${res.status}`);
+          const raw = await res.text();
+          const code = file.path.endsWith(".ipynb") ? extractNotebookCode(raw) : raw;
+          if (code.trim().length < 20) throw new Error("empty");
+          return { path: file.path, code, lang: detectLanguage(file.path) };
+        })
+      );
+      for (const r of settled) {
+        if (r.status === "fulfilled") fetched.push(r.value);
       }
-      setScanProgress({ done: i + 1, total: ghFiles.length });
+    }
+
+    if (fetched.length === 0) {
+      setIsAnalyzing(false);
+      setScanProgress(null);
+      toast.error("Could not fetch any files from GitHub");
+      return;
+    }
+
+    // Phase 2: full analysis via /analyze/batch — 8 files per batch, 3 batches concurrent
+    const BATCH_SIZE = 8;
+    const BATCH_CONCURRENCY = 3;
+    const allResults: Array<{ filename: string }> = [];
+    const failedCount = { n: 0 };
+    let done = 0;
+    setScanProgress({ done: 0, total: fetched.length });
+
+    const batches: typeof fetched[] = [];
+    for (let i = 0; i < fetched.length; i += BATCH_SIZE) {
+      batches.push(fetched.slice(i, i + BATCH_SIZE));
+    }
+
+    for (let i = 0; i < batches.length; i += BATCH_CONCURRENCY) {
+      await Promise.all(
+        batches.slice(i, i + BATCH_CONCURRENCY).map(async (batchFiles) => {
+          try {
+            const batchResult = await analyzeBatch(
+              batchFiles.map((f) => ({ code: f.code, filename: f.path, language: f.lang }))
+            );
+            for (const result of batchResult.results) {
+              addEntry(result, result.filename, detectLanguage(result.filename), repo.fullName);
+              allResults.push(result);
+            }
+            failedCount.n += batchResult.errors.length;
+          } catch {
+            failedCount.n += batchFiles.length;
+          }
+          done += batchFiles.length;
+          setScanProgress({ done, total: fetched.length });
+        })
+      );
     }
 
     setIsAnalyzing(false);
     setScanProgress(null);
 
-    if (results.length === 0) {
+    if (allResults.length === 0) {
       toast.error("No files could be analyzed", {
-        description: failedFiles.length > 0 ? `Failed: ${failedFiles.slice(0, 3).join(", ")}${failedFiles.length > 3 ? ` +${failedFiles.length - 3} more` : ""}` : undefined,
+        description: "The backend may be starting up — wait 30s and try again.",
       });
       return;
     }
 
-    // Navigate to Reviews list so all scanned files are visible
-    toast.success(`Scanned ${results.length} of ${ghFiles.length} file${ghFiles.length !== 1 ? "s" : ""}`, {
-      description: failedFiles.length > 0
-        ? `${failedFiles.length} skipped: ${failedFiles.slice(0, 2).join(", ")}${failedFiles.length > 2 ? ` +${failedFiles.length - 2} more` : ""}`
+    toast.success(`Full scan: ${allResults.length} of ${fetched.length} files analyzed`, {
+      description: failedCount.n > 0
+        ? `${failedCount.n} failed (backend errors)`
         : "All results saved to review history",
     });
     navigate(repo ? `/reviews?repo=${encodeURIComponent(repo.fullName)}` : "/reviews");
@@ -741,7 +764,7 @@ const Submit = () => {
                       disabled={isAnalyzing}
                     >
                       <ScanLine className="w-4 h-4" />
-                      Scan All {ghFiles.length} Files
+                      Full Scan All {ghFiles.length} Files
                     </Button>
                   </div>
                 )}
@@ -787,79 +810,6 @@ const Submit = () => {
           </div>
         )}
 
-        {/* Configuration */}
-        <div className="bg-card border border-border rounded-xl p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Settings2 className="w-4 h-4 text-primary" />
-            <h2 className="text-base font-semibold text-foreground">Analysis Configuration</h2>
-          </div>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-foreground mb-2 block">Rule Set</Label>
-              <Select value={selectedRuleSet} onValueChange={setSelectedRuleSet}>
-                <SelectTrigger className="bg-input border-border">
-                  <SelectValue placeholder="Select rule set" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ruleSets.map((ruleSet: { id: string; name: string; language: string }) => (
-                    <SelectItem key={ruleSet.id} value={ruleSet.id}>
-                      {ruleSet.name} ({ruleSet.language})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="text-foreground mb-3 block">Priority</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(["normal", "high", "critical"] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPriority(p)}
-                    className={`py-2 px-4 rounded-lg text-sm font-medium transition-all capitalize ${
-                      priority === p
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-secondary text-foreground hover:bg-secondary/80"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-foreground mb-3 block">Focus Areas</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { key: "securityScan", label: "Security detection" },
-                  { key: "codeSmell", label: "Code smells & patterns" },
-                  { key: "mlSuggestions", label: "Bug & complexity" },
-                  { key: "refactoring", label: "Refactoring suggestions" },
-                ].map((opt) => (
-                  <div key={opt.key} className="flex items-center gap-3">
-                    <Checkbox
-                      id={opt.key}
-                      checked={options[opt.key as keyof typeof options]}
-                      onCheckedChange={(checked) =>
-                        setOptions({ ...options, [opt.key]: !!checked })
-                      }
-                      className="border-primary data-[state=checked]:bg-primary"
-                    />
-                    <label htmlFor={opt.key} className="text-sm text-foreground cursor-pointer">
-                      {opt.label}
-                    </label>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                All ML models always run — clones, debt, docs, performance & readability
-                included.
-              </p>
-            </div>
-          </div>
-        </div>
 
         {/* Model progress */}
         {isAnalyzing && (

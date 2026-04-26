@@ -384,7 +384,7 @@ const Analytics = () => {
                       dataKey="value" paddingAngle={3}>
                       {issueDist.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                     </Pie>
-                    <Tooltip {...TOOLTIP_STYLE} />
+                    <Tooltip {...TOOLTIP_STYLE} formatter={(value: number, name: string) => [value, name]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -412,8 +412,8 @@ const Analytics = () => {
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
                   <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} />
                   <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} width={90} />
-                  <Tooltip {...TOOLTIP_STYLE} />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]} background={{ fill: "transparent" }}>
+                  <Tooltip {...TOOLTIP_STYLE} formatter={(value: number) => [value, "Issues"]} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                     {commonIssues.map((entry) => (
                       <Cell key={entry.name} fill={entry.color} />
                     ))}
@@ -442,7 +442,7 @@ const Analytics = () => {
                     {...TOOLTIP_STYLE}
                     formatter={(value: number) => [`${value} file${value !== 1 ? "s" : ""}`, "Count"]}
                   />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]} background={{ fill: "transparent" }}>
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                     {scoreBuckets.map((b) => (
                       <Cell key={b.range} fill={b.color} />
                     ))}

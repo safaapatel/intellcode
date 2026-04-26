@@ -14,6 +14,15 @@ export default defineConfig(({ mode }) => ({
     watch: {
       ignored: ["**/venv/**", "**/node_modules/**", "**/checkpoints/**", "**/data/**"],
     },
+    proxy: {
+      "/analyze": "http://localhost:8000",
+      "/health": "http://localhost:8000",
+      "/models": "http://localhost:8000",
+      "/stats": "http://localhost:8000",
+      "/feedback": "http://localhost:8000",
+      "/cache": "http://localhost:8000",
+      "/auth": "http://localhost:8000",
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

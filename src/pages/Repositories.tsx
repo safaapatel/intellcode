@@ -35,7 +35,7 @@ import {
   ScanLine,
 } from "lucide-react";
 import { toast } from "sonner";
-import { analyzeCode } from "@/services/api";
+import { analyzeBatch } from "@/services/api";
 import {
   isGitHubConnected,
   setGitHubToken,
@@ -159,7 +159,9 @@ const Repositories = () => {
 
   useEffect(() => {
     if (ghConnected) {
-      getGitHubUser().then(setGhUser).catch(() => {});
+      getGitHubUser().then(setGhUser).catch(() => {
+        setGhConnected(false);
+      });
     }
   }, [ghConnected]);
 
@@ -344,22 +346,44 @@ const Repositories = () => {
       setScanProgress((prev) => ({ ...prev, [repo.id]: { done: 0, total: srcFiles.length } }));
       toast.info(`Scanning ${srcFiles.length} source file${srcFiles.length !== 1 ? "s" : ""}…`);
 
-      // 3. Fetch + analyze each file serially
-      const results: Awaited<ReturnType<typeof analyzeCode>>[] = [];
-      let skipped = 0;
-      for (let i = 0; i < srcFiles.length; i++) {
-        const file = srcFiles[i];
-        try {
-          const raw = await getRawFile(fullName, branch, file.path);
-          // For Jupyter notebooks extract Python code cells only
-          const code = file.path.endsWith(".ipynb") ? extractNotebookCode(raw) : raw;
-          if (code.trim().length < 20) { skipped++; setScanProgress((prev) => ({ ...prev, [repo.id]: { done: i + 1, total: srcFiles.length } })); continue; }
-          const result = await analyzeCode(code, file.path, file.lang, undefined, fullName);
-          results.push(result);
-        } catch {
-          skipped++;
+      // 3. Fetch all files concurrently (20 at a time)
+      const FETCH_CONCURRENCY = 20;
+      const fetched: Array<{ path: string; code: string; lang: string }> = [];
+      for (let fi = 0; fi < srcFiles.length; fi += FETCH_CONCURRENCY) {
+        const settled = await Promise.allSettled(
+          srcFiles.slice(fi, fi + FETCH_CONCURRENCY).map(async (file) => {
+            const raw = await getRawFile(fullName, branch, file.path);
+            const code = file.path.endsWith(".ipynb") ? extractNotebookCode(raw) : raw;
+            if (code.trim().length < 20) throw new Error("empty");
+            return { path: file.path, code, lang: file.lang };
+          })
+        );
+        for (const r of settled) {
+          if (r.status === "fulfilled") fetched.push(r.value);
         }
-        setScanProgress((prev) => ({ ...prev, [repo.id]: { done: i + 1, total: srcFiles.length } }));
+      }
+
+      // 4. Batch analyze (8 files per batch, 3 batches concurrent)
+      const BATCH_SIZE = 8;
+      const BATCH_CONCURRENCY = 3;
+      const results: Array<{ overall_score?: number; security?: { findings?: unknown[]; summary?: { total?: number } } }> = [];
+      let done = 0;
+      setScanProgress((prev) => ({ ...prev, [repo.id]: { done: 0, total: fetched.length } }));
+      const batches: typeof fetched[] = [];
+      for (let bi = 0; bi < fetched.length; bi += BATCH_SIZE) batches.push(fetched.slice(bi, bi + BATCH_SIZE));
+      for (let bi = 0; bi < batches.length; bi += BATCH_CONCURRENCY) {
+        await Promise.all(
+          batches.slice(bi, bi + BATCH_CONCURRENCY).map(async (batchFiles) => {
+            try {
+              const batchResult = await analyzeBatch(
+                batchFiles.map((f) => ({ code: f.code, filename: f.path, language: f.lang }))
+              );
+              results.push(...batchResult.results);
+            } catch { /* batch failed, count as skipped */ }
+            done += batchFiles.length;
+            setScanProgress((prev) => ({ ...prev, [repo.id]: { done, total: fetched.length } }));
+          })
+        );
       }
 
       // 4. Aggregate
