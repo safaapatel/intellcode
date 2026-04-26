@@ -288,6 +288,16 @@ const Repositories = () => {
   const scanRepo = async (repo: Repository) => {
     if (scanning[repo.id]) return;
 
+    // Quick backend health check before starting
+    const BASE_URL = import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com";
+    try {
+      const hc = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(8000) });
+      if (!hc.ok) throw new Error("not ok");
+    } catch {
+      toast.error("Backend is still warming up — wait ~30 seconds and try again");
+      return;
+    }
+
     const fullName = repo.fullName;
     const branch = repo.defaultBranch || "main";
 
@@ -371,6 +381,7 @@ const Repositories = () => {
       setScanProgress((prev) => ({ ...prev, [repo.id]: { done: 0, total: fetched.length } }));
       const batches: typeof fetched[] = [];
       for (let bi = 0; bi < fetched.length; bi += BATCH_SIZE) batches.push(fetched.slice(bi, bi + BATCH_SIZE));
+      let firstBatchError: string | null = null;
       for (let bi = 0; bi < batches.length; bi += BATCH_CONCURRENCY) {
         await Promise.all(
           batches.slice(bi, bi + BATCH_CONCURRENCY).map(async (batchFiles) => {
@@ -379,7 +390,9 @@ const Repositories = () => {
                 batchFiles.map((f) => ({ code: f.code, filename: f.path, language: f.lang }))
               );
               results.push(...batchResult.results);
-            } catch { /* batch failed, count as skipped */ }
+            } catch (e) {
+              if (!firstBatchError) firstBatchError = (e as Error).message ?? "unknown";
+            }
             done += batchFiles.length;
             setScanProgress((prev) => ({ ...prev, [repo.id]: { done, total: fetched.length } }));
           })
@@ -388,7 +401,12 @@ const Repositories = () => {
 
       // 4. Aggregate
       if (results.length === 0) {
-        toast.error("No files could be analyzed — is the backend running?");
+        const msg = firstBatchError?.includes("503") || firstBatchError?.includes("502")
+          ? "Backend is warming up — wait ~30 seconds and retry"
+          : firstBatchError
+          ? `Analysis failed: ${firstBatchError}`
+          : "No files could be analyzed — is the backend running?";
+        toast.error(msg);
         setRepos((prev) => {
           const updated = prev.map((r) =>
             r.id === repo.id ? { ...r, status: "error" as RepoStatus } : r
