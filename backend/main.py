@@ -136,7 +136,7 @@ _CACHE_TTL_S = 86_400  # 24 hours — stale after model update
 
 # Simple in-memory rate limiter: IP → deque of request timestamps
 _rate_limit_store: dict[str, collections.deque] = {}
-_RATE_LIMIT_REQUESTS = 20
+_RATE_LIMIT_REQUESTS = 200
 _RATE_LIMIT_WINDOW_S = 60
 
 
@@ -149,7 +149,7 @@ def _check_rate_limit(request: Request) -> None:
     while window and now - window[0] > _RATE_LIMIT_WINDOW_S:
         window.popleft()
     if len(window) >= _RATE_LIMIT_REQUESTS:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded: 20 requests/minute")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: 200 requests/minute")
     window.append(now)
 
 
@@ -407,6 +407,9 @@ _allowed_origins = [
     "https://safaapatel.github.io",
     "http://localhost:5173",
     "http://localhost:4173",
+    "http://localhost:8082",
+    "http://localhost:8080",
+    "http://localhost:8081",
 ]
 if _extra_origin:
     _allowed_origins.append(_extra_origin)
