@@ -133,7 +133,15 @@ export function addEntry(
     repoName,
     modelVersion: result.model_version,
   };
-  const updated = [entry, ...entries].slice(0, MAX_ENTRIES);
+  const combined = [entry, ...entries];
+  let updated = combined;
+  if (combined.length > MAX_ENTRIES) {
+    // Evict oldest entries from the same repo first before touching other repos
+    const sameRepo = combined.filter((e) => e.repoName === repoName);
+    const otherRepos = combined.filter((e) => e.repoName !== repoName);
+    const maxSameRepo = Math.max(200, MAX_ENTRIES - otherRepos.length);
+    updated = [...sameRepo.slice(0, maxSameRepo), ...otherRepos].slice(0, MAX_ENTRIES);
+  }
   save(updated);
   return entry;
 }
