@@ -104,21 +104,26 @@ export const AppNavigation = () => {
     setTheme(next);
   };
 
-  // Backend health indicator — only show "offline" after 2 consecutive failures
+  // Backend health indicator
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
   const failCount = useRef(0);
   useEffect(() => {
-    let inflight = false;
-    const check = () => {
-      if (inflight) return;
-      inflight = true;
-      fetch(`${import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com"}/health`, { signal: AbortSignal.timeout(40000) })
-        .then((r) => { failCount.current = 0; setBackendUp(r.ok); })
-        .catch(() => { failCount.current++; if (failCount.current >= 2) setBackendUp(false); })
-        .finally(() => { inflight = false; });
+    const BASE = import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com";
+    const check = async () => {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 12000);
+        const r = await fetch(`${BASE}/health`, { signal: ac.signal });
+        clearTimeout(t);
+        failCount.current = 0;
+        setBackendUp(r.ok);
+      } catch {
+        failCount.current++;
+        if (failCount.current >= 2) setBackendUp(false);
+      }
     };
     check();
-    const id = setInterval(check, 15_000);
+    const id = setInterval(check, 10_000);
     return () => clearInterval(id);
   }, []);
 
