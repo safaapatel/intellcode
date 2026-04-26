@@ -25,7 +25,7 @@ export interface HistoryEntry {
 }
 
 const KEY = STORAGE_KEYS.reviewHistory;
-const MAX_ENTRIES = 50;
+const MAX_ENTRIES = 500;
 
 function load(): HistoryEntry[] {
   try {
