@@ -18,17 +18,6 @@ import { analyzeCodeStream, analyzeCodeQuick, analyzeBatch } from "@/services/ap
 import { addEntry } from "@/services/reviewHistory";
 import { authHeaders } from "@/services/github";
 
-const _BASE = import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com";
-async function checkBackend(): Promise<boolean> {
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    const r = await fetch(`${_BASE}/health`, { signal: ac.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch { return false; }
-}
-
 import { STORAGE_KEYS } from "@/constants/storage";
 
 function loadConnectedRepos(): Array<{ id: string; fullName: string; defaultBranch: string; language: string }> {
@@ -316,10 +305,6 @@ const Submit = () => {
       toast.error("File too large", { description: "Maximum code size is 500 KB. Please trim or split the file." });
       return;
     }
-    if (!await checkBackend()) {
-      toast.error("Backend is warming up — wait ~30 seconds and try again");
-      return;
-    }
     setIsAnalyzing(true);
     setError(null);
     startProgress();
@@ -351,10 +336,7 @@ const Submit = () => {
     const repo = connectedRepos.find((r) => r.id === selectedRepo);
     if (!repo) { toast.error("Select a repository first"); return; }
     if (!selectedFile) { toast.error("Select a file to analyze"); return; }
-    if (!await checkBackend()) {
-      toast.error("Backend is warming up — wait ~30 seconds and try again");
-      return;
-    }
+
     setIsAnalyzing(true);
     setError(null);
     setScanProgress(null);
@@ -395,10 +377,7 @@ const Submit = () => {
     const repo = connectedRepos.find((r) => r.id === selectedRepo);
     if (!repo) { toast.error("Select a repository first"); return; }
     if (ghFiles.length === 0) { toast.error("No analyzable files found"); return; }
-    if (!await checkBackend()) {
-      toast.error("Backend is warming up — wait ~30 seconds and try again");
-      return;
-    }
+
     setIsAnalyzing(true);
     setError(null);
     setScanProgress({ done: 0, total: ghFiles.length });

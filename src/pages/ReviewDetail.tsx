@@ -1830,18 +1830,10 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
 
   const load = async () => {
     if (!r.filename) return;
+    // We need the original source — stored in the result or we reconstruct from snippet
     const code = (r as unknown as Record<string, string>)._source ?? r.code ?? "";
     if (!code) {
       setError("Source code not available for explanation (stored result may be truncated).");
-      return;
-    }
-    // Pre-check backend before sending POST (Render returns 405 for POST while cold-starting)
-    const BASE = import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com";
-    try {
-      const hc = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(8000) });
-      if (!hc.ok) throw new Error("not ok");
-    } catch {
-      setError("Backend is still warming up — wait ~30 seconds and try again.");
       return;
     }
     setLoading(true);
