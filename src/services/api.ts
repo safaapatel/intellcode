@@ -1,7 +1,7 @@
 import type { FullAnalysisResult } from "@/types/analysis";
 import { addEntry, getPrevFeatures } from "@/services/reviewHistory";
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "https://intellcode.onrender.com";
+const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
 
 function notifyIfCritical(result: FullAnalysisResult) {
   if (!("Notification" in window)) return;
