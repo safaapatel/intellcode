@@ -1831,7 +1831,7 @@ function ExplainTab({ r }: { r: FullAnalysisResult }) {
   const load = async () => {
     if (!r.filename) return;
     // We need the original source — stored in the result or we reconstruct from snippet
-    const code = (r as unknown as Record<string, string>)._source ?? "";
+    const code = (r as unknown as Record<string, string>)._source ?? r.code ?? "";
     if (!code) {
       setError("Source code not available for explanation (stored result may be truncated).");
       return;
