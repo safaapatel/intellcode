@@ -125,19 +125,32 @@ export async function getRepoTree(
   );
 }
 
-/** Fetch raw file content. */
+/** Fetch raw file content. Falls back to Contents API if CDN returns non-200. */
 export async function getRawFile(
   fullName: string,
   branch: string,
   path: string
 ): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${fullName}/${branch}/${path}`;
   const token = getGitHubToken();
-  // raw.githubusercontent.com only needs Authorization, NOT the JSON API Accept header
-  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Could not fetch ${path}: ${res.status}`);
-  return res.text();
+  const rawHeaders: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+  // Primary: raw CDN (fast, no rate-limit penalty)
+  const rawRes = await fetch(
+    `https://raw.githubusercontent.com/${fullName}/${branch}/${encodeURI(path)}`,
+    { headers: rawHeaders }
+  );
+  if (rawRes.ok) return rawRes.text();
+
+  // Fallback: Contents API (handles private repos & auth edge-cases)
+  const apiRes = await fetch(
+    `https://api.github.com/repos/${fullName}/contents/${encodeURI(path)}?ref=${branch}`,
+    { headers: authHeaders() }
+  );
+  if (!apiRes.ok) throw new Error(`Could not fetch ${path}: ${rawRes.status}`);
+  const data = await apiRes.json() as { content?: string; encoding?: string };
+  if (data.content && data.encoding === "base64")
+    return atob(data.content.replace(/\n/g, ""));
+  throw new Error(`Could not fetch ${path}: unexpected format`);
 }
 
 /**
