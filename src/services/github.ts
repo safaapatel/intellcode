@@ -125,25 +125,22 @@ export async function getRepoTree(
   );
 }
 
-/** Fetch raw file content. Falls back to Contents API if CDN returns non-200. */
+/** Fetch raw file content. Falls back to Contents API for private repos. */
 export async function getRawFile(
   fullName: string,
   branch: string,
   path: string
 ): Promise<string> {
-  const token = getGitHubToken();
-  const rawHeaders: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-
-  // Primary: raw CDN (fast, no rate-limit penalty)
+  // Primary: raw CDN with NO auth header (Authorization triggers CORS preflight
+  // that raw.githubusercontent.com doesn't support; public repos work without it)
   const rawRes = await fetch(
-    `https://raw.githubusercontent.com/${fullName}/${branch}/${encodeURI(path)}`,
-    { headers: rawHeaders }
+    `https://raw.githubusercontent.com/${fullName}/${branch}/${path}`
   );
   if (rawRes.ok) return rawRes.text();
 
-  // Fallback: Contents API (handles private repos & auth edge-cases)
+  // Fallback: Contents API with auth (handles private repos correctly)
   const apiRes = await fetch(
-    `https://api.github.com/repos/${fullName}/contents/${encodeURI(path)}?ref=${branch}`,
+    `https://api.github.com/repos/${fullName}/contents/${path}?ref=${branch}`,
     { headers: authHeaders() }
   );
   if (!apiRes.ok) throw new Error(`Could not fetch ${path}: ${rawRes.status}`);
