@@ -132,8 +132,11 @@ export async function getRawFile(
   path: string
 ): Promise<string> {
   const url = `https://raw.githubusercontent.com/${fullName}/${branch}/${path}`;
-  const res = await fetch(url, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Could not fetch ${path}`);
+  const token = getGitHubToken();
+  // raw.githubusercontent.com only needs Authorization, NOT the JSON API Accept header
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`Could not fetch ${path}: ${res.status}`);
   return res.text();
 }
 
