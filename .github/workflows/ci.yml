@@ -48,8 +48,7 @@ jobs:
         run: npm ci
 
       - name: Type-check
-        run: npm run build -- --mode development 2>&1 | head -100
-        continue-on-error: true
+        run: npx tsc --noEmit
 
       - name: Build
         env:

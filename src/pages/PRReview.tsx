@@ -10,15 +10,50 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
+import { BASE_URL } from "@/services/api";
+
+interface SecurityFinding {
+  severity: string;
+  title: string;
+  description: string;
+  lineno?: number;
+  confidence?: number;
+  false_positive?: boolean;
+}
+
+interface SecuritySummary {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+interface ComplexityOut {
+  score: number;
+  grade: string;
+  cyclomatic?: number;
+  cognitive?: number;
+}
+
+interface BugPrediction {
+  risk_level: string;
+  bug_probability: number;
+}
+
+interface FunctionRiskEntry {
+  name: string;
+  risk_score: number;
+  lineno?: number;
+}
 
 interface FileResult {
   filename: string;
   skipped?: boolean;
-  security?: { findings: any[]; summary: any };
-  complexity?: any;
-  bug_prediction?: any;
-  function_risk?: { top_k: any[]; total_functions: number; n_high_risk: number };
+  security?: { findings: SecurityFinding[]; summary: SecuritySummary };
+  complexity?: ComplexityOut;
+  bug_prediction?: BugPrediction;
+  function_risk?: { top_k: FunctionRiskEntry[]; total_functions: number; n_high_risk: number };
 }
 
 interface PRAnalysisResult {
@@ -89,11 +124,13 @@ export default function PRReview() {
 
       const res = await fetch(`${BASE_URL}/github/analyze-pr`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           pr_url: prUrl.trim(),
-          github_token: token,
-          post_comments: false,   // always analyze first, post separately
+          post_comments: false,
           max_files: 10,
         }),
       });
@@ -121,10 +158,12 @@ export default function PRReview() {
 
       const res = await fetch(`${BASE_URL}/github/analyze-pr`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
           pr_url: prUrl.trim(),
-          github_token: token,
           post_comments: true,
           max_files: 10,
         }),

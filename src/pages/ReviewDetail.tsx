@@ -37,10 +37,11 @@ import {
   Info,
 } from "lucide-react";
 import { getEntry, getEntries } from "@/services/reviewHistory";
+import { STORAGE_KEYS } from "@/constants/storage";
 import { getSession } from "@/services/auth";
 import { toast } from "sonner";
 import type { FullAnalysisResult, OODInfo, ConformalInterval } from "@/types/analysis";
-import { submitAnalysisFeedback, explainAnalysis, type ExplainResult } from "@/services/api";
+import { submitAnalysisFeedback, explainAnalysis, BASE_URL, type ExplainResult } from "@/services/api";
 import { getGitHubToken, isGitHubConnected, listUserRepos, getRawFile, type GitHubRepo } from "@/services/github";
 
 // ─── Feedback types ────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ interface FindingFeedback {
   at: string;
 }
 
-const FEEDBACK_KEY = "intellcode_feedback";
+const FEEDBACK_KEY = STORAGE_KEYS.feedback;
 
 function loadFeedback(filename: string): Record<string, FindingFeedback> {
   try {
@@ -2059,8 +2060,6 @@ const ReviewDetail = () => {
 
     setPrLoading(true);
     try {
-      const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
-
       // Build a short markdown summary of findings
       const findings = result.security?.findings ?? [];
       const bugLevel = result.bug_prediction?.risk_level ?? "unknown";
@@ -2079,9 +2078,11 @@ const ReviewDetail = () => {
 
       const res = await fetch(`${BASE_URL}/github/create-pr`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          github_token: token,
           repo_full_name: prRepo,
           filename: result.filename || "reviewed_code.py",
           code: result.code ?? "",

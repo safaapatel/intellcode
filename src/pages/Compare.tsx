@@ -242,6 +242,11 @@ const Compare = () => {
       <AppNavigation />
 
       <main className="container mx-auto px-4 py-8 max-w-6xl">
+        {/* Demo notice */}
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm flex items-center gap-2">
+          <span className="font-semibold">Demo mode</span> — sample code is pre-loaded. Paste your own snippets in each editor to compare real files.
+        </div>
+
         {/* Breadcrumb */}
         <div className="text-sm text-muted-foreground mb-4">
           <span className="hover:text-foreground cursor-pointer" onClick={() => navigate("/dashboard")}>

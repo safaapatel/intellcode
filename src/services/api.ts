@@ -1,7 +1,7 @@
 import type { FullAnalysisResult } from "@/types/analysis";
 import { addEntry, getPrevFeatures } from "@/services/reviewHistory";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
+export const BASE_URL = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
 
 function notifyIfCritical(result: FullAnalysisResult) {
   if (!("Notification" in window)) return;
@@ -37,7 +37,7 @@ async function post<T>(path: string, body: AnalyzeRequest, signal?: AbortSignal)
     signal,
   });
   if (!res.ok) {
-    if (res.status === 429) throw new Error("Rate limited — maximum 20 analyses per minute. Please wait and try again.");
+    if (res.status === 429) throw new Error("Rate limited — maximum 200 analyses per minute. Please wait and try again.");
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
   }
