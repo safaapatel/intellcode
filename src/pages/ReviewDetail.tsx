@@ -41,7 +41,7 @@ import { getSession } from "@/services/auth";
 import { toast } from "sonner";
 import type { FullAnalysisResult, OODInfo, ConformalInterval } from "@/types/analysis";
 import { submitAnalysisFeedback, explainAnalysis, type ExplainResult } from "@/services/api";
-import { getGitHubToken, isGitHubConnected, listUserRepos, type GitHubRepo } from "@/services/github";
+import { getGitHubToken, isGitHubConnected, listUserRepos, getRawFile, type GitHubRepo } from "@/services/github";
 
 // ─── Feedback types ────────────────────────────────────────────────────────────
 
@@ -1823,15 +1823,24 @@ function FixesTab({ r }: { r: FullAnalysisResult }) {
 
 // ─── ExplainTab ───────────────────────────────────────────────────────────────
 
-function ExplainTab({ r }: { r: FullAnalysisResult }) {
+function ExplainTab({ r, repoName }: { r: FullAnalysisResult; repoName?: string }) {
   const [data, setData] = useState<ExplainResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     if (!r.filename) return;
-    // We need the original source — stored in the result or we reconstruct from snippet
-    const code = (r as unknown as Record<string, string>)._source ?? r.code ?? "";
+    let code = (r as unknown as Record<string, string>)._source ?? r.code ?? "";
+    // If source not stored (batch scan), try fetching from GitHub
+    if (!code && repoName) {
+      try {
+        code = await getRawFile(repoName, "main", r.filename);
+      } catch {
+        try {
+          code = await getRawFile(repoName, "master", r.filename);
+        } catch { /* fall through */ }
+      }
+    }
     if (!code) {
       setError("Source code not available for explanation (stored result may be truncated).");
       return;
@@ -2023,8 +2032,10 @@ const ReviewDetail = () => {
   const { id } = useParams<{ id: string }>();
 
   // Try: router state → history by ID → null (show mock)
+  const entry = id ? getEntry(id) : null;
   const result: FullAnalysisResult | null =
-    location.state?.result ?? (id ? getEntry(id)?.result ?? null : null);
+    location.state?.result ?? (entry?.result ?? null);
+  const entryRepoName: string | undefined = entry?.repoName ?? location.state?.repoName;
 
   // ── Create PR state ──
   const [prModal, setPrModal] = useState(false);
@@ -2440,7 +2451,7 @@ ${result.docs ? `<tr><td>Doc Quality</td><td>${result.docs.average_quality}/100<
             <TabsContent value="deps">       <DepsTab r={result} /></TabsContent>
             <TabsContent value="readability"><ReadabilityTab r={result} /></TabsContent>
             <TabsContent value="fixes">       <FixesTab r={result} /></TabsContent>
-            <TabsContent value="explain">    <ExplainTab r={result} /></TabsContent>
+            <TabsContent value="explain">    <ExplainTab r={result} repoName={entryRepoName} /></TabsContent>
           </div>
         </Tabs>
 

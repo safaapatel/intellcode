@@ -393,10 +393,14 @@ const Repositories = () => {
       if (results.length === 0) {
         const isBackendCold = firstBatchError.includes("405") || firstBatchError.includes("503") || firstBatchError.includes("Failed to fetch");
         toast.error(
-          isBackendCold
-            ? "Backend is waking up — wait ~30s and try again"
-            : "No files could be analyzed — is the backend running?",
-          isBackendCold ? { description: "Render free tier takes ~50s to start. The badge will turn green when ready." } : undefined
+          isBackendCold ? "Backend is waking up — wait ~30s and try again" : "No files could be analyzed",
+          {
+            description: firstBatchError
+              ? firstBatchError.slice(0, 120)
+              : fetched.length === 0
+              ? "Could not download source files from GitHub — check connection or token"
+              : "Backend returned errors for all batches",
+          }
         );
         setRepos((prev) => {
           const updated = prev.map((r) =>
