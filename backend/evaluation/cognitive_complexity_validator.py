@@ -8,25 +8,25 @@ WHY THIS MATTERS:
     Per the research audit, any cognitive complexity implementation requires
     empirical validation against SonarQube's ground truth. If Pearson r < 0.95,
     the implementation has systematic bias that propagates into the complexity
-    prediction model, invalidating downstream metrics. Reviewers at ICSE/FSE
+    prediction model, invalidating downstream metrics. Reviewers at ICSE / FSE
     will ask for this validation explicitly.
 
 Measurement:
     Pearson r     — linear correlation with SonarQube scores
-    Spearman rho  — rank correlation (rank-order agreement)
+    Spearman rho  — rank correlation (rank - order agreement)
     MAE           — mean absolute error (scale error)
     RMSE          — root mean squared error
-    Bias          — mean signed error (systematic over/under-counting)
+    Bias          — mean signed error (systematic over / under - counting)
 
 Usage:
-    python evaluation/cognitive_complexity_validator.py \\
-        --benchmark data/cognitive_complexity_benchmark.json \\
-        --out        results/cc_validation.json
+    python evaluation / cognitive_complexity_validator.py \\
+        --benchmark data / cognitive_complexity_benchmark.json \\
+        --out        results / cc_validation.json
 
     # To generate benchmark data from SonarQube API:
-    python evaluation/cognitive_complexity_validator.py --generate-benchmark \\
-        --sonar-host http://localhost:9000 \\
-        --sonar-token <token> \\
+    python evaluation / cognitive_complexity_validator.py --generate - benchmark \\
+        --sonar - host http://localhost:9000 \\
+        --sonar - token < token> \\
         --project myproject
 
 Benchmark data format (JSON):
@@ -35,8 +35,8 @@ Benchmark data format (JSON):
         "function_name": "compute_total",
         "source": "def compute_total(items): ...",
         "sonarqube_cc": 5,
-        "repo": "django/django",
-        "file": "django/db/models/query.py"
+        "repo": "django / django",
+        "file": "django / db / models / query.py"
       },
       ...
     ]
@@ -56,31 +56,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Built-in benchmark functions (50 representative Python patterns)
 # These cover all SonarSource spec edge cases:
-#   - for/while loop-else clauses (+1)
-#   - with statements (0)
-#   - match/case blocks (+1 + nesting)
-#   - nested functions (nesting depth increment)
-#   - lambda (nesting only, no self-increment)
 # ---------------------------------------------------------------------------
 
 BUILTIN_BENCHMARK = [
-    # Simple: CC=0
     {
         "function_name": "simple_assign",
         "source": "def simple_assign(x):\n    return x + 1",
         "sonarqube_cc": 0,
         "category": "baseline",
     },
-    # Single if: CC=1
     {
         "function_name": "single_if",
         "source": "def single_if(x):\n    if x > 0:\n        return x\n    return 0",
         "sonarqube_cc": 1,
         "category": "conditional",
     },
-    # Nested if: CC=1+2=3
     {
         "function_name": "nested_if",
         "source": (
@@ -93,14 +84,12 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 3,
         "category": "nesting",
     },
-    # For loop: CC=1
     {
         "function_name": "simple_for",
         "source": "def simple_for(items):\n    for item in items:\n        print(item)",
         "sonarqube_cc": 1,
         "category": "loop",
     },
-    # For-else: CC=1(for) + 1(else) = 2
     {
         "function_name": "for_else",
         "source": (
@@ -111,10 +100,9 @@ BUILTIN_BENCHMARK = [
             "    else:\n"
             "        return False"
         ),
-        "sonarqube_cc": 3,   # for(1) + if(2, nested) + else-on-for(1) = 4? No: for(1) + if(nesting+1=2) + for-else(1) = 4
+        "sonarqube_cc": 3,   # for(1) + if(2, nested) + else - on - for(1) = 4? No: for(1) + if(nesting + 1=2) + for - else(1) = 4
         "category": "loop_else",
     },
-    # While-else: CC=1(while) + 1(else) = 2
     {
         "function_name": "while_else",
         "source": (
@@ -128,7 +116,6 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 2,
         "category": "loop_else",
     },
-    # With statement: CC=0 (resource manager, no structural increment)
     {
         "function_name": "with_only",
         "source": (
@@ -139,7 +126,6 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 0,
         "category": "with",
     },
-    # With + if inside: CC=1 (only the if increments)
     {
         "function_name": "with_if",
         "source": (
@@ -153,7 +139,6 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 1,
         "category": "with",
     },
-    # Try-except: CC=1
     {
         "function_name": "try_except",
         "source": (
@@ -166,7 +151,6 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 1,
         "category": "exception",
     },
-    # Boolean operators: CC=1 per 'and'/'or' sequence
     {
         "function_name": "bool_ops",
         "source": (
@@ -175,10 +159,9 @@ BUILTIN_BENCHMARK = [
             "        return True\n"
             "    return False"
         ),
-        "sonarqube_cc": 3,  # if=1, and=1, or=1
+        "sonarqube_cc": 3,  # if = 1, and = 1, or = 1
         "category": "boolean",
     },
-    # Deeply nested: CC = 1+2+3+4 = 10
     {
         "function_name": "deeply_nested",
         "source": (
@@ -193,15 +176,15 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 10,
         "category": "nesting",
     },
-    # Lambda: nesting increment only, no self-increment
+    # Lambda: nesting increment only, no self - increment
     {
         "function_name": "lambda_use",
         "source": (
             "def lambda_use(items):\n"
             "    sorter = lambda x: x[0]\n"
-            "    return sorted(items, key=sorter)"
+            "    return sorted(items, key = sorter)"
         ),
-        "sonarqube_cc": 0,   # lambda adds nesting but no self-increment; no branches here
+        "sonarqube_cc": 0,   # lambda adds nesting but no self - increment; no branches here
         "category": "lambda",
     },
     # Nested function: nesting increment + inner function body increments
@@ -228,12 +211,11 @@ BUILTIN_BENCHMARK = [
         "sonarqube_cc": 0,
         "category": "comprehension",
     },
-    # Ternary operator: CC=1
     {
         "function_name": "ternary",
         "source": (
             "def ternary(x):\n"
-            "    return x if x > 0 else -x"
+            "    return x if x > 0 else - x"
         ),
         "sonarqube_cc": 1,
         "category": "conditional",
@@ -252,9 +234,9 @@ class ValidationResult:
     spearman_rho:  float
     mae:           float
     rmse:          float
-    bias:          float       # mean(predicted - sonarqube): positive = over-counting
+    bias:          float       # mean(predicted - sonarqube): positive = over - counting
     max_error:     float
-    worst_cases:   list[dict]  # top-5 largest errors with details
+    worst_cases:   list[dict]  # top - 5 largest errors with details
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -275,7 +257,7 @@ class ValidationResult:
         print(f"  Spearman rho:        {self.spearman_rho:.4f}")
         print(f"  MAE:                 {self.mae:.3f}  (target: <= 2.0)")
         print(f"  RMSE:                {self.rmse:.3f}")
-        print(f"  Bias:                {self.bias:+.3f}  (+ = over-counting)")
+        print(f"  Bias:                {self.bias:+.3f}  (+ = over - counting)")
         status = "PASS" if self.passes_threshold() else "FAIL"
         print(f"  Status:              {status}")
         if self.worst_cases:
@@ -298,7 +280,7 @@ class CognitiveComplexityValidator:
     Step 1: Load or generate benchmark (function source + SonarQube score)
     Step 2: Run our CognitiveComplexityVisitor on each function
     Step 3: Compute correlation, MAE, RMSE, bias
-    Step 4: Identify and report worst-case errors
+    Step 4: Identify and report worst - case errors
     """
 
     def validate(
@@ -311,8 +293,8 @@ class CognitiveComplexityValidator:
 
         Args:
             benchmark:   List of {function_name, source, sonarqube_cc} records.
-                         Pass None to use the built-in benchmark only.
-            use_builtin: If True, augment with built-in benchmark cases.
+                         Pass None to use the built - in benchmark only.
+            use_builtin: If True, augment with built - in benchmark cases.
 
         Returns:
             ValidationResult with correlation and error statistics.
@@ -330,9 +312,9 @@ class CognitiveComplexityValidator:
         details:    list[dict] = []
 
         for case in all_cases:
-            source   = case.get("source", "")
+            source = case.get("source", "")
             expected = case.get("sonarqube_cc")
-            name     = case.get("function_name", "?")
+            name = case.get("function_name", "?")
 
             if source is None or expected is None:
                 continue
@@ -360,11 +342,11 @@ class CognitiveComplexityValidator:
             raise ValueError("Need at least 2 benchmark cases for validation.")
 
         import numpy as np
-        pred_arr = np.array(predicted, dtype=float)
-        ref_arr  = np.array(reference,  dtype=float)
+        pred_arr = np.array(predicted, dtype = float)
+        ref_arr = np.array(reference,  dtype = float)
 
         # Pearson correlation
-        if pred_arr.std() < 1e-9 or ref_arr.std() < 1e-9:
+        if pred_arr.std() < 1e - 9 or ref_arr.std() < 1e - 9:
             pearson_r = 0.0
         else:
             pearson_r = float(np.corrcoef(pred_arr, ref_arr)[0, 1])
@@ -378,28 +360,25 @@ class CognitiveComplexityValidator:
             spearman_rho = float(np.corrcoef(pred_arr.argsort().argsort(), ref_arr.argsort().argsort())[0, 1])
 
         errors = pred_arr - ref_arr
-        mae    = float(np.mean(np.abs(errors)))
-        rmse   = float(np.sqrt(np.mean(errors ** 2)))
-        bias   = float(np.mean(errors))
+        mae = float(np.mean(np.abs(errors)))
+        rmse = float(np.sqrt(np.mean(errors ** 2)))
+        bias = float(np.mean(errors))
 
-        # Worst cases (largest absolute error)
-        details_sorted = sorted(details, key=lambda x: abs(x["error"]), reverse=True)
+        details_sorted = sorted(details, key = lambda x: abs(x["error"]), reverse = True)
         worst_cases = details_sorted[:5]
 
         return ValidationResult(
-            n_functions=len(predicted),
-            pearson_r=round(pearson_r, 4),
-            spearman_rho=round(spearman_rho, 4),
-            mae=round(mae, 3),
-            rmse=round(rmse, 3),
-            bias=round(bias, 3),
-            max_error=round(float(np.max(np.abs(errors))), 1),
-            worst_cases=worst_cases,
-        )
+            n_functions = len(predicted),
+            pearson_r = round(pearson_r, 4),
+            spearman_rho = round(spearman_rho, 4),
+            mae = round(mae, 3),
+            rmse = round(rmse, 3),
+            bias = round(bias, 3),
+            max_error = round(float(np.max(np.abs(errors))), 1),
+            worst_cases = worst_cases,
 
 
 # ---------------------------------------------------------------------------
-# SonarQube API integration (optional — requires running SonarQube instance)
 # ---------------------------------------------------------------------------
 
 def generate_benchmark_from_sonarqube(
@@ -413,13 +392,11 @@ def generate_benchmark_from_sonarqube(
     Query SonarQube API to generate a benchmark dataset with real CC scores.
 
     Requires:
-      - SonarQube running at sonar_host
-      - Project analyzed with 'sonar-scanner'
+      - SonarQube running at sonar_host - Project analyzed with 'sonar - scanner'
       - Python plugin installed
 
     API endpoints used:
-      /api/measures/component_tree — per-function cognitive complexity
-      /api/sources/lines           — source code for each function
+      /api / measures / component_tree — per - function cognitive complexity / api / sources / lines           — source code for each function
     """
     import urllib.request
     import base64
@@ -432,13 +409,13 @@ def generate_benchmark_from_sonarqube(
 
     while len(records) < limit:
         url = (
-            f"{sonar_host}/api/measures/component_tree?"
-            f"component={project}&metricKeys=cognitive_complexity&"
-            f"qualifiers=FIL&ps=100&p={page}"
+            f"{sonar_host}/api / measures / component_tree?"
+            f"component={project}&metricKeys = cognitive_complexity&"
+            f"qualifiers = FIL&ps = 100&p={page}"
         )
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            req = urllib.request.Request(url, headers = headers)
+            with urllib.request.urlopen(req, timeout = 30) as resp:
                 data = json.loads(resp.read())
         except Exception as e:
             logger.warning("SonarQube API error: %s", e)
@@ -451,7 +428,7 @@ def generate_benchmark_from_sonarqube(
                 continue
             records.append({
                 "function_name": comp.get("name", ""),
-                "source": "",   # populated separately via /api/sources/lines
+                "source": "",   # populated separately via / api / sources / lines
                 "sonarqube_cc": int(cc_measures[0]),
                 "repo": project,
                 "file": comp.get("key", ""),
@@ -461,9 +438,9 @@ def generate_benchmark_from_sonarqube(
             break
         page += 1
 
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).parent.mkdir(parents = True, exist_ok = True)
     with open(output_path, "w") as f:
-        json.dump(records, f, indent=2)
+        json.dump(records, f, indent = 2)
     logger.info("Benchmark generated: %d functions -> %s", len(records), output_path)
 
     return records
@@ -474,28 +451,28 @@ def generate_benchmark_from_sonarqube(
 # ---------------------------------------------------------------------------
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.basicConfig(level = logging.INFO, format="%(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(
         description="Validate cognitive complexity implementation vs SonarQube",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class = argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--benchmark", default=None,
-                        help="Path to benchmark JSON (optional; built-in if omitted)")
-    parser.add_argument("--out", default="results/cc_validation.json")
-    parser.add_argument("--generate-benchmark", action="store_true",
-                        help="Generate benchmark from SonarQube (requires --sonar-host)")
-    parser.add_argument("--sonar-host",  default="http://localhost:9000")
-    parser.add_argument("--sonar-token", default="")
+    parser.add_argument("--benchmark", default = None,
+                        help="Path to benchmark JSON (optional; built - in if omitted)")
+    parser.add_argument("--out", default="results / cc_validation.json")
+    parser.add_argument("--generate - benchmark", action="store_true",
+                        help="Generate benchmark from SonarQube (requires --sonar - host)")
+    parser.add_argument("--sonar - host",  default="http://localhost:9000")
+    parser.add_argument("--sonar - token", default="")
     parser.add_argument("--project",     default="")
     args = parser.parse_args()
 
     if args.generate_benchmark:
         if not args.sonar_token or not args.project:
-            parser.error("--sonar-token and --project required for benchmark generation")
+            parser.error("--sonar - token and --project required for benchmark generation")
         generate_benchmark_from_sonarqube(
             args.sonar_host, args.sonar_token, args.project,
-            args.benchmark or "data/cc_benchmark.json",
+            args.benchmark or "data / cc_benchmark.json",
         )
         return
 
@@ -506,16 +483,15 @@ def main():
         logger.info("Loaded %d benchmark functions from %s", len(benchmark), args.benchmark)
 
     validator = CognitiveComplexityValidator()
-    result = validator.validate(benchmark=benchmark, use_builtin=True)
+    result = validator.validate(benchmark = benchmark, use_builtin = True)
     result.print_summary()
 
     # Save result
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).parent.mkdir(parents = True, exist_ok = True)
     with open(args.out, "w") as f:
-        json.dump(result.to_dict(), f, indent=2)
+        json.dump(result.to_dict(), f, indent = 2)
     logger.info("Validation saved -> %s", args.out)
 
-    # Exit with non-zero if validation fails (for CI/CD gates)
     if not result.passes_threshold():
         logger.error(
             "Cognitive complexity validation FAILED: "
