@@ -6,8 +6,7 @@ import { Copy, Check, Shield, Zap, GitBranch, Terminal, ExternalLink, MessageSqu
 import { toast } from "sonner";
 import { getSession } from "@/services/auth";
 import { getEntries } from "@/services/reviewHistory";
-
-const BASE = import.meta.env.VITE_API_URL || "https://intellcode.onrender.com";
+import { BASE_URL as BASE } from "@/services/api";
 
 function CopyBlock({ code, lang = "bash" }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);

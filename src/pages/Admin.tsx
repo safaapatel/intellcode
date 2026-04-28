@@ -53,6 +53,8 @@ type ModalState =
 const Admin = () => {
   const navigate = useNavigate();
   const session = getSession();
+  const isAdmin = session?.role === "admin";
+
   const [users, setUsers] = useState<StoredUser[]>(() => getUsers());
   const [modal, setModal] = useState<ModalState>(null);
   const [search, setSearch] = useState("");
@@ -107,6 +109,7 @@ const Admin = () => {
   };
 
   useEffect(() => { fetchModelStatus(); }, []);
+  useEffect(() => { if (!isAdmin) navigate("/", { replace: true }); }, [isAdmin, navigate]);
 
   // Add user form state
   const [newName, setNewName] = useState("");
@@ -114,6 +117,8 @@ const Admin = () => {
   const [newRole, setNewRole] = useState<StoredUser["role"]>("developer");
   const [newPassword, setNewPassword] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
+
+  if (!isAdmin) return null;
 
   const persist = (updated: StoredUser[]) => {
     setUsers(updated);

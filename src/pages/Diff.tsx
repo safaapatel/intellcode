@@ -104,6 +104,11 @@ const Diff = () => {
     <div className="min-h-screen bg-background">
       <AppNavigation />
       <main className="container mx-auto px-4 py-8 max-w-5xl">
+        {/* Demo notice */}
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm flex items-center gap-2">
+          <span className="font-semibold">Demo mode</span> — a sample diff is pre-loaded. Paste any git diff to analyze your own changes.
+        </div>
+
         {/* Header */}
         <div className="flex items-start justify-between mb-6 gap-4">
           <div className="flex items-center gap-3">

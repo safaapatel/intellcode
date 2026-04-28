@@ -140,8 +140,21 @@ _RATE_LIMIT_REQUESTS = 200
 _RATE_LIMIT_WINDOW_S = 60
 
 
+_RATE_LIMIT_IP_TTL_S = 3600  # evict IPs inactive for >1 hour
+
+def _evict_stale_ips() -> None:
+    """Remove IPs that have had no requests in the last hour."""
+    now = time.monotonic()
+    stale = [ip for ip, dq in _rate_limit_store.items()
+             if not dq or now - dq[-1] > _RATE_LIMIT_IP_TTL_S]
+    for ip in stale:
+        _rate_limit_store.pop(ip, None)
+
+_rate_limit_evict_counter = 0
+
 def _check_rate_limit(request: Request) -> None:
     """Raise HTTP 429 if the client exceeds _RATE_LIMIT_REQUESTS per minute."""
+    global _rate_limit_evict_counter
     client_ip = request.client.host if request.client else "unknown"
     now = time.monotonic()
     window = _rate_limit_store.setdefault(client_ip, collections.deque())
@@ -151,6 +164,10 @@ def _check_rate_limit(request: Request) -> None:
     if len(window) >= _RATE_LIMIT_REQUESTS:
         raise HTTPException(status_code=429, detail="Rate limit exceeded: 200 requests/minute")
     window.append(now)
+    # Periodically evict stale IPs to prevent unbounded memory growth
+    _rate_limit_evict_counter += 1
+    if _rate_limit_evict_counter % 500 == 0:
+        _evict_stale_ips()
 
 
 def _cache_key(code: str, filename: str, git_metadata=None) -> str:
@@ -403,14 +420,17 @@ app = FastAPI(
 )
 
 _extra_origin = os.environ.get("FRONTEND_URL", "").strip()
-_allowed_origins = [
-    "https://safaapatel.github.io",
-    "http://localhost:5173",
-    "http://localhost:4173",
-    "http://localhost:8082",
-    "http://localhost:8080",
-    "http://localhost:8081",
-]
+_is_production = bool(os.environ.get("RENDER"))  # Render.com sets RENDER=true
+_allowed_origins = ["https://safaapatel.github.io"]
+if not _is_production:
+    # Allow localhost in development. Render never sets this block.
+    _allowed_origins += [
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://localhost:8082",
+        "http://localhost:8080",
+        "http://localhost:8081",
+    ]
 if _extra_origin:
     _allowed_origins.append(_extra_origin)
 
@@ -849,7 +869,8 @@ def models_evaluation():
         if not p.exists():
             return {}
         try:
-            return json.load(open(p))
+            with open(p) as f:
+                return json.load(f)
         except Exception:
             return {}
 
@@ -1192,29 +1213,60 @@ async def analyze_full(req: AnalyzeRequest, request: Request):
         return loop.run_in_executor(_EXECUTOR, fn, *args)
 
     # --- Wave 1: all independent models run in parallel ---
-    try:
-        (
-            security_out,
-            (complexity_out, complexity_result),
-            (bug_out, bug_result),
-            pattern_out,
-            (clone_out, clone_result),
-            (refactor_out, refactor_result),
-            (dead_out, dead_result),
-        ) = await asyncio.gather(
-            _run(_step_security, source, language),
-            _run(_step_complexity, source, precomputed),
-            _run(functools.partial(_step_bug, source, req.git_metadata)),
-            _run(_step_pattern, source),
-            _run(_step_clones, source),
-            _run(_step_refactoring, source),
-            _run(_step_dead_code, source),
-        )
-    except RuntimeError as exc:
-        # _step_complexity / _step_bug raise RuntimeError when model unavailable
-        if "unavailable" in str(exc):
-            raise HTTPException(status_code=503, detail=str(exc))
-        raise
+    # return_exceptions=True: one failing model never aborts the whole analysis.
+    _EMPTY_SECURITY: dict = {
+        "findings": [], "vulnerability_score": 0.0, "ml_disabled": True,
+        "ml_source": "unavailable",
+        "summary": {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0},
+    }
+
+    w1 = await asyncio.gather(
+        _run(_step_security, source, language),
+        _run(_step_complexity, source, precomputed),
+        _run(functools.partial(_step_bug, source, req.git_metadata)),
+        _run(_step_pattern, source),
+        _run(_step_clones, source),
+        _run(_step_refactoring, source),
+        _run(_step_dead_code, source),
+        return_exceptions=True,
+    )
+
+    def _ok(r, default):
+        return r if not isinstance(r, BaseException) else default
+
+    security_out = w1[0] if isinstance(w1[0], dict) else _EMPTY_SECURITY
+
+    if isinstance(w1[1], BaseException) or w1[1] is None:
+        # Complexity model unavailable — fall back to rule-based scoring
+        _fb_metrics = compute_metrics_for_language(source, language) or precomputed
+        if _fb_metrics:
+            complexity_out, complexity_result = _build_complexity_out_from_metrics(_fb_metrics)
+        else:
+            raise HTTPException(status_code=503, detail="Complexity model and fallback metrics unavailable")
+    else:
+        complexity_out, complexity_result = w1[1]
+
+    if isinstance(w1[2], BaseException) or w1[2] is None:
+        bug_out, bug_result = None, None
+    else:
+        bug_out, bug_result = w1[2]
+
+    pattern_out = _ok(w1[3], None)
+
+    if isinstance(w1[4], BaseException) or w1[4] is None:
+        clone_out, clone_result = {"clones": [], "clone_rate": 0.0}, None
+    else:
+        clone_out, clone_result = w1[4]
+
+    if isinstance(w1[5], BaseException) or w1[5] is None:
+        refactor_out, refactor_result = {"suggestions": []}, None
+    else:
+        refactor_out, refactor_result = w1[5]
+
+    if isinstance(w1[6], BaseException) or w1[6] is None:
+        dead_out, dead_result = {"issues": [], "dead_ratio": 0.0}, None
+    else:
+        dead_out, dead_result = w1[6]
 
     # --- C1 fix: bump bug probability when dangerous security patterns are found ---
     # The bug ML model is trained on git/complexity features and underestimates risk
@@ -1969,8 +2021,8 @@ def _step_debt(source, sec, cpx_r, bug_r, clone_r, dead_r, refactor_r):
     r = registry.debt_estimator.estimate(
         source=source,
         security_result=sec,
-        complexity_result=cpx_r.to_dict(),
-        bug_result=bug_r.to_dict(),
+        complexity_result=cpx_r.to_dict() if cpx_r is not None else {},
+        bug_result=bug_r.to_dict() if bug_r is not None else {},
         clone_result=clone_r,
         dead_code_result=dead_r,
         refactoring_result=refactor_r,
@@ -3337,7 +3389,6 @@ class PRAnalyzeRequest(BaseModel):
         pattern=r"^https://github\.com/[\w.\-]+/[\w.\-]+/pull/\d+$",
         description="Full GitHub PR URL e.g. https://github.com/owner/repo/pull/123",
     )
-    github_token: str = Field(..., min_length=1, max_length=200, description="GitHub personal access token or OAuth token")
     post_comments: bool = Field(True, description="Whether to post review comments to GitHub")
     max_files: int = Field(10, ge=1, le=20, description="Max files to analyze")
 
@@ -3594,6 +3645,14 @@ def _generate_fix_suggestion(vuln_type: str, line: str, description: str, snippe
     )
 
 
+def _extract_github_token(request: Request) -> str:
+    """Extract GitHub token from Authorization: Bearer <token> header."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer ") and len(auth) > 7:
+        return auth[7:]
+    raise HTTPException(status_code=401, detail="GitHub token required — send Authorization: Bearer <token>")
+
+
 @app.post("/github/analyze-pr", tags=["github"])
 async def analyze_pr(req: PRAnalyzeRequest, request: Request):
     """
@@ -3603,7 +3662,7 @@ async def analyze_pr(req: PRAnalyzeRequest, request: Request):
     Returns the full analysis results per file plus GitHub comment URLs.
     """
     owner, repo, pr_number = _parse_pr_url(req.pr_url)
-    token = req.github_token
+    token = _extract_github_token(request)
 
     loop = asyncio.get_running_loop()
 
@@ -3828,7 +3887,6 @@ async def analyze_pr(req: PRAnalyzeRequest, request: Request):
 # ---------------------------------------------------------------------------
 
 class CreatePRRequest(BaseModel):
-    github_token: str = Field(..., min_length=1, max_length=200)
     repo_full_name: str = Field(..., pattern=r"^[\w.\-]+/[\w.\-]+$")  # "owner/repo"
     filename: str = Field(..., min_length=1, max_length=500)
     code: str = Field(..., max_length=500_000)   # same ceiling as AnalyzeRequest
@@ -3853,7 +3911,7 @@ async def create_pr(req: CreatePRRequest, request: Request):
     4. Post `analysis_summary` as a PR comment
     Returns { pr_url, pr_number, comment_url, branch }
     """
-    token = req.github_token
+    token = _extract_github_token(request)
     owner, repo = req.repo_full_name.split("/", 1)
     loop = asyncio.get_running_loop()
 
