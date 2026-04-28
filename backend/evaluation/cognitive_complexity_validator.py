@@ -395,7 +395,6 @@ class CognitiveComplexityValidator:
             bias=round(bias, 3),
             max_error=round(float(np.max(np.abs(errors))), 1),
             worst_cases=worst_cases,
-        )
 
 
 # ---------------------------------------------------------------------------
