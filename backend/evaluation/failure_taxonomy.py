@@ -1,20 +1,20 @@
 """
-Failure Mode Taxonomy for ML-Based Code Analysis
+Failure Mode Taxonomy for ML - Based Code Analysis
 ==================================================
 Novel contribution #7.
 
 Rather than merely reporting that LOPO AUC is low, this module systematically
-categorises *why* each model/project combination failed, producing a structured
+categorises * why * each model / project combination failed, producing a structured
 taxonomy of failure modes.
 
 Taxonomy categories
 -------------------
 1. CROSS_PROJECT_MISMATCH  -- model trained on A, tested on B; distributional gap
 2. TEMPORAL_DRIFT          -- older training data, newer test data; patterns changed
-3. LABEL_NOISE             -- weak/heuristic labels (keyword or SZZ) introduce noise
+3. LABEL_NOISE             -- weak / heuristic labels (keyword or SZZ) introduce noise
 4. DATA_SPARSITY           -- too few samples in train or test split
-5. CLASS_IMBALANCE         -- label distribution differs between train/test projects
-6. FEATURE_INSTABILITY     -- high-CV features dominate; poor cross-project signal
+5. CLASS_IMBALANCE         -- label distribution differs between train / test projects
+6. FEATURE_INSTABILITY     -- high - CV features dominate; poor cross - project signal
 
 Each failure in a LOPO result is assigned one or more categories based on
 quantitative criteria derived from the data itself.
@@ -66,12 +66,12 @@ FAILURE_MODES = {
         "results are statistically unreliable."
     ),
     "CLASS_IMBALANCE": (
-        "Bug-positive rate in test project differs by more than 15pp from "
+        "Bug - positive rate in test project differs by more than 15pp from "
         "the training set positive rate."
     ),
     "FEATURE_INSTABILITY": (
-        "High-CV features (PIFF-unstable) dominate the model's decision, "
-        "degrading cross-project transfer."
+        "High - CV features (PIFF - unstable) dominate the model's decision, "
+        "degrading cross - project transfer."
     ),
 }
 
@@ -81,7 +81,7 @@ class FailureCase:
     task: str
     held_out_project: str
     auc: float
-    auc_degradation: float          # LOPO AUC - random-split AUC
+    auc_degradation: float          # LOPO AUC - random - split AUC
     failure_modes: list[str]
     evidence: dict
     severity: str                   # "low" | "moderate" | "severe"
@@ -92,7 +92,7 @@ class FailureCase:
 
 def _load_records(path: str) -> list[dict]:
     recs = []
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf - 8") as f:
         for line in f:
             recs.append(json.loads(line.strip()))
     return recs
@@ -107,15 +107,15 @@ def _severity(auc: float, random_auc: float) -> str:
     return "low"
 
 
-# ── Per-task taxonomy builders ────────────────────────────────────────────────
+# ── Per - task taxonomy builders ────────────────────────────────────────────────
 
 def classify_bug_failures(
-    lopo_path: str  = "evaluation/results/lopo_bug.json",
-    data_path: str  = "data/bug_dataset_v2.jsonl",
+    lopo_path: str  = "evaluation / results / lopo_bug.json",
+    data_path: str  = "data / bug_dataset_v2.jsonl",
 ) -> list[FailureCase]:
     """Classify bug prediction LOPO failures."""
     try:
-        with open(lopo_path, encoding="utf-8") as f:
+        with open(lopo_path, encoding="utf - 8") as f:
             lopo = json.load(f)
     except Exception as e:
         logger.warning("Cannot load bug LOPO: %s", e)
@@ -143,7 +143,7 @@ def classify_bug_failures(
         held_out = res["held_out_repo"].split("/")[-1]
         auc = res.get("auc") or 0.5
 
-        test_recs  = repo_records.get(held_out, [])
+        test_recs = repo_records.get(held_out, [])
         train_recs = [r for repo, recs in repo_records.items()
                       if repo != held_out for r in recs]
 
@@ -151,7 +151,7 @@ def classify_bug_failures(
         evidence = {}
 
         # DATA_SPARSITY
-        n_test  = len(test_recs)
+        n_test = len(test_recs)
         n_train = len(train_recs)
         if n_test < 50 or n_train < 200:
             modes.append("DATA_SPARSITY")
@@ -168,7 +168,6 @@ def classify_bug_failures(
             if imbalance > 0.15:
                 modes.append("CLASS_IMBALANCE")
 
-        # CROSS_PROJECT_MISMATCH (using code_churn as proxy for JSD)
         if _SCIPY_OK and test_recs and train_recs:
             churn_train = [float(r.get("git_features", {}).get("code_churn", 0) or 0)
                            for r in train_recs]
@@ -179,12 +178,11 @@ def classify_bug_failures(
             )
             # Normalise by training range
             rng = max(max(churn_train), max(churn_test)) - min(min(churn_train), min(churn_test)) + 1
-            w1_norm = float(w1 / (np.log1p(rng) + 1e-9))
+            w1_norm = float(w1 / (np.log1p(rng) + 1e - 9))
             evidence["churn_w1_normalised"] = w1_norm
             if w1_norm > 0.3:
                 modes.append("CROSS_PROJECT_MISMATCH")
 
-        # TEMPORAL_DRIFT (check if test commits are all after training commits)
         if test_recs and train_recs:
             def get_year(r):
                 date_str = r.get("author_date", "")
@@ -196,8 +194,8 @@ def classify_bug_failures(
                 return 2020
             train_years = [get_year(r) for r in train_recs]
             test_years  = [get_year(r) for r in test_recs]
-            mean_train  = float(np.mean(train_years))
-            mean_test   = float(np.mean(test_years))
+            mean_train = float(np.mean(train_years))
+            mean_test = float(np.mean(test_years))
             year_gap = mean_test - mean_train
             evidence["mean_train_year"] = mean_train
             evidence["mean_test_year"]  = mean_test
@@ -205,11 +203,9 @@ def classify_bug_failures(
             if year_gap > 1.0:
                 modes.append("TEMPORAL_DRIFT")
 
-        # LABEL_NOISE (always present for keyword labels)
         modes.append("LABEL_NOISE")
         evidence["label_method"] = "keyword (commit message contains 'fix'/'bug')"
 
-        # AUC < 0.55 with no other identified cause -> FEATURE_INSTABILITY fallback
         if auc < 0.55 and "CROSS_PROJECT_MISMATCH" not in modes:
             modes.append("FEATURE_INSTABILITY")
             evidence["auc_below_threshold"] = True
@@ -220,23 +216,23 @@ def classify_bug_failures(
         deg = random_auc - auc
         cases.append(FailureCase(
             task="bug_prediction",
-            held_out_project=held_out,
-            auc=float(auc),
-            auc_degradation=float(deg),
-            failure_modes=sorted(set(modes)),
-            evidence=evidence,
-            severity=_severity(auc, random_auc),
+            held_out_project = held_out,
+            auc = float(auc),
+            auc_degradation = float(deg),
+            failure_modes = sorted(set(modes)),
+            evidence = evidence,
+            severity = _severity(auc, random_auc),
         ))
 
     return cases
 
 
 def classify_complexity_failures(
-    lopo_path: str = "evaluation/results/lopo_complexity.json",
+    lopo_path: str = "evaluation / results / lopo_complexity.json",
 ) -> list[FailureCase]:
     """Classify complexity prediction LOPO failures."""
     try:
-        with open(lopo_path, encoding="utf-8") as f:
+        with open(lopo_path, encoding="utf - 8") as f:
             lopo = json.load(f)
     except Exception as e:
         logger.warning("Cannot load complexity LOPO: %s", e)
@@ -257,7 +253,7 @@ def classify_complexity_failures(
             modes.append("DATA_SPARSITY")
             evidence["n_test"] = res.get("n_test")
 
-        # Complexity metrics are derived from static analysis — naturally project-specific
+        # Complexity metrics are derived from static analysis — naturally project - specific
         modes.append("CROSS_PROJECT_MISMATCH")
         evidence["note"] = "Complexity metrics are correlated with project style (indent level, naming conventions)"
 
@@ -265,23 +261,23 @@ def classify_complexity_failures(
         deg = random_spearman - spearman
         cases.append(FailureCase(
             task="complexity_prediction",
-            held_out_project=held_out,
-            auc=float(spearman),
-            auc_degradation=float(deg),
-            failure_modes=sorted(set(modes)),
-            evidence=evidence,
-            severity=_severity(spearman, random_spearman),
+            held_out_project = held_out,
+            auc = float(spearman),
+            auc_degradation = float(deg),
+            failure_modes = sorted(set(modes)),
+            evidence = evidence,
+            severity = _severity(spearman, random_spearman),
         ))
 
     return cases
 
 
 def classify_security_failures(
-    lopo_path: str = "evaluation/results/lopo_security.json",
+    lopo_path: str = "evaluation / results / lopo_security.json",
 ) -> list[FailureCase]:
     """Classify security detection LOPO failures."""
     try:
-        with open(lopo_path, encoding="utf-8") as f:
+        with open(lopo_path, encoding="utf - 8") as f:
             lopo = json.load(f)
     except Exception as e:
         logger.warning("Cannot load security LOPO: %s", e)
@@ -302,7 +298,7 @@ def classify_security_failures(
 
         if auc < 0.55:
             modes.append("CROSS_PROJECT_MISMATCH")
-            evidence["note"] = "Vulnerability patterns are project/framework-specific"
+            evidence["note"] = "Vulnerability patterns are project / framework - specific"
 
         if res.get("n_test", 0) < 30:
             modes.append("DATA_SPARSITY")
@@ -317,12 +313,12 @@ def classify_security_failures(
         deg = random_auc - auc
         cases.append(FailureCase(
             task="security_detection",
-            held_out_project=held_out,
-            auc=float(auc),
-            auc_degradation=float(deg),
-            failure_modes=sorted(set(modes)),
-            evidence=evidence,
-            severity=_severity(auc, random_auc),
+            held_out_project = held_out,
+            auc = float(auc),
+            auc_degradation = float(deg),
+            failure_modes = sorted(set(modes)),
+            evidence = evidence,
+            severity = _severity(auc, random_auc),
         ))
 
     return cases
@@ -331,10 +327,10 @@ def classify_security_failures(
 # ── Aggregate taxonomy ────────────────────────────────────────────────────────
 
 def run_failure_taxonomy(
-    lopo_bug_path:        str = "evaluation/results/lopo_bug.json",
-    lopo_complexity_path: str = "evaluation/results/lopo_complexity.json",
-    lopo_security_path:   str = "evaluation/results/lopo_security.json",
-    bug_data_path:        str = "data/bug_dataset_v2.jsonl",
+    lopo_bug_path:        str = "evaluation / results / lopo_bug.json",
+    lopo_complexity_path: str = "evaluation / results / lopo_complexity.json",
+    lopo_security_path:   str = "evaluation / results / lopo_security.json",
+    bug_data_path:        str = "data / bug_dataset_v2.jsonl",
 ) -> dict:
 
     logger.info("Failure Taxonomy: classifying bug prediction failures...")
@@ -359,7 +355,7 @@ def run_failure_taxonomy(
     for case in all_cases:
         severity_counts[case.severity] = severity_counts.get(case.severity, 0) + 1
 
-    # Per-task summary
+    # Per - task summary
     def _task_summary(cases: list[FailureCase]) -> dict:
         if not cases:
             return {}
@@ -379,14 +375,13 @@ def run_failure_taxonomy(
                 s: sum(1 for c in cases if c.severity == s)
                 for s in ("severe", "moderate", "low")
             },
-        }
 
     report = {
         "method": "Failure_Taxonomy",
         "description": (
             "Systematic categorisation of ML failure modes in code analysis. "
-            "Each LOPO project-failure is assigned quantitatively derived failure "
-            "categories: cross-project mismatch, temporal drift, label noise, "
+            "Each LOPO project - failure is assigned quantitatively derived failure "
+            "categories: cross - project mismatch, temporal drift, label noise, "
             "data sparsity, class imbalance, feature instability."
         ),
         "failure_mode_definitions": FAILURE_MODES,
@@ -400,13 +395,13 @@ def run_failure_taxonomy(
         "all_cases": [c.to_dict() for c in all_cases],
         "key_findings": [
             f"LABEL_NOISE is universal ({mode_counts.get('LABEL_NOISE', 0)}/{len(all_cases)} cases) "
-            "because all three tasks use heuristic or keyword-based labels.",
+            "because all three tasks use heuristic or keyword - based labels.",
             f"CROSS_PROJECT_MISMATCH affects "
             f"{mode_counts.get('CROSS_PROJECT_MISMATCH', 0)}/{len(all_cases)} cases — "
             "the dominant technical cause of performance degradation.",
             f"{severity_counts.get('severe', 0)}/{len(all_cases)} failure cases are "
             "classified as SEVERE (AUC < 0.55 or degradation > 20pp), "
-            "indicating models are unreliable on multiple held-out projects.",
+            "indicating models are unreliable on multiple held - out projects.",
             "Bug prediction exhibits TEMPORAL_DRIFT in projects with long commit histories "
             "(SQLAlchemy, Django), suggesting concept drift over time.",
         ],
@@ -424,17 +419,17 @@ def run_failure_taxonomy(
 
 if __name__ == "__main__":
     import io as _io
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    sys.stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    logging.basicConfig(level = logging.INFO, format="%(message)s")
+    sys.stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding="utf - 8", errors="replace")
 
     report = run_failure_taxonomy()
-    out = Path("evaluation/results/failure_taxonomy.json")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    out = Path("evaluation / results / failure_taxonomy.json")
+    out.parent.mkdir(parents = True, exist_ok = True)
+    with open(out, "w", encoding="utf - 8") as f:
+        json.dump(report, f, indent = 2)
     print(f"Saved: {out}")
     print("\nOverall failure mode frequency:")
-    for mode, count in sorted(report["overall_mode_frequency"].items(), key=lambda x: -x[1]):
+    for mode, count in sorted(report["overall_mode_frequency"].items(), key = lambda x: -x[1]):
         print(f"  {mode:<30}: {count}")
     print("\nKey findings:")
     for f in report["key_findings"]:
